@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TR Mock Anchor · Dashboard</title>
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><a href="/" style="color:inherit"><span class="dot"></span> TR Mock Anchor</a> <span class="tag">dashboard</span></div>
+    <nav><a href="/demo">How it works</a><a href="/guide">Guide</a><a href="/docs">API reference</a><a href="#" id="logout">Log out</a></nav>
+  </header>
+
+  <div class="grid two">
+    <section class="panel accent">
+      <h3>Your API key</h3>
+      <div class="keybox"><code id="key">••••••••••••••••••••••••••••</code><button class="small" id="reveal" type="button">Reveal</button><button class="small" id="copy" type="button">Copy</button><button class="small" id="rotate" type="button">Rotate</button></div>
+      <p class="small muted" style="margin:10px 0 0">Send it as <code>X-API-Key</code>. One key per account; rotating disables the old one immediately.</p>
+      <dl class="kv" style="margin-top:12px"><dt>Account</dt><dd id="acct"></dd><dt>Created</dt><dd id="created"></dd></dl>
+    </section>
+    <section class="panel">
+      <h3>Sandbox status</h3>
+      <dl class="kv" id="status"><dt>Loading…</dt><dd></dd></dl>
+    </section>
+  </div>
+
+  <section class="panel" style="margin-top:18px">
+    <h2>Playground <span class="tag">runs the real API with your key</span></h2>
+    <p class="small muted">Walk through a full on-ramp and off-ramp without writing code. Get a testnet wallet from <a href="https://lab.stellar.org/account/create" target="_blank" rel="noopener">Stellar Lab</a> or Freighter (testnet), fund it with <a href="https://lab.stellar.org/account/fund" target="_blank" rel="noopener">Friendbot</a>, then paste its public key. If the wallet has no USDC trustline, the on-ramp lands as a claimable balance you can claim from the wallet.</p>
+    <div class="grid three">
+      <div>
+        <div class="row" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px"><label for="pg-addr">Destination Stellar address (G… or M…)</label><input id="pg-addr" type="text" class="mono" placeholder="GB…" /></div>
+        <div class="row" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px"><label for="pg-try">TRY amount</label><input id="pg-try" type="number" value="1000" min="50" step="1" /></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button id="pg-customer" type="button">1 · Create customer</button>
+        <button id="pg-bank" type="button" disabled>2 · Simulate TRY bank transfer</button>
+        <button id="pg-onramp" type="button" class="primary" disabled>3 · On-ramp → send USDC</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button id="pg-offramp" type="button" disabled>4 · Start off-ramp (get memo)</button>
+        <button id="pg-payout" type="button" disabled>5 · Withdraw remaining TRY</button>
+        <button id="pg-reset" type="button" class="small">Reset playground</button>
+      </div>
+    </div>
+    <div class="log mono small" id="pg-log" style="margin-top:12px"></div>
+  </section>
+
+  <div class="grid two" style="margin-top:18px">
+    <section class="panel">
+      <h2>Customers</h2>
+      <div class="tablewrap"><table><thead><tr><th>ID</th><th>Name</th><th>KYC</th><th>Reference</th><th>TRY</th><th>USDC</th></tr></thead><tbody id="t-customers"></tbody></table></div>
+    </section>
+    <section class="panel">
+      <h2>Recent events</h2>
+      <div class="tablewrap"><table><thead><tr><th>Time</th><th>Type</th><th>Object</th></tr></thead><tbody id="t-events"></tbody></table></div>
+    </section>
+  </div>
+  <div class="grid two" style="margin-top:18px">
+    <section class="panel">
+      <h2>On-ramps</h2>
+      <div class="tablewrap"><table><thead><tr><th>ID</th><th>TRY</th><th>USDC</th><th>Status</th><th>Settlement</th><th>Tx</th></tr></thead><tbody id="t-onramps"></tbody></table></div>
+    </section>
+    <section class="panel">
+      <h2>Off-ramps</h2>
+      <div class="tablewrap"><table><thead><tr><th>ID</th><th>Memo</th><th>Received</th><th>TRY</th><th>Status</th><th>Tx</th></tr></thead><tbody id="t-offramps"></tbody></table></div>
+    </section>
+  </div>
+
+  <section class="panel" style="margin-top:18px">
+    <h2>Your quickstart</h2>
+    <div class="tabs"><button class="active" data-lang="curl" type="button">curl</button><button data-lang="js" type="button">JavaScript</button><button data-lang="py" type="button">Python</button></div>
+    <pre id="snippet"></pre>
+  </section>
+
+  <footer>Testnet only. Keys grant access to this sandbox and nothing else. <a href="/llms.txt">llms.txt</a></footer>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const base = location.origin;
+  let me = null, health = null, revealed = false;
+  const state = JSON.parse(localStorage.getItem('trma_pg') || '{}');
+  const savePg = () => localStorage.setItem('trma_pg', JSON.stringify(state));
+  const toast = (msg, cls) => { const t = $('toast'); t.textContent = msg; t.className = 'toast ' + (cls || ''); t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 4000); };
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const short = (s, n = 10) => s ? s.slice(0, n) + '…' : '';
+  const txLink = (h) => h ? `<a class="mono" target="_blank" rel="noopener" href="https://stellar.expert/explorer/testnet/tx/${h}">${short(h, 8)}</a>` : '';
+  const status = (s) => `<span class="status ${esc(s)}">${esc(s)}</span>`;
+
+  async function api(method, path, body) {
+    const r = await fetch(base + path, { method, headers: { 'content-type': 'application/json', 'X-API-Key': me.api_key }, body: body ? JSON.stringify(body) : undefined });
+    const j = r.status === 204 ? {} : await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error?.message || ('HTTP ' + r.status));
+    return j;
+  }
+  async function ui(method, path, body) {
+    const r = await fetch(path, { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error?.message || ('HTTP ' + r.status));
+    return j;
+  }
+
+  function renderKey() {
+    $('key').textContent = revealed ? me.api_key : me.api_key_prefix + '••••••••••••••••••••••••';
+    $('reveal').textContent = revealed ? 'Hide' : 'Reveal';
+    $('acct').textContent = `${me.name} · ${me.email}`;
+    $('created').textContent = new Date(me.created_at).toLocaleString() + (me.key_rotated_at ? ` · key rotated ${new Date(me.key_rotated_at).toLocaleString()}` : '');
+    renderSnippet(document.querySelector('.tabs button.active').dataset.lang);
+  }
+  $('reveal').onclick = () => { revealed = !revealed; renderKey(); };
+  $('copy').onclick = async () => { await navigator.clipboard.writeText(me.api_key); toast('API key copied'); };
+  $('rotate').onclick = async () => { if (!confirm('Rotate your API key? The current key stops working immediately.')) return; me = await ui('POST', '/ui/rotate-key'); revealed = true; renderKey(); toast('Key rotated', 'ok'); };
+  $('logout').onclick = async (e) => { e.preventDefault(); await ui('POST', '/ui/logout'); location.href = '/'; };
+
+  function renderSnippet(lang) {
+    const key = revealed ? me.api_key : 'YOUR_API_KEY';
+    const snippets = {
+      curl: `export BASE=${base}\nexport KEY=${key}\n\n# 1. customer\ncurl -s -X POST $BASE/v1/customers -H "X-API-Key: $KEY" -H 'content-type: application/json' \\\n  -d '{"first_name":"Ayşe","last_name":"Yılmaz","iban":"TR330006100519786457841326"}'\n\n# 2. the bank: TRY arrives with the customer's deposit_reference in the description\ncurl -s -X POST $BASE/v1/sandbox/bank-transfers -H "X-API-Key: $KEY" -H 'content-type: application/json' \\\n  -d '{"reference":"TRMA-XXXX-XXXX","amount_try":"1000.00"}'\n\n# 3. on-ramp: TRY balance -> USDC to a Stellar testnet wallet\ncurl -s -X POST $BASE/v1/onramps -H "X-API-Key: $KEY" -H 'content-type: application/json' \\\n  -d '{"customer_id":"cus_...","amount_try":"1000.00","destination_address":"G..."}'\n\n# 4. off-ramp: get address + memo, send USDC on-chain, poll\ncurl -s -X POST $BASE/v1/offramps -H "X-API-Key: $KEY" -H 'content-type: application/json' \\\n  -d '{"customer_id":"cus_...","amount_usdc":"5.0000000"}'`,
+      js: `const BASE = '${base}';\nconst KEY = '${key}';\nconst call = (method, path, body) => fetch(BASE + path, {\n  method, headers: { 'content-type': 'application/json', 'X-API-Key': KEY },\n  body: body && JSON.stringify(body),\n}).then((r) => r.json());\n\nconst customer = await call('POST', '/v1/customers', { first_name: 'Ayşe', last_name: 'Yılmaz', iban: 'TR330006100519786457841326' });\nawait call('POST', '/v1/sandbox/bank-transfers', { reference: customer.deposit_reference, amount_try: '1000.00' });\nconst quote = await call('POST', '/v1/quotes', { side: 'buy', amount: '1000.00', amount_currency: 'TRY' });\nlet onramp = await call('POST', '/v1/onramps', { customer_id: customer.id, quote_id: quote.id, destination_address: 'G...' });\nwhile (onramp.status === 'pending') { await new Promise((r) => setTimeout(r, 2000)); onramp = await call('GET', '/v1/onramps/' + onramp.id); }\nconsole.log(onramp.status, onramp.stellar_tx_hash);`,
+      py: `import requests, time\nBASE = '${base}'\nH = {'X-API-Key': '${key}'}\n\ncustomer = requests.post(f'{BASE}/v1/customers', json={'first_name': 'Ayşe', 'last_name': 'Yılmaz', 'iban': 'TR330006100519786457841326'}, headers=H).json()\nrequests.post(f'{BASE}/v1/sandbox/bank-transfers', json={'reference': customer['deposit_reference'], 'amount_try': '1000.00'}, headers=H)\nonramp = requests.post(f'{BASE}/v1/onramps', json={'customer_id': customer['id'], 'amount_try': '1000.00', 'destination_address': 'G...'}, headers=H).json()\nwhile onramp['status'] == 'pending':\n    time.sleep(2)\n    onramp = requests.get(f"{BASE}/v1/onramps/{onramp['id']}", headers=H).json()\nprint(onramp['status'], onramp['stellar_tx_hash'])`,
+    };
+    $('snippet').textContent = snippets[lang];
+  }
+  document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => { document.querySelectorAll('.tabs button').forEach((x) => x.classList.remove('active')); b.classList.add('active'); renderSnippet(b.dataset.lang); });
+
+  async function refreshTables() {
+    const [c, o, f, e] = await Promise.all([api('GET', '/v1/customers?limit=8'), api('GET', '/v1/onramps?limit=8'), api('GET', '/v1/offramps?limit=8'), api('GET', '/v1/events?limit=200')]);
+    $('t-customers').innerHTML = c.data.map((x) => `<tr><td class="mono">${short(x.id, 12)}</td><td>${esc(x.first_name)} ${esc(x.last_name)}</td><td>${status(x.kyc_status)}</td><td class="mono">${esc(x.deposit_reference)}</td><td>${esc(x.balances.TRY)}</td><td>${esc(x.balances.USDC)}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">None yet</td></tr>';
+    $('t-onramps').innerHTML = o.data.map((x) => `<tr><td class="mono">${short(x.id, 12)}</td><td>${esc(x.amount_try)}</td><td>${esc(x.amount_usdc)}</td><td>${status(x.status)}${x.pending_reason ? `<div class="muted small">${esc(x.pending_reason)}</div>` : ''}${x.failure_reason ? `<div class="bad small">${esc(x.failure_reason)}</div>` : ''}</td><td>${esc(x.settlement ?? '')}</td><td>${txLink(x.stellar_tx_hash)}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">None yet</td></tr>';
+    $('t-offramps').innerHTML = f.data.map((x) => `<tr><td class="mono">${short(x.id, 12)}</td><td class="mono">${esc(x.deposit.memo)}</td><td>${esc(x.received_usdc ?? '')}</td><td>${esc(x.amount_try ?? '')}</td><td>${status(x.status)}</td><td>${txLink(x.stellar_tx_hash)}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">None yet</td></tr>';
+    $('t-events').innerHTML = e.data.slice(-12).reverse().map((x) => `<tr><td class="muted">${new Date(x.created_at).toLocaleTimeString()}</td><td>${esc(x.type)}</td><td class="mono">${short(x.data?.id, 14)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">None yet</td></tr>';
+  }
+
+  async function refreshHealth() {
+    health = await fetch('/health').then((r) => r.json());
+    $('status').innerHTML = `
+      <dt>Stellar</dt><dd>${health.stellar_mode === 'fake' ? 'fake mode (in-memory chain)' : 'testnet · live Horizon'}</dd>
+      <dt>Asset</dt><dd class="mono small">${health.asset.code}:${health.asset.issuer}</dd>
+      <dt>Treasury</dt><dd class="mono small"><a target="_blank" rel="noopener" href="https://stellar.expert/explorer/testnet/account/${health.treasury.address}">${health.treasury.address}</a></dd>
+      <dt>Treasury USDC</dt><dd class="${health.treasury.low_balance ? 'warn' : 'ok'}">${health.treasury.usdc_balance ?? 'unknown'}${health.treasury.low_balance ? ' · low, on-ramps may wait' : ''}</dd>
+      <dt>USDC/TRY</dt><dd>mid <b>${health.rates.mid_rate}</b> · buy ${health.rates.buy_rate} · sell ${health.rates.sell_rate}<div class="muted small">${health.rates.spread_bps} bps spread · source ${health.rates.source}</div></dd>`;
+  }
+
+  /* ---- playground ---- */
+  const log = (html, cls) => { const d = document.createElement('div'); d.className = cls || ''; d.innerHTML = `<span class="muted">${new Date().toLocaleTimeString()}</span> ${html}`; $('pg-log').prepend(d); };
+  function syncPg() {
+    $('pg-bank').disabled = !state.customer; $('pg-onramp').disabled = !state.customer; $('pg-offramp').disabled = !state.customer; $('pg-payout').disabled = !state.customer;
+    if (state.addr) $('pg-addr').value = state.addr;
+  }
+  $('pg-addr').onchange = () => { state.addr = $('pg-addr').value.trim(); savePg(); };
+  $('pg-reset').onclick = () => { for (const k of Object.keys(state)) delete state[k]; savePg(); $('pg-log').innerHTML = ''; syncPg(); };
+  $('pg-customer').onclick = async () => {
+    try {
+      const c = await api('POST', '/v1/customers', { first_name: 'Ayşe', last_name: 'Yılmaz', tckn: '10000000146', iban: 'TR330006100519786457841326', external_id: 'pg-' + Date.now() });
+      state.customer = c.id; savePg(); syncPg();
+      const di = await api('GET', `/v1/customers/${c.id}/deposit-instructions`);
+      log(`Customer <b class="mono">${c.id}</b> created (KYC ${c.kyc_status}). Deposit instructions: send TRY to <span class="mono">${di.iban_formatted}</span> (${esc(di.bank_name)}) with description <b class="mono">${di.reference}</b>.`);
+    } catch (e) { log(esc(e.message), 'bad'); }
+  };
+  $('pg-bank').onclick = async () => {
+    try {
+      const c = await api('GET', `/v1/customers/${state.customer}`);
+      const amt = Number($('pg-try').value || 1000).toFixed(2);
+      const bt = await api('POST', '/v1/sandbox/bank-transfers', { reference: c.deposit_reference, amount_try: amt, sender_name: `${c.first_name} ${c.last_name}` });
+      const b = await api('GET', `/v1/customers/${state.customer}/balances`);
+      log(`Bank transfer <span class="mono">${bt.id}</span> of ${amt} TRY matched by reference ${esc(bt.reference)}. TRY balance is now <b>${b.balances.TRY}</b>.`);
+      refreshTables();
+    } catch (e) { log(esc(e.message), 'bad'); }
+  };
+  async function pollOnramp(id) {
+    for (let i = 0; i < 40; i++) {
+      const o = await api('GET', `/v1/onramps/${id}`);
+      if (o.status !== 'pending') return o;
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+    return api('GET', `/v1/onramps/${id}`);
+  }
+  $('pg-onramp').onclick = async () => {
+    try {
+      const addr = ($('pg-addr').value || '').trim();
+      if (!addr) return log('Paste a destination Stellar address first.', 'warn');
+      state.addr = addr; savePg();
+      const amt = Number($('pg-try').value || 1000).toFixed(2);
+      const q = await api('POST', '/v1/quotes', { customer_id: state.customer, side: 'buy', amount: amt, amount_currency: 'TRY' });
+      log(`Quote ${q.id}: ${q.source_amount} TRY → ${q.destination_amount} USDC at ${q.rate} (mid ${q.mid_rate}, ${q.rate_source}), valid until ${new Date(q.expires_at).toLocaleTimeString()}.`);
+      let o = await api('POST', '/v1/onramps', { customer_id: state.customer, quote_id: q.id, destination_address: addr, memo: 'tr-mock-anchor' });
+      log(`On-ramp <span class="mono">${o.id}</span> created, status ${o.status}. TRY debited. Waiting for the treasury to pay ${o.amount_usdc} USDC…`);
+      refreshTables();
+      o = await pollOnramp(o.id);
+      if (o.status === 'completed') log(`✅ On-ramp completed via <b>${o.settlement}</b>: ${txLink(o.stellar_tx_hash)}${o.claimable_balance_id ? ` · claimable balance <span class="mono">${short(o.claimable_balance_id, 14)}</span> (claim it from the wallet)` : ''}`, 'ok');
+      else log(`On-ramp is ${o.status}: ${esc(o.failure_reason || o.pending_reason || '')}`, o.status === 'failed' ? 'bad' : 'warn');
+      refreshTables(); refreshHealth();
+    } catch (e) { log(esc(e.message), 'bad'); }
+  };
+  $('pg-offramp').onclick = async () => {
+    try {
+      const o = await api('POST', '/v1/offramps', { customer_id: state.customer, amount_usdc: '5.0000000' });
+      state.offramp = o.id; savePg();
+      log(`Off-ramp <span class="mono">${o.id}</span>: send ${o.deposit.asset_code} on testnet to <span class="mono">${o.deposit.address}</span> with <b>memo (id) ${o.deposit.memo}</b>. Rate ${o.rate} locked until ${new Date(o.rate_locked_until).toLocaleTimeString()}; TRY will be paid to ${esc(o.payout_iban)}. Polling…`);
+      refreshTables();
+      for (let i = 0; i < 120; i++) {
+        await new Promise((r) => setTimeout(r, 5000));
+        const x = await api('GET', `/v1/offramps/${o.id}`);
+        if (x.status === 'completed') { log(`✅ Off-ramp completed: received ${x.received_usdc} USDC → ${x.amount_try} TRY${x.payout_id ? ` → payout ${x.payout_id} to IBAN` : ''} · ${txLink(x.stellar_tx_hash)}`, 'ok'); refreshTables(); return; }
+        if (x.status !== 'awaiting_deposit') { log(`Off-ramp is ${x.status}`, 'warn'); return; }
+      }
+      log('Stopped polling after 10 minutes; the off-ramp stays open — check the table later.', 'warn');
+    } catch (e) { log(esc(e.message), 'bad'); }
+  };
+  $('pg-payout').onclick = async () => {
+    try {
+      const b = await api('GET', `/v1/customers/${state.customer}/balances`);
+      if (Number(b.balances.TRY) <= 0) return log('TRY balance is 0.00, nothing to pay out.', 'warn');
+      const p = await api('POST', '/v1/payouts', { customer_id: state.customer, amount_try: b.balances.TRY });
+      log(`Payout <span class="mono">${p.id}</span>: ${p.amount_try} TRY sent to ${esc(p.iban)} via ${p.rail} (ref ${p.bank_reference}).`, 'ok');
+      refreshTables();
+    } catch (e) { log(esc(e.message), 'bad'); }
+  };
+
+  (async () => {
+    try { me = await ui('GET', '/ui/me'); } catch { location.href = '/'; return; }
+    renderKey(); syncPg();
+    refreshHealth().catch(() => {});
+    refreshTables().catch((e) => toast(e.message, 'bad'));
+    setInterval(() => { refreshTables().catch(() => {}); }, 15000);
+    setInterval(() => { refreshHealth().catch(() => {}); }, 60000);
+  })();
+})();
+</script>
+</body>
+</html>

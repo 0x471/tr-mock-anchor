@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TR Mock Anchor · Guide</title>
+<link rel="stylesheet" href="/static/style.css" />
+<style>
+  .layout { display: grid; grid-template-columns: 240px 1fr; gap: 32px; align-items: start; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .toc { position: static !important; } }
+  .toc { position: sticky; top: 16px; font-size: 13px; max-height: calc(100vh - 32px); overflow: auto; }
+  .toc a { display: block; padding: 3px 0; color: var(--muted); } .toc a:hover { color: var(--text); } .toc .h { margin-top: 10px; font-weight: 700; color: var(--text); }
+  article h2 { font-size: 24px; margin: 40px 0 12px; padding-top: 8px; border-top: 1px solid var(--line); } article h2:first-of-type { border-top: 0; margin-top: 0; }
+  article h3 { font-size: 16px; text-transform: none; letter-spacing: 0; color: var(--text); margin: 22px 0 8px; }
+  article p, article li { max-width: 78ch; } article pre { margin: 10px 0 16px; } article table { margin: 10px 0 18px; } article code { background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  article pre code { background: none; padding: 0; }
+  .callout { border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); padding: 10px 14px; border-radius: 6px; margin: 14px 0; max-width: 78ch; }
+  .callout.warn { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+  .mermaid { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 12px 0 18px; overflow-x: auto; }
+  dl.gloss dt { font-weight: 700; margin-top: 8px; } dl.gloss dd { margin: 0 0 4px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><a href="/" style="color:inherit"><span class="dot"></span> TR Mock Anchor</a> <span class="tag">guide</span></div>
+    <nav><a href="/demo">How it works</a><a href="/docs">API reference</a><a href="/dashboard">Dashboard</a></nav>
+  </header>
+
+  <div class="layout">
+    <nav class="toc panel">
+      <a class="h" href="#overview">Overview</a>
+      <a href="#tr-summary">Türkçe özet</a>
+      <a href="#what-is-real">What is real, what is mocked</a>
+      <a class="h" href="#concepts">Concepts</a>
+      <a href="#accounts">Accounts &amp; API keys</a>
+      <a href="#customers">Customers &amp; KYC</a>
+      <a href="#turkish-rails">Turkish rails: IBAN, FAST, açıklama</a>
+      <a href="#balances">Balances &amp; ledger</a>
+      <a href="#pricing">Rates, quotes &amp; spread</a>
+      <a class="h" href="#flows">Flows</a>
+      <a href="#onramp">On-ramp (TRY → USDC)</a>
+      <a href="#offramp">Off-ramp (USDC → TRY)</a>
+      <a href="#payouts">Payouts</a>
+      <a href="#settlement">Settlement details</a>
+      <a class="h" href="#integration">Integration</a>
+      <a href="#statuses">Statuses &amp; errors</a>
+      <a href="#webhooks">Webhooks</a>
+      <a href="#events">Event log (polling)</a>
+      <a href="#sandbox">Sandbox controls &amp; test hooks</a>
+      <a href="#examples">Code examples</a>
+      <a href="#wallets">Wallet-side notes</a>
+      <a class="h" href="#reference">Reference</a>
+      <a href="#stellar">Stellar details</a>
+      <a href="#limits">Limits &amp; configuration</a>
+      <a href="#production">From sandbox to a real anchor</a>
+      <a href="#faq">FAQ</a>
+      <a href="#glossary">Glossary (TR/EN)</a>
+    </nav>
+
+    <article>
+      <h1>Guide</h1>
+      <p class="lead">Everything you need to integrate a Turkish TRY ⇄ USDC ramp against this sandbox — and to understand what a production anchor in Türkiye actually does behind the same API shape.</p>
+
+      <h2 id="overview">Overview</h2>
+      <p>TR Mock Anchor is a <b>sandbox anchor</b>: a service that moves value between Turkish lira in the banking system and USDC on Stellar. It is <b>API-key based</b> (no SEP-10/SEP-24 interactive flows) because that is how Turkish exchanges and payment institutions expose ramps to partners: your backend holds a key and drives the customer journey from your own UI.</p>
+      <p>The model mirrors a Turkish exchange:</p>
+      <ol class="steps">
+        <li>Your user is registered as a <b>customer</b> (KYC: name, T.C. Kimlik No, IBAN).</li>
+        <li>The customer sends TRY by bank transfer to the anchor's IBAN and writes a personal <b>reference code</b> in the description.</li>
+        <li>The anchor matches the transfer → the customer has a <b>TRY balance</b>.</li>
+        <li>The customer buys USDC at the USD/TRY rate and it is <b>paid on Stellar</b> to their wallet.</li>
+        <li>Off-ramp is the reverse: send USDC with a memo → TRY balance → payout to the IBAN.</li>
+      </ol>
+      <div class="callout">Try it live: <a href="/demo">How it works</a> runs the full round trip from your browser with real testnet transactions. The <a href="/docs">API reference</a> documents every field.</div>
+
+      <h3 id="tr-summary">Türkçe özet</h3>
+      <p>Bu servis, Türkiye'deki borsaların çalıştığı şekilde bir <b>TL ⇄ USDC ramp'ini</b> Stellar testnet üzerinde taklit eder. Kullanıcı e-postasıyla kaydolur ve tek bir API anahtarı alır. Uygulamanız müşteriyi oluşturur; müşteriye özel bir <b>referans kodu</b> verilir. Gerçek hayatta müşteri bu kodu banka transferinin açıklamasına yazar; sandbox'ta bu transferi <code>POST /v1/sandbox/bank-transfers</code> ile siz simüle edersiniz. TL bakiyesi oluşur, kur (Reflector USD/TRY oracle + spread) kilitlenir ve <b>gerçek testnet USDC</b> müşterinin Stellar adresine gönderilir (trustline yoksa claimable balance). Offramp'te müşteri memo ile USDC gönderir; anchor ödemeyi tespit eder, TL'ye çevirir ve IBAN'a ödemeyi simüle eder. Banka, KYC ve ödeme tarafı sahte; Stellar tarafı gerçektir.</p>
+
+      <h3 id="what-is-real">What is real, what is mocked</h3>
+      <table><thead><tr><th>Piece</th><th>Real?</th><th>Notes</th></tr></thead><tbody>
+        <tr><td>Stellar payments to wallets (on-ramp)</td><td class="ok">Real</td><td>Testnet USDC from the treasury; payment or claimable balance</td></tr>
+        <tr><td>Detecting USDC deposits (off-ramp)</td><td class="ok">Real</td><td>Horizon payments stream, matched by memo id / muxed id</td></tr>
+        <tr><td>Rates</td><td class="ok">Real (indicative)</td><td>Reflector USD/TRY oracle on Stellar mainnet, plus a flat spread</td></tr>
+        <tr><td>Balances, ledger, quotes, events, webhooks</td><td class="ok">Real logic</td><td>Same behaviour a production system would have</td></tr>
+        <tr><td>Incoming TRY bank transfers</td><td class="warn">Simulated</td><td>You call the sandbox endpoint that a bank integration would call</td></tr>
+        <tr><td>TRY payouts to IBANs</td><td class="warn">Simulated</td><td>Instant record with a FAST-style reference</td></tr>
+        <tr><td>KYC / compliance</td><td class="warn">Simulated</td><td>Instant approval; checksum validation of TCKN and IBAN only</td></tr>
+      </tbody></table>
+
+      <h2 id="concepts">Concepts</h2>
+
+      <h3 id="accounts">Accounts &amp; API keys</h3>
+      <p>An <b>account</b> is you, the integrator. Sign up with an email and password on the <a href="/">home page</a> (or <code>POST /v1/partners</code>). Each account has exactly <b>one API key</b> (<code>trma_test_…</code>), visible in the dashboard and rotatable at any time. Send it on every request:</p>
+      <pre><code>X-API-Key: trma_test_…          # or
+Authorization: Bearer trma_test_…</code></pre>
+      <p>Everything you create — customers, orders, webhooks — is scoped to your account. Other accounts cannot see it.</p>
+      <div class="callout warn">Keys are sandbox credentials and are stored in clear so the dashboard can show them again. Treat this deployment as public testnet infrastructure: never reuse these passwords or keys elsewhere.</div>
+
+      <h3 id="customers">Customers &amp; KYC</h3>
+      <p>A <b>customer</b> is one of your end users. Create one with <code>POST /v1/customers</code>:</p>
+      <pre><code>{
+  "external_id": "user_42",              // your own id, unique per account (optional)
+  "first_name": "Ayşe", "last_name": "Yılmaz",
+  "tckn": "10000000146",                  // T.C. Kimlik No, checksum-validated (optional)
+  "iban": "TR330006100519786457841326",   // Turkish IBAN for payouts (optional, mod-97 validated)
+  "email": "ayse@example.com"
+}</code></pre>
+      <p>The response carries <code>kyc_status</code> and a unique <code>deposit_reference</code> such as <code>TRMA-7K2M-Q9XZ</code>. KYC is instant in the sandbox: <code>approved</code> unless <code>first_name</code> is <code>REJECT</code> or <code>PENDING</code>, which produce the other states so you can build the UI for them. <code>POST /v1/sandbox/customers/{id}/kyc</code> flips the state later. Only <code>approved</code> customers can ramp.</p>
+
+      <h3 id="turkish-rails">Turkish rails: IBAN, FAST/EFT/Havale, açıklama</h3>
+      <p>Retail money in Türkiye moves between bank accounts identified by a 26-character <b>IBAN</b> (<code>TR</code> + 2 check digits + 5-digit bank code + 1 reserved digit + 16-digit account). Transfers run on three rails: <b>FAST</b> (instant, 24/7, the default for retail amounts), <b>EFT</b> (interbank, business hours) and <b>Havale</b> (same bank). Every transfer carries a free-text description — the <b>açıklama</b>.</p>
+      <p>Exchanges credit deposits by matching that description: each customer gets a personal reference code and is told to write it in the açıklama when sending money to the exchange's IBAN. Transfers without a recognisable reference are held and matched manually by support. This sandbox reproduces both paths:</p>
+      <ul>
+        <li><code>GET /v1/customers/{id}/deposit-instructions</code> returns the bank name, IBAN, account holder, the customer's reference and bilingual instructions — show this in your app.</li>
+        <li><code>POST /v1/sandbox/bank-transfers {"reference","amount_try"}</code> is the bank telling the anchor "a transfer with this description arrived". A matching reference credits the balance (HTTP 201). An unknown one is held as <code>unmatched</code> (HTTP 202) until you <code>…/assign</code> it to a customer — the support-desk path.</li>
+      </ul>
+
+      <h3 id="balances">Balances &amp; ledger</h3>
+      <p>Each customer has a <b>TRY</b> balance (2 decimals) and a <b>USDC</b> balance (7 decimals, Stellar's precision). All amounts in the API are decimal <b>strings</b>; the service does fixed-point integer math internally and never rounds up in the customer's favour. Every movement is an append-only <b>ledger</b> entry (<code>GET /v1/customers/{id}/ledger</code>) with a <code>kind</code>:</p>
+      <table><thead><tr><th>kind</th><th>currency</th><th>when</th></tr></thead><tbody>
+        <tr><td><code>bank_transfer</code></td><td>TRY +</td><td>a TRY transfer was matched to the customer</td></tr>
+        <tr><td><code>onramp</code></td><td>TRY −</td><td>on-ramp created (debited up front)</td></tr>
+        <tr><td><code>onramp_refund</code></td><td>TRY +</td><td>on-ramp failed permanently</td></tr>
+        <tr><td><code>offramp_deposit</code></td><td>USDC +</td><td>USDC arrived for an off-ramp</td></tr>
+        <tr><td><code>offramp_convert</code></td><td>USDC − / TRY +</td><td>the deposit was sold for TRY</td></tr>
+        <tr><td><code>payout</code></td><td>TRY −</td><td>TRY sent to the IBAN</td></tr>
+      </tbody></table>
+
+      <h3 id="pricing">Rates, quotes &amp; spread</h3>
+      <p>The anchor treats USDC as 1 USD and prices <b>USDC/TRY</b> off the <b>USD/TRY mid rate</b> read from <a href="https://reflector.network" target="_blank" rel="noopener">Reflector</a>'s foreign-exchange oracle on Stellar mainnet (contract <code>CBKGPWGK…MCJZC</code>, via <code>simulateTransaction</code>, cached 60 s). If the oracle is unreachable it falls back to a static rate and reports <code>rate_source: "static_fallback"</code>.</p>
+      <p>A flat spread (default <b>50 bps</b>) is applied on each side: <code>buy_rate = mid × (1 + spread)</code> when the customer buys USDC, <code>sell_rate = mid × (1 − spread)</code> when they sell. There are no fixed fees. <code>GET /v1/rates</code> shows all three numbers.</p>
+      <p>A <b>quote</b> (<code>POST /v1/quotes</code>) locks a rate for <b>120 seconds</b> and is single-use. Fix either side of the conversion:</p>
+      <pre><code>{"side":"buy",  "amount":"1000.00",  "amount_currency":"TRY"}   // spend 1000 TRY → how much USDC?
+{"side":"buy",  "amount":"25",       "amount_currency":"USDC"}  // want 25 USDC → how much TRY? (rounded up)
+{"side":"sell", "amount":"25",       "amount_currency":"USDC"}  // sell 25 USDC → how much TRY?</code></pre>
+      <p>Quotes are optional: on-ramps accept <code>amount_try</code> and off-ramps <code>amount_usdc</code> at the live rate instead of a <code>quote_id</code>.</p>
+
+      <h2 id="flows">Flows</h2>
+
+      <h3 id="onramp">On-ramp (TRY → USDC)</h3>
+      <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant U as Customer
+  participant App as Your app
+  participant A as TR Mock Anchor
+  participant B as Bank (simulated)
+  participant S as Stellar testnet
+  App->>A: POST /v1/customers
+  A-->>App: customer + deposit_reference
+  App->>U: show IBAN + reference
+  U->>B: TRY transfer, açıklama = reference
+  B->>A: POST /v1/sandbox/bank-transfers (you, in the sandbox)
+  A-->>App: bank_transfer.received · TRY balance credited
+  App->>A: POST /v1/quotes (buy)
+  App->>A: POST /v1/onramps {quote_id, destination_address}
+  A-->>App: status pending (TRY debited)
+  A->>S: payment or createClaimableBalance (USDC)
+  A-->>App: onramp.completed + stellar_tx_hash
+      </pre>
+      <p><code>POST /v1/onramps</code> needs <code>customer_id</code>, <code>destination_address</code> (a <code>G…</code> or muxed <code>M…</code> address) and either <code>quote_id</code> or <code>amount_try</code>; <code>memo</code> (≤28 chars text) is optional. The TRY is debited immediately and the order is <code>pending</code>. A worker settles pending orders every few seconds and the order becomes <code>completed</code> with <code>settlement</code>, <code>stellar_tx_hash</code> and, for claimable balances, <code>claimable_balance_id</code>. If the send fails permanently the order is <code>failed</code> and the TRY is refunded.</p>
+      <p>Limits: 50.00 – 250,000.00 TRY per order (configurable).</p>
+
+      <h3 id="offramp">Off-ramp (USDC → TRY)</h3>
+      <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant U as Customer wallet
+  participant App as Your app
+  participant A as TR Mock Anchor
+  participant S as Stellar testnet
+  App->>A: POST /v1/offramps {customer_id, amount_usdc?}
+  A-->>App: deposit.address + deposit.memo (id), rate locked 30 min
+  App->>U: show address + memo (or a muxed address)
+  U->>S: payment USDC → treasury, memo id
+  S-->>A: watcher sees the payment
+  A-->>App: offramp.deposit_received (USDC balance +, sold for TRY)
+  A-->>App: payout.completed (TRY → IBAN, simulated)
+  A-->>App: offramp.completed
+      </pre>
+      <p><code>POST /v1/offramps</code> returns a <code>deposit</code> object: the treasury address, <code>memo_type: "id"</code> and a 12-digit <code>memo</code>. The customer's wallet must send USDC to that address <b>with that memo</b> (or to a muxed address whose id equals the memo). <code>amount_usdc</code> is informational — the anchor converts <b>whatever amount actually arrives</b>. The rate is locked for 30 minutes; later deposits are repriced at the current sell rate and flagged <code>repriced: true</code>.</p>
+      <p>By default <code>auto_payout</code> is true: the TRY is paid to <code>payout_iban</code> (or the customer's IBAN) as soon as the deposit lands, and <code>payout_id</code> points at the payout. Set <code>auto_payout: false</code> to leave the TRY on the balance and pay out later with <code>POST /v1/payouts</code>. Off-ramps that have not received a deposit can be cancelled.</p>
+      <div class="callout warn">Payments without a usable memo, with an unknown memo, or to a cancelled/completed off-ramp cannot be attributed. They are parked under <code>GET /v1/sandbox/unmatched-deposits</code>. In production a support process would return or assign them — make your UI show the memo prominently.</div>
+
+      <h3 id="payouts">Payouts</h3>
+      <p><code>POST /v1/payouts {"customer_id","amount_try","iban"?}</code> debits the TRY balance and records an instant FAST-style transfer with a <code>bank_reference</code>. In production this is where settlement times (FAST is near-instant; EFT follows banking hours) and payout limits would appear.</p>
+
+      <h3 id="settlement">Settlement details</h3>
+      <ul>
+        <li><b>Payment vs claimable balance.</b> If the destination account exists and trusts the sandbox's USDC, the anchor sends a regular <code>payment</code>. Otherwise (account unfunded, or no trustline) it creates a <b>claimable balance</b> with the destination as the sole, unconditional claimant. The wallet claims it after adding the trustline — see <a href="#wallets">wallet-side notes</a>. This is the same approach production ramps such as Etherfuse use for first-time wallets.</li>
+        <li><b>Muxed destinations.</b> An <code>M…</code> address is paid as such when the base account has a trustline; claimable balances always go to the base <code>G…</code> account.</li>
+        <li><b>Memo on on-ramps.</b> Optional text memo, truncated to 28 bytes.</li>
+        <li><b>Treasury.</b> One account pays every on-ramp and receives every off-ramp: see <code>GET /health</code>. If it runs low, on-ramps wait with <code>pending_reason: "treasury_low"</code> and settle once it is refilled — they do not fail.</li>
+        <li><b>Idempotency.</b> Quotes are single-use; each off-ramp has a unique memo; a deposit transaction is processed at most once.</li>
+      </ul>
+
+      <h2 id="integration">Integration</h2>
+
+      <h3 id="statuses">Statuses &amp; errors</h3>
+      <table><thead><tr><th>Object</th><th>Statuses</th></tr></thead><tbody>
+        <tr><td>Customer <code>kyc_status</code></td><td><code>approved</code> · <code>pending</code> · <code>rejected</code></td></tr>
+        <tr><td>Bank transfer</td><td><code>matched</code> · <code>unmatched</code></td></tr>
+        <tr><td>On-ramp</td><td><code>pending</code> → <code>completed</code> | <code>failed</code></td></tr>
+        <tr><td>Off-ramp</td><td><code>awaiting_deposit</code> → <code>completed</code> | <code>cancelled</code></td></tr>
+        <tr><td>Payout</td><td><code>completed</code></td></tr>
+        <tr><td>Webhook delivery</td><td><code>pending</code> → <code>delivered</code> | <code>failed</code> | <code>cancelled</code></td></tr>
+      </tbody></table>
+      <p>Errors are JSON: <code>{"error":{"code","message","details"?}}</code>.</p>
+      <table><thead><tr><th>HTTP</th><th>code</th><th>meaning</th></tr></thead><tbody>
+        <tr><td>400</td><td><code>validation_error</code>, <code>invalid_json</code>, <code>invalid_amount</code></td><td>Malformed request; <code>details</code> lists field issues</td></tr>
+        <tr><td>400</td><td><code>invalid_tckn</code>, <code>invalid_iban</code>, <code>invalid_destination_address</code></td><td>Checksum / format failed</td></tr>
+        <tr><td>401</td><td><code>unauthorized</code></td><td>Missing or unknown API key</td></tr>
+        <tr><td>404</td><td><code>not_found</code></td><td>Object does not exist (or belongs to another account)</td></tr>
+        <tr><td>409</td><td><code>email_taken</code>, <code>duplicate_external_id</code></td><td>Uniqueness conflict</td></tr>
+        <tr><td>422</td><td><code>insufficient_balance</code></td><td>Not enough TRY; <code>details.available</code> / <code>details.required</code></td></tr>
+        <tr><td>422</td><td><code>kyc_not_approved</code></td><td>Customer is pending/rejected</td></tr>
+        <tr><td>422</td><td><code>quote_expired</code>, <code>quote_consumed</code>, <code>quote_side_mismatch</code>, <code>quote_customer_mismatch</code></td><td>Quote unusable — request a new one</td></tr>
+        <tr><td>422</td><td><code>below_minimum</code>, <code>above_maximum</code>, <code>amount_too_small</code></td><td>Order limits</td></tr>
+        <tr><td>422</td><td><code>missing_iban</code></td><td>auto_payout / payout without an IBAN</td></tr>
+        <tr><td>422</td><td><code>not_cancellable</code>, <code>already_matched</code>, <code>live_stellar</code></td><td>State does not allow the action</td></tr>
+        <tr><td>502</td><td><code>stellar_error</code></td><td>Horizon problem while serving the request</td></tr>
+      </tbody></table>
+
+      <h3 id="webhooks">Webhooks</h3>
+      <p>Register with <code>POST /v1/webhooks {"url":"https://…","events":["*"]}</code>. The response includes a <code>secret</code> (shown once). Each event is POSTed as JSON:</p>
+      <pre><code>POST https://your-app/hook
+Content-Type: application/json
+X-TRMA-Event: onramp.completed
+X-TRMA-Delivery: whd_…
+X-TRMA-Signature: t=1724590000,v1=3f2a…   # hex HMAC-SHA256(secret, "&lt;t&gt;.&lt;raw body&gt;")
+
+{"id":"evt_…","type":"onramp.completed","created_at":"…","data":{ …the on-ramp object… }}</code></pre>
+      <p>Respond with any 2xx within 8 seconds. Failures retry after 5 s, 30 s, 2 min and 10 min, then the delivery is marked <code>failed</code> (<code>GET /v1/webhooks/{id}/deliveries</code>). Verify signatures against the <b>raw</b> body:</p>
+      <pre><code>// Node
+import { createHmac, timingSafeEqual } from 'node:crypto';
+export function verify(rawBody, header, secret) {
+  const { t, v1 } = Object.fromEntries(header.split(',').map((p) => p.split('=')));
+  const expected = createHmac('sha256', secret).update(`${t}.${rawBody}`).digest('hex');
+  return v1.length === expected.length && timingSafeEqual(Buffer.from(v1), Buffer.from(expected))
+    && Math.abs(Date.now() / 1000 - Number(t)) &lt; 300;
+}</code></pre>
+      <pre><code># Python
+import hmac, hashlib, time
+def verify(raw_body: bytes, header: str, secret: str) -> bool:
+    parts = dict(p.split('=', 1) for p in header.split(','))
+    expected = hmac.new(secret.encode(), f"{parts['t']}.".encode() + raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(parts['v1'], expected) and abs(time.time() - int(parts['t'])) &lt; 300</code></pre>
+      <p>Event types: <code>customer.created</code>, <code>customer.kyc_updated</code>, <code>bank_transfer.received</code>, <code>bank_transfer.unmatched</code>, <code>onramp.created</code>, <code>onramp.completed</code>, <code>onramp.failed</code>, <code>offramp.created</code>, <code>offramp.deposit_received</code>, <code>offramp.completed</code>, <code>payout.completed</code>.</p>
+
+      <h3 id="events">Event log (polling)</h3>
+      <p>No public endpoint? Poll <code>GET /v1/events?after=&lt;last event id&gt;&amp;limit=200</code>. Events are returned oldest-first; keep <code>next_after</code> as your cursor. Filter with <code>type=</code>. The same payloads are delivered here and by webhook.</p>
+
+      <h3 id="sandbox">Sandbox controls &amp; test hooks</h3>
+      <table><thead><tr><th>Endpoint</th><th>Stands in for</th></tr></thead><tbody>
+        <tr><td><code>POST /v1/sandbox/bank-transfers</code></td><td>The bank reporting an incoming TRY transfer (by <code>reference</code> or <code>customer_id</code>)</td></tr>
+        <tr><td><code>POST /v1/sandbox/bank-transfers/{id}/assign</code></td><td>Support matching an unreferenced transfer</td></tr>
+        <tr><td><code>POST /v1/sandbox/customers/{id}/kyc</code></td><td>Compliance approving / rejecting</td></tr>
+        <tr><td><code>GET /v1/sandbox/treasury</code></td><td>Treasury balance (shared by everyone)</td></tr>
+        <tr><td><code>GET /v1/sandbox/unmatched-deposits</code></td><td>Ops queue of unattributable USDC</td></tr>
+        <tr><td><code>POST /v1/sandbox/usdc-deposits</code></td><td>The chain — only when the server runs in fake-Stellar mode</td></tr>
+      </tbody></table>
+      <p>Magic values: first name <code>REJECT</code> / <code>PENDING</code>; test TCKN <code>10000000146</code>; test IBAN <code>TR330006100519786457841326</code>.</p>
+
+      <h3 id="examples">Code examples</h3>
+      <pre><code># curl — full on-ramp
+BASE=https://tr-mock-anchor.fly.dev; KEY=trma_test_…
+C=$(curl -s -X POST $BASE/v1/customers -H "X-API-Key: $KEY" -H 'content-type: application/json' \
+  -d '{"first_name":"Ayşe","last_name":"Yılmaz","iban":"TR330006100519786457841326"}')
+CID=$(echo $C | jq -r .id); REF=$(echo $C | jq -r .deposit_reference)
+curl -s -X POST $BASE/v1/sandbox/bank-transfers -H "X-API-Key: $KEY" -H 'content-type: application/json' \
+  -d "{\"reference\":\"$REF\",\"amount_try\":\"1000.00\"}"
+Q=$(curl -s -X POST $BASE/v1/quotes -H "X-API-Key: $KEY" -H 'content-type: application/json' \
+  -d "{\"customer_id\":\"$CID\",\"side\":\"buy\",\"amount\":\"1000.00\",\"amount_currency\":\"TRY\"}" | jq -r .id)
+curl -s -X POST $BASE/v1/onramps -H "X-API-Key: $KEY" -H 'content-type: application/json' \
+  -d "{\"customer_id\":\"$CID\",\"quote_id\":\"$Q\",\"destination_address\":\"G…\"}"</code></pre>
+      <pre><code>// TypeScript — off-ramp with the wallet paying from the same process (e.g. a backend hot wallet)
+import { Asset, Horizon, Keypair, Memo, Networks, Operation, TransactionBuilder } from '@stellar/stellar-sdk';
+const anchor = (m: string, p: string, b?: unknown) => fetch(BASE + p, { method: m, headers: { 'content-type': 'application/json', 'X-API-Key': KEY }, body: b && JSON.stringify(b) }).then((r) => r.json());
+
+const off = await anchor('POST', '/v1/offramps', { customer_id, amount_usdc: '5.0000000' });
+const horizon = new Horizon.Server('https://horizon-testnet.stellar.org');
+const wallet = Keypair.fromSecret(process.env.WALLET_SECRET!);
+const acct = await horizon.loadAccount(wallet.publicKey());
+const tx = new TransactionBuilder(acct, { fee: '1000', networkPassphrase: Networks.TESTNET })
+  .addOperation(Operation.payment({ destination: off.deposit.address, asset: new Asset(off.deposit.asset_code, off.deposit.asset_issuer), amount: '5.0000000' }))
+  .addMemo(Memo.id(off.deposit.memo)).setTimeout(60).build();
+tx.sign(wallet);
+await horizon.submitTransaction(tx);
+// then poll GET /v1/offramps/{id} or wait for offramp.completed</code></pre>
+      <pre><code># Python — poll an on-ramp
+import requests, time
+H = {'X-API-Key': KEY}
+o = requests.post(f'{BASE}/v1/onramps', json={'customer_id': cid, 'amount_try': '250.00', 'destination_address': 'G…'}, headers=H).json()
+while o['status'] == 'pending':
+    time.sleep(2); o = requests.get(f"{BASE}/v1/onramps/{o['id']}", headers=H).json()
+print(o['status'], o['settlement'], o['stellar_tx_hash'])</code></pre>
+
+      <h3 id="wallets">Wallet-side notes</h3>
+      <ul>
+        <li><b>Trustline first.</b> To receive USDC as a plain payment the wallet needs a trustline to <code>USDC:&lt;issuer from /health&gt;</code>. Freighter (testnet) and Stellar Lab can add one.</li>
+        <li><b>Claiming.</b> If <code>settlement</code> is <code>claimable_balance</code>, the wallet adds the trustline and submits <code>claimClaimableBalance({ balanceId })</code> (Freighter shows claimable balances in its UI). Both can go in one transaction — see the <a href="/demo">demo</a>.</li>
+        <li><b>Memos on off-ramps.</b> Always <code>memo_type: id</code>. Wallets that cannot set a memo can pay a muxed <code>M…</code> address built from the treasury and the memo id (<code>new MuxedAccount(treasury, memo).accountId()</code>).</li>
+        <li><b>Exact amounts.</b> The off-ramp converts what arrives, so partial or oversized payments still complete; only the memo must be right.</li>
+      </ul>
+
+      <h2 id="reference">Reference</h2>
+
+      <h3 id="stellar">Stellar details</h3>
+      <table><tbody>
+        <tr><th>Network</th><td>Testnet · passphrase <code>Test SDF Network ; September 2015</code></td></tr>
+        <tr><th>Horizon</th><td><code>https://horizon-testnet.stellar.org</code></td></tr>
+        <tr><th>Asset</th><td><code>USDC</code> issued by Circle's testnet issuer <code>GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5</code> (authoritative value: <code>GET /health</code>)</td></tr>
+        <tr><th>Treasury</th><td>See <code>GET /health</code> / <code>GET /v1/sandbox/treasury</code>. Off-ramp deposits go here; on-ramps are paid from here.</td></tr>
+        <tr><th>stellar.toml</th><td><a href="/.well-known/stellar.toml">/.well-known/stellar.toml</a> (SEP-1, informational — this anchor does not implement SEP-10/24/31)</td></tr>
+        <tr><th>Testnet USDC for your wallets</th><td><a href="https://faucet.circle.com" target="_blank" rel="noopener">faucet.circle.com</a> → Stellar Testnet (20 USDC / address / 2 h). The <a href="/demo">demo</a> does not need it: it on-ramps first.</td></tr>
+      </tbody></table>
+
+      <h3 id="limits">Limits &amp; configuration</h3>
+      <table><thead><tr><th>Setting</th><th>Default</th></tr></thead><tbody>
+        <tr><td>Spread</td><td>50 bps each side</td></tr>
+        <tr><td>Quote validity</td><td>120 s</td></tr>
+        <tr><td>Off-ramp rate lock</td><td>30 min, then repriced</td></tr>
+        <tr><td>On-ramp per order</td><td>50.00 – 250,000.00 TRY</td></tr>
+        <tr><td>Off-ramp minimum</td><td>1 USDC (when <code>amount_usdc</code> is given)</td></tr>
+        <tr><td>Settlement cadence</td><td>on-ramps every 3 s, off-ramp detection every 5 s, webhooks every 2 s</td></tr>
+        <tr><td>Pagination</td><td><code>limit</code> 1–200 (default 50), <code>offset</code></td></tr>
+      </tbody></table>
+
+      <h3 id="production">From sandbox to a real anchor</h3>
+      <p>The API shape is deliberately close to what a Turkish anchor would expose to partners, so the parts of your integration that change are predictable:</p>
+      <ul>
+        <li><b>Bank transfers become real.</b> <code>POST /v1/sandbox/bank-transfers</code> disappears; the anchor's bank integration credits balances, typically within seconds on FAST. Expect delays and the unmatched-transfer path to matter.</li>
+        <li><b>KYC becomes real.</b> Customer creation returns <code>pending</code> until identity checks pass; you will handle document upload or a hosted KYC page and <code>customer.kyc_updated</code> events. Limits depend on KYC tier.</li>
+        <li><b>Payouts have schedules and limits.</b> FAST caps per transaction; EFT runs in banking hours.</li>
+        <li><b>Pricing is a live book.</b> Spreads move with liquidity; quotes are shorter-lived.</li>
+        <li><b>Mainnet asset.</b> USDC's mainnet issuer is <code>GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN</code>; trustlines and treasury addresses change.</li>
+        <li><b>Credentials.</b> Production keys are scoped, rotated and never stored in clear; some anchors add request signing (HMAC of body + timestamp) on top of the key.</li>
+      </ul>
+
+      <h3 id="faq">FAQ</h3>
+      <dl class="gloss">
+        <dt>Why not SEP-24 / SEP-6?</dt><dd>Those standards target wallet-initiated flows with the anchor's own UI. Turkish exchanges expose partner APIs where the integrator owns the UI and holds a key; this sandbox mirrors that reality so hackathon code transfers.</dd>
+        <dt>Can I use this from a browser app?</dt><dd>CORS is open for the sandbox, but the API key is a server credential. Keep it in a backend; use the browser only for the wallet side (signing the off-ramp payment, claiming balances).</dd>
+        <dt>My on-ramp is stuck in <code>pending</code>.</dt><dd>Check <code>pending_reason</code>. <code>treasury_low</code> means the shared treasury needs USDC; <code>retrying: …</code> means Horizon hiccups. Both resolve on their own.</dd>
+        <dt>My off-ramp never completes.</dt><dd>The payment probably lacked the memo, used <code>memo_type: text</code>, or went to the wrong address. Look in <code>GET /v1/sandbox/unmatched-deposits</code>.</dd>
+        <dt>Why did I get 99.00 TRY back from 100 TRY?</dt><dd>Two crossings of a 50 bps spread ≈ 1%. That is the anchor's revenue model.</dd>
+        <dt>Is the data persistent?</dt><dd>Yes, but this is a shared sandbox: assume it can be reset before events.</dd>
+      </dl>
+
+      <h3 id="glossary">Glossary (TR / EN)</h3>
+      <dl class="gloss">
+        <dt>Açıklama</dt><dd>Transfer description field — where the customer writes the deposit reference.</dd>
+        <dt>Havale / EFT / FAST</dt><dd>Same-bank transfer / interbank transfer (banking hours) / instant 24-7 interbank transfer.</dd>
+        <dt>IBAN</dt><dd>26-character Turkish bank account number: <code>TR</code> + 24 digits, mod-97 checksum.</dd>
+        <dt>T.C. Kimlik No (TCKN)</dt><dd>11-digit national identity number with a checksum; required for KYC in Türkiye.</dd>
+        <dt>Bakiye</dt><dd>Balance.</dd>
+        <dt>Kur / Alış / Satış</dt><dd>Exchange rate / buy rate / sell rate (from the customer's perspective).</dd>
+        <dt>Yatırma / Çekme</dt><dd>Deposit / withdrawal.</dd>
+        <dt>Referans kodu</dt><dd>Deposit reference code.</dd>
+        <dt>Anchor</dt><dd>Stellar term for a regulated entity bridging fiat and on-chain assets.</dd>
+        <dt>Trustline</dt><dd>A Stellar account's explicit opt-in to hold a given asset.</dd>
+        <dt>Claimable balance</dt><dd>Funds parked on-chain for a specific account to claim later.</dd>
+        <dt>Memo (id)</dt><dd>A 64-bit number attached to a Stellar payment, used here to route off-ramp deposits.</dd>
+      </dl>
+    </article>
+  </div>
+  <footer>TR Mock Anchor is a testnet sandbox. It is not a bank, an exchange, or a licensed payment institution, and it does not move real money.</footer>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'neutral', securityLevel: 'loose' });
+</script>
+</body>
+</html>

@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TR Mock Anchor · TRY ⇄ USDC sandbox on Stellar testnet</title>
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><span class="dot"></span> TR Mock Anchor <span class="tag">testnet sandbox</span></div>
+    <nav><a href="/demo">How it works</a><a href="/guide">Guide</a><a href="/docs">API reference</a><a href="/dashboard" id="nav-dash" hidden>Dashboard</a></nav>
+  </header>
+
+  <h1>A Turkish TRY ⇄ USDC on/off-ramp you can build against today.</h1>
+  <p class="lead">API-key based, modelled on how Turkish exchanges actually ramp: bank transfer with a reference code → TRY balance → USDC on Stellar. The bank is simulated; the Stellar leg is real testnet USDC. Sign up with your email and get one API key — or <a href="/demo">watch the whole round trip run live</a> first.</p>
+
+  <div class="grid two">
+    <section class="panel accent">
+      <div class="tabs"><button class="active" id="tab-signup" type="button">Sign up</button><button id="tab-login" type="button">Log in</button></div>
+      <form id="signup">
+        <div class="row"><label for="su-email">Email</label><input id="su-email" type="email" required autocomplete="email" placeholder="you@example.com" /></div>
+        <div class="row"><label for="su-name">Name or project (optional)</label><input id="su-name" type="text" autocomplete="organization" placeholder="My hackathon app" /></div>
+        <div class="row"><label for="su-pass">Password (min 8 chars)</label><input id="su-pass" type="password" required minlength="8" autocomplete="new-password" /></div>
+        <button class="primary" type="submit">Create account &amp; get API key</button>
+        <p class="small muted">One account per email, one API key per account. You can rotate it any time from the dashboard.</p>
+      </form>
+      <form id="login" hidden>
+        <div class="row"><label for="li-email">Email</label><input id="li-email" type="email" required autocomplete="email" /></div>
+        <div class="row"><label for="li-pass">Password</label><input id="li-pass" type="password" required autocomplete="current-password" /></div>
+        <button class="primary" type="submit">Log in</button>
+      </form>
+      <p id="auth-error" class="bad small" hidden></p>
+    </section>
+
+    <section class="panel">
+      <h3>Status</h3>
+      <dl class="kv" id="status"><dt>Loading…</dt><dd></dd></dl>
+    </section>
+  </div>
+
+  <div class="grid two" style="margin-top:18px">
+    <section class="panel">
+      <h2>On-ramp · TRY → USDC</h2>
+      <ol class="steps">
+        <li><code>POST /v1/customers</code> → customer with a <b>deposit reference</b></li>
+        <li><code>GET /v1/customers/{id}/deposit-instructions</code> → our IBAN + the reference the user writes in the transfer description (<i>açıklama</i>)</li>
+        <li><code>POST /v1/sandbox/bank-transfers</code> → <b>you play the bank</b>: the TRY arrives, the balance is credited</li>
+        <li><code>POST /v1/quotes</code> → USDC/TRY rate locked 120 s (Reflector USD/TRY oracle + spread)</li>
+        <li><code>POST /v1/onramps</code> → TRY debited, <b>real testnet USDC</b> paid to the wallet (payment or claimable balance)</li>
+      </ol>
+    </section>
+    <section class="panel">
+      <h2>Off-ramp · USDC → TRY</h2>
+      <ol class="steps">
+        <li><code>POST /v1/offramps</code> → treasury address + <b>memo id</b></li>
+        <li>Wallet sends USDC on Stellar testnet with that memo</li>
+        <li>We detect the payment, sell at the locked rate, credit TRY</li>
+        <li><code>auto_payout</code> → TRY “sent” to the customer's IBAN (simulated FAST)</li>
+        <li>Track with <code>GET /v1/offramps/{id}</code>, webhooks, or <code>GET /v1/events</code></li>
+      </ol>
+    </section>
+  </div>
+
+  <section class="panel" style="margin-top:18px">
+    <h2>Quickstart</h2>
+<pre id="quick">curl -X POST $BASE/v1/partners -H 'content-type: application/json' \
+  -d '{"email":"you@example.com","password":"correct-horse-battery","name":"My app"}'
+# → { "api_key": "trma_test_…" }
+
+export KEY=trma_test_…
+curl -X POST $BASE/v1/customers -H "X-API-Key: $KEY" -H 'content-type: application/json' \
+  -d '{"first_name":"Ayşe","last_name":"Yılmaz","iban":"TR330006100519786457841326"}'
+# → { "id": "cus_…", "deposit_reference": "TRMA-XXXX-XXXX", ... }
+
+curl -X POST $BASE/v1/sandbox/bank-transfers -H "X-API-Key: $KEY" -H 'content-type: application/json' \
+  -d '{"reference":"TRMA-XXXX-XXXX","amount_try":"1000.00"}'
+
+curl -X POST $BASE/v1/onramps -H "X-API-Key: $KEY" -H 'content-type: application/json' \
+  -d '{"customer_id":"cus_…","amount_try":"1000.00","destination_address":"G…"}'
+# poll GET $BASE/v1/onramps/{id} until status = completed → stellar_tx_hash</pre>
+  </section>
+
+  <footer>Sandbox for Stellar testnet builders. No real money, no real bank, no real KYC. Rates: Reflector USD/TRY oracle (Stellar mainnet) with a configurable spread. <a href="/llms.txt">llms.txt</a> · <a href="/.well-known/stellar.toml">stellar.toml</a></footer>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const base = location.origin;
+  document.querySelectorAll('#quick').forEach((el) => el.textContent = el.textContent.replaceAll('$BASE', base));
+  const toast = (msg, cls) => { const t = $('toast'); t.textContent = msg; t.className = 'toast ' + (cls || ''); t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 3500); };
+
+  $('tab-signup').onclick = () => { $('signup').hidden = false; $('login').hidden = true; $('tab-signup').classList.add('active'); $('tab-login').classList.remove('active'); };
+  $('tab-login').onclick = () => { $('signup').hidden = true; $('login').hidden = false; $('tab-login').classList.add('active'); $('tab-signup').classList.remove('active'); };
+
+  async function post(url, body) {
+    const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error?.message || ('HTTP ' + r.status));
+    return j;
+  }
+  const showErr = (e) => { $('auth-error').textContent = e.message; $('auth-error').hidden = false; };
+  $('signup').onsubmit = async (ev) => { ev.preventDefault(); $('auth-error').hidden = true; try { await post('/ui/signup', { email: $('su-email').value, password: $('su-pass').value, name: $('su-name').value || undefined }); location.href = '/dashboard'; } catch (e) { showErr(e); } };
+  $('login').onsubmit = async (ev) => { ev.preventDefault(); $('auth-error').hidden = true; try { await post('/ui/login', { email: $('li-email').value, password: $('li-pass').value }); location.href = '/dashboard'; } catch (e) { showErr(e); } };
+
+  fetch('/ui/me').then((r) => { if (r.ok) $('nav-dash').hidden = false; });
+  fetch('/health').then((r) => r.json()).then((h) => {
+    const bal = h.treasury.usdc_balance;
+    $('status').innerHTML = `
+      <dt>Network</dt><dd>Stellar testnet <span class="muted small">(${h.stellar_mode === 'fake' ? 'fake mode: in-memory chain' : 'live Horizon'})</span></dd>
+      <dt>Asset</dt><dd class="mono">${h.asset.code} · ${h.asset.issuer}</dd>
+      <dt>Treasury</dt><dd class="mono">${h.treasury.address}</dd>
+      <dt>Treasury USDC</dt><dd class="${h.treasury.low_balance ? 'warn' : 'ok'}">${bal ?? 'unknown'} ${h.treasury.low_balance ? '(low — on-ramps may wait)' : ''}</dd>
+      <dt>USDC/TRY</dt><dd>mid <b>${h.rates.mid_rate}</b> · buy ${h.rates.buy_rate} · sell ${h.rates.sell_rate} <span class="muted small">(${h.rates.spread_bps} bps, source: ${h.rates.source})</span></dd>`;
+  }).catch(() => { $('status').innerHTML = '<dt class="bad">Health check failed</dt><dd></dd>'; });
+})();
+</script>
+</body>
+</html>

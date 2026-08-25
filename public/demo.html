@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TR Mock Anchor · How it works (live demo)</title>
+<link rel="stylesheet" href="/static/style.css" />
+<style>
+  .step { position: relative; padding-left: 56px; }
+  .step .num { position: absolute; left: 18px; top: 18px; width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--line); display: grid; place-items: center; font-weight: 700; font-size: 13px; color: var(--muted); }
+  .step.done .num { background: var(--ok); color: #fff; border-color: var(--ok); }
+  .step.running .num { border-color: var(--accent); color: var(--accent); }
+  .step.error .num { background: var(--bad); color: #fff; border-color: var(--bad); }
+  .step h2 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .step .desc { color: var(--muted); margin: 0 0 10px; }
+  .step .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .io { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+  @media (max-width: 820px) { .io { grid-template-columns: 1fr; } }
+  .io pre { max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+  .io .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 4px; }
+  .chain { margin-top: 8px; font-size: 13px; } .chain div { padding: 3px 0; }
+  .note { border-left: 3px solid var(--accent); padding: 6px 12px; background: color-mix(in srgb, var(--accent) 8%, transparent); border-radius: 6px; margin: 8px 0; font-size: 14px; }
+  .tr { font-style: italic; color: var(--muted); }
+  details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  .setup .opt { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+  .setup input { max-width: 420px; }
+  .progress { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: 12px 0 18px; } .progress > div { height: 100%; background: var(--accent); width: 0; transition: width .4s; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><a href="/" style="color:inherit"><span class="dot"></span> TR Mock Anchor</a> <span class="tag">how it works</span></div>
+    <nav><a href="/guide">Guide</a><a href="/docs">API reference</a><a href="/dashboard">Dashboard</a></nav>
+  </header>
+
+  <h1>Watch a TRY ⇄ USDC ramp run end to end.</h1>
+  <p class="lead">Every step below is a real call to this sandbox's API and, where the chain is involved, a real transaction on Stellar testnet. Wallets are throwaway keys generated in your browser. Nothing is faked except the bank — and you get to play the bank.</p>
+
+  <section class="panel setup accent">
+    <h3>Setup</h3>
+    <div class="kv" id="env"><dt>Loading…</dt><dd></dd></div>
+    <div class="opt">
+      <span class="small muted">API key:</span>
+      <span id="key-state" class="small">checking your dashboard session…</span>
+      <button class="small" id="btn-temp" type="button" hidden>Create a temporary demo account</button>
+      <input id="key-input" type="text" class="mono" placeholder="…or paste a key: trma_test_…" hidden />
+      <button class="small" id="btn-usekey" type="button" hidden>Use key</button>
+      <a class="small" href="/dashboard" id="lnk-dash" hidden>Open dashboard</a>
+    </div>
+    <div class="opt" style="margin-top:14px">
+      <button class="primary" id="btn-all" type="button" disabled>▶ Run all steps</button>
+      <button id="btn-reset" type="button">Reset</button>
+      <span class="small muted">≈ 90 seconds · uses ~4 USDC from the treasury and returns ~2 of it</span>
+    </div>
+    <div class="progress"><div id="bar"></div></div>
+  </section>
+
+  <div id="steps" class="grid" style="margin-top:18px"></div>
+
+  <section class="panel" id="summary" hidden>
+    <h2>Summary</h2>
+    <dl class="kv" id="summary-kv"></dl>
+    <p class="small muted" style="margin-top:10px">Everything above is inspectable: the customer, orders, ledger and events are in your <a href="/dashboard">dashboard</a>; the transactions are on <a href="https://stellar.expert/explorer/testnet" target="_blank" rel="noopener">stellar.expert</a>.</p>
+  </section>
+
+  <footer>Testnet only. Read the <a href="/guide">guide</a> for the full model, or the <a href="/docs">API reference</a> for every field.</footer>
+</div>
+<div class="toast" id="toast"></div>
+<script src="https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@17/dist/stellar-sdk.min.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const base = location.origin;
+  const SDK = window.StellarSdk;
+  const HORIZON = 'https://horizon-testnet.stellar.org';
+  const horizon = SDK ? new SDK.Horizon.Server(HORIZON) : null;
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const toast = (msg, cls) => { const t = $('toast'); t.textContent = msg; t.className = 'toast ' + (cls || ''); t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 4000); };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const txLink = (h) => `<a class="mono" target="_blank" rel="noopener" href="https://stellar.expert/explorer/testnet/tx/${h}">${h.slice(0, 10)}…</a>`;
+  const acctLink = (a) => `<a class="mono" target="_blank" rel="noopener" href="https://stellar.expert/explorer/testnet/account/${a}">${a.slice(0, 6)}…${a.slice(-4)}</a>`;
+  const pretty = (o) => JSON.stringify(o, null, 2);
+  const params = new URLSearchParams(location.search);
+
+  /* ---------- state (persisted so a reload does not orphan throwaway wallets) ---------- */
+  let st = JSON.parse(localStorage.getItem('trma_demo') || '{}');
+  const save = () => localStorage.setItem('trma_demo', JSON.stringify(st));
+  let env = null; // /health
+
+  /* ---------- API helpers ---------- */
+  async function api(method, path, body, record) {
+    const req = { method, path, body };
+    const r = await fetch(base + path, { method, headers: { 'content-type': 'application/json', ...(st.key ? { 'X-API-Key': st.key } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const j = r.status === 204 ? {} : await r.json().catch(() => ({}));
+    if (record) record(req, { status: r.status, body: j });
+    if (!r.ok) throw new Error(j.error?.message || `HTTP ${r.status}`);
+    return j;
+  }
+  async function friendbot(pub) {
+    const r = await fetch(`https://friendbot.stellar.org?addr=${pub}`);
+    if (!r.ok) throw new Error(`friendbot failed (${r.status})`);
+  }
+  async function submit(secret, build) {
+    const kp = SDK.Keypair.fromSecret(secret);
+    const acct = await horizon.loadAccount(kp.publicKey());
+    const tx = build(new SDK.TransactionBuilder(acct, { fee: '1000', networkPassphrase: SDK.Networks.TESTNET })).setTimeout(60).build();
+    tx.sign(kp);
+    return horizon.submitTransaction(tx);
+  }
+  async function usdcBalance(pub) {
+    const a = await horizon.loadAccount(pub);
+    const b = a.balances.find((x) => x.asset_code === env.asset.code && x.asset_issuer === env.asset.issuer);
+    return b ? b.balance : null;
+  }
+  async function pollUntil(path, pending, maxMs) {
+    const start = Date.now();
+    for (;;) {
+      const cur = await api('GET', path);
+      if (!pending.includes(cur.status)) return cur;
+      if (Date.now() - start > maxMs) throw new Error(`timed out waiting for ${path} (still ${cur.status})`);
+      await sleep(2500);
+    }
+  }
+
+  /* ---------- steps ---------- */
+  const steps = [
+    {
+      id: 'customer', title: 'Create the customer',
+      desc: 'Your app registers its user with the anchor. In Turkey this is where KYC happens (name, T.C. Kimlik No, IBAN). The sandbox approves instantly and hands back a <b>deposit reference</b> unique to this customer.',
+      tr: 'Müşteri oluşturulur; anchor müşteriye özel bir <b>referans kodu</b> verir.',
+      async run(rec) {
+        const c = await api('POST', '/v1/customers', { first_name: 'Ayşe', last_name: 'Yılmaz', tckn: '10000000146', iban: 'TR330006100519786457841326', external_id: `demo-${Date.now()}` }, rec);
+        st.customer = c.id; st.reference = c.deposit_reference; save();
+        return `Customer <span class="mono">${c.id}</span> · KYC <b>${c.kyc_status}</b> · deposit reference <b class="mono">${c.deposit_reference}</b>`;
+      },
+    },
+    {
+      id: 'instructions', title: 'Show the bank details',
+      desc: 'The app shows the customer where to send TRY: the anchor\'s IBAN and the reference to write in the transfer description (<i>açıklama</i>). This is exactly how Turkish exchanges credit deposits — the reference is how the money finds the right account.',
+      tr: 'Uygulama kullanıcıya IBAN\'ı ve açıklamaya yazılacak referansı gösterir.',
+      async run(rec) {
+        const d = await api('GET', `/v1/customers/${st.customer}/deposit-instructions`, undefined, rec);
+        return `Send TRY to <span class="mono">${d.iban_formatted}</span> (${esc(d.bank_name)}, ${esc(d.account_holder)}) with description <b class="mono">${d.reference}</b>. Rails: ${d.rails.join(' / ')}.`;
+      },
+    },
+    {
+      id: 'bank', title: 'Play the bank: the TRY transfer arrives',
+      desc: 'In production the bank notifies the anchor of an incoming FAST/EFT transfer and the anchor matches its description to a customer. Here you send that notification yourself. The TRY balance is credited and a <code>bank_transfer.received</code> event is emitted.',
+      tr: 'Banka rolünü siz oynarsınız: transfer geldi, TL bakiyesi yüklendi.',
+      async run(rec) {
+        const bt = await api('POST', '/v1/sandbox/bank-transfers', { reference: st.reference, amount_try: '300.00', sender_name: 'Ayşe Yılmaz', sender_iban: 'TR330006100519786457841326' }, rec);
+        const b = await api('GET', `/v1/customers/${st.customer}/balances`, undefined, rec);
+        return `Transfer <span class="mono">${bt.id}</span> matched by reference → TRY balance <b>${b.balances.TRY}</b>.`;
+      },
+    },
+    {
+      id: 'walletA', title: 'Create a testnet wallet (with a USDC trustline)', chain: true,
+      desc: 'A throwaway Stellar keypair is generated in your browser, funded by Friendbot, and given a trustline to the sandbox\'s USDC. This stands in for the customer\'s wallet.',
+      tr: 'Tarayıcıda geçici bir cüzdan üretilir, Friendbot ile fonlanır, USDC trustline açılır.',
+      async run(rec, chain) {
+        if (!st.walletA) { const kp = SDK.Keypair.random(); st.walletA = { pub: kp.publicKey(), sec: kp.secret() }; save(); }
+        chain(`Wallet A ${acctLink(st.walletA.pub)} generated locally`);
+        await friendbot(st.walletA.pub);
+        chain('Friendbot funded it with 10,000 XLM');
+        const asset = new SDK.Asset(env.asset.code, env.asset.issuer);
+        const res = await submit(st.walletA.sec, (b) => b.addOperation(SDK.Operation.changeTrust({ asset })));
+        chain(`Trustline to ${env.asset.code} opened: ${txLink(res.hash)}`);
+        return `Wallet A is ready: <span class="mono">${st.walletA.pub}</span>`;
+      },
+    },
+    {
+      id: 'onrampA', title: 'On-ramp: buy USDC with TRY, receive it on-chain', chain: true,
+      desc: 'The app locks a rate with a quote (USD/TRY from Reflector\'s oracle plus the spread), then creates the on-ramp. The anchor debits the TRY balance and its worker pays USDC from the treasury to the wallet — a plain Stellar payment because the trustline exists.',
+      tr: 'Kur kilitlenir, TL bakiyesi düşer, treasury cüzdana gerçek USDC gönderir.',
+      async run(rec, chain) {
+        const q = await api('POST', '/v1/quotes', { customer_id: st.customer, side: 'buy', amount: '100.00', amount_currency: 'TRY' }, rec);
+        let o = await api('POST', '/v1/onramps', { customer_id: st.customer, quote_id: q.id, destination_address: st.walletA.pub, memo: 'tr-mock-anchor demo' }, rec);
+        chain(`On-ramp ${o.id} created (${o.status}); waiting for the treasury worker…`);
+        o = await pollUntil(`/v1/onramps/${o.id}`, ['pending'], 120000);
+        rec({ method: 'GET', path: `/v1/onramps/${o.id}` }, { status: 200, body: o });
+        if (o.status !== 'completed') throw new Error(`on-ramp ${o.status}: ${o.failure_reason || o.pending_reason || ''}`);
+        chain(`Settled via <b>${o.settlement}</b>: ${txLink(o.stellar_tx_hash)}`);
+        const bal = await usdcBalance(st.walletA.pub);
+        chain(`Horizon confirms wallet A holds <b>${bal} ${env.asset.code}</b>`);
+        st.onrampA = { id: o.id, usdc: o.amount_usdc, tx: o.stellar_tx_hash }; save();
+        return `${q.source_amount} TRY → <b>${o.amount_usdc} USDC</b> at ${o.rate} (mid ${q.mid_rate}, ${q.rate_source}).`;
+      },
+    },
+    {
+      id: 'onrampB', title: 'On-ramp to a wallet with no trustline → claimable balance', chain: true,
+      desc: 'Real users often paste a fresh address. The anchor cannot pay USDC to an account without a trustline, so it parks the funds in a <b>claimable balance</b> the wallet can claim later. This demo funds a second wallet, on-ramps to it, then claims from the browser.',
+      tr: 'Trustline\'ı olmayan cüzdana ödeme yapılamaz; anchor claimable balance oluşturur, cüzdan sonra claim eder.',
+      async run(rec, chain) {
+        if (!st.walletB) { const kp = SDK.Keypair.random(); st.walletB = { pub: kp.publicKey(), sec: kp.secret() }; save(); }
+        chain(`Wallet B ${acctLink(st.walletB.pub)} generated locally (no trustline)`);
+        await friendbot(st.walletB.pub);
+        let o = await api('POST', '/v1/onramps', { customer_id: st.customer, amount_try: '100.00', destination_address: st.walletB.pub }, rec);
+        o = await pollUntil(`/v1/onramps/${o.id}`, ['pending'], 120000);
+        rec({ method: 'GET', path: `/v1/onramps/${o.id}` }, { status: 200, body: o });
+        if (o.status !== 'completed') throw new Error(`on-ramp ${o.status}: ${o.failure_reason || o.pending_reason || ''}`);
+        chain(`Settled via <b>${o.settlement}</b>: ${txLink(o.stellar_tx_hash)} · balance id <span class="mono">${(o.claimable_balance_id || '').slice(0, 16)}…</span>`);
+        const asset = new SDK.Asset(env.asset.code, env.asset.issuer);
+        const res = await submit(st.walletB.sec, (b) => b.addOperation(SDK.Operation.changeTrust({ asset })).addOperation(SDK.Operation.claimClaimableBalance({ balanceId: o.claimable_balance_id })));
+        chain(`Wallet B opened a trustline and claimed it: ${txLink(res.hash)}`);
+        const bal = await usdcBalance(st.walletB.pub);
+        chain(`Horizon confirms wallet B holds <b>${bal} ${env.asset.code}</b>`);
+        st.onrampB = { id: o.id, usdc: o.amount_usdc, tx: o.stellar_tx_hash, claim: res.hash }; save();
+        return `100.00 TRY → <b>${o.amount_usdc} USDC</b> delivered as a claimable balance and claimed.`;
+      },
+    },
+    {
+      id: 'offramp', title: 'Off-ramp: send USDC back, receive TRY, pay out to the IBAN', chain: true,
+      desc: 'The app opens an off-ramp and gets the treasury address plus a <b>memo id</b>. Wallet A pays USDC with that memo. The anchor\'s watcher sees the payment on Horizon, sells at the locked rate, credits TRY and — with <code>auto_payout</code> — sends TRY to the customer\'s IBAN (simulated FAST).',
+      tr: 'Cüzdan memo ile USDC gönderir; anchor tespit eder, TL\'ye çevirir, IBAN\'a ödemeyi simüle eder.',
+      async run(rec, chain) {
+        const off = await api('POST', '/v1/offramps', { customer_id: st.customer, amount_usdc: st.onrampA.usdc }, rec);
+        chain(`Deposit address ${acctLink(off.deposit.address)} · memo (id) <b class="mono">${off.deposit.memo}</b> · rate ${off.rate} locked until ${new Date(off.rate_locked_until).toLocaleTimeString()}`);
+        const asset = new SDK.Asset(env.asset.code, env.asset.issuer);
+        const res = await submit(st.walletA.sec, (b) => b.addOperation(SDK.Operation.payment({ destination: off.deposit.address, asset, amount: st.onrampA.usdc })).addMemo(SDK.Memo.id(off.deposit.memo)));
+        chain(`Wallet A paid ${st.onrampA.usdc} ${env.asset.code} with the memo: ${txLink(res.hash)} — waiting for the watcher…`);
+        const done = await pollUntil(`/v1/offramps/${off.id}`, ['awaiting_deposit'], 180000);
+        rec({ method: 'GET', path: `/v1/offramps/${off.id}` }, { status: 200, body: done });
+        if (done.status !== 'completed') throw new Error(`off-ramp ${done.status}`);
+        const payout = await api('GET', `/v1/payouts/${done.payout_id}`, undefined, rec);
+        chain(`Payout ${payout.id}: <b>${payout.amount_try} TRY</b> → ${payout.iban} via ${payout.rail} (${payout.bank_reference})`);
+        st.offramp = { id: done.id, tx: done.stellar_tx_hash, try: done.amount_try, payout: payout.id }; save();
+        return `Received <b>${done.received_usdc} USDC</b> → <b>${done.amount_try} TRY</b> at ${done.rate}${done.repriced ? ' (repriced)' : ''} → paid to IBAN.`;
+      },
+    },
+    {
+      id: 'ledger', title: 'Inspect the ledger and events',
+      desc: 'Every balance movement is a ledger entry and every state change is an event you can receive by webhook or poll. This is what your reconciliation would read.',
+      tr: 'Tüm bakiye hareketleri ledger\'da, tüm durum değişimleri event olarak kayıtlı.',
+      async run(rec) {
+        const l = await api('GET', `/v1/customers/${st.customer}/ledger?limit=20`, undefined, rec);
+        const e = await api('GET', `/v1/events?limit=200`, undefined, rec);
+        const b = await api('GET', `/v1/customers/${st.customer}/balances`, undefined, rec);
+        const kinds = l.data.map((x) => x.kind).reverse().join(' → ');
+        return `${l.data.length} ledger entries (${kinds}); ${e.data.length} events so far. Final balances: TRY <b>${b.balances.TRY}</b>, USDC <b>${b.balances.USDC}</b>.`;
+      },
+    },
+  ];
+
+  /* ---------- render ---------- */
+  function render() {
+    $('steps').innerHTML = steps.map((s, i) => `
+      <section class="panel step" id="step-${s.id}">
+        <div class="num">${i + 1}</div>
+        <h2>${esc(s.title)} <span class="status" id="st-${s.id}">idle</span></h2>
+        <p class="desc">${s.desc}</p>
+        <p class="tr small">${s.tr}</p>
+        <div class="actions"><button class="small" data-run="${i}" type="button">Run step</button><span class="small" id="res-${s.id}"></span></div>
+        <div class="chain" id="chain-${s.id}"></div>
+        <details id="io-wrap-${s.id}" hidden><summary>Requests &amp; responses</summary><div class="io" id="io-${s.id}"></div></details>
+      </section>`).join('');
+    document.querySelectorAll('[data-run]').forEach((b) => (b.onclick = () => runStep(Number(b.dataset.run))));
+  }
+  function setStatus(s, status, cls) { const el = $(`st-${s.id}`); el.textContent = status; el.className = 'status ' + (cls || ''); const card = $(`step-${s.id}`); card.classList.remove('done', 'running', 'error'); if (cls) card.classList.add(cls === 'completed' ? 'done' : cls === 'pending' ? 'running' : 'error'); }
+  function recorder(s) {
+    return (req, res) => {
+      const io = $(`io-${s.id}`); $(`io-wrap-${s.id}`).hidden = false;
+      const body = req.body === undefined ? '' : '\n\n' + pretty(req.body);
+      io.insertAdjacentHTML('beforeend', `<div><div class="lbl">Request</div><pre>${esc(`${req.method} ${req.path}`)}${esc(body)}</pre></div><div><div class="lbl">Response · HTTP ${res.status}</div><pre>${esc(pretty(res.body))}</pre></div>`);
+    };
+  }
+  const chainer = (s) => (html) => $(`chain-${s.id}`).insertAdjacentHTML('beforeend', `<div>⛓ ${html}</div>`);
+  function progress() { const done = steps.filter((s) => st.done?.includes(s.id)).length; $('bar').style.width = `${(done / steps.length) * 100}%`; }
+
+  let running = false;
+  async function runStep(i) {
+    const s = steps[i];
+    if (running) return toast('A step is already running');
+    if (!st.key) return toast('Choose an API key first', 'warn');
+    for (let k = 0; k < i; k++) if (!st.done?.includes(steps[k].id)) return toast(`Run step ${k + 1} first`, 'warn');
+    if (s.chain && !SDK) return toast('Stellar SDK failed to load from the CDN', 'bad');
+    running = true;
+    setStatus(s, 'running', 'pending');
+    $(`chain-${s.id}`).innerHTML = ''; $(`io-${s.id}`).innerHTML = ''; $(`res-${s.id}`).innerHTML = '';
+    try {
+      const summary = await s.run(recorder(s), chainer(s));
+      $(`res-${s.id}`).innerHTML = summary;
+      st.done = [...new Set([...(st.done || []), s.id])]; save();
+      setStatus(s, 'completed', 'completed');
+    } catch (e) {
+      setStatus(s, 'failed', 'failed');
+      $(`res-${s.id}`).innerHTML = `<span class="bad">${esc(e.message)}</span>`;
+      running = false;
+      throw e;
+    } finally {
+      running = false;
+      progress();
+    }
+  }
+  async function runAll() {
+    $('btn-all').disabled = true;
+    try {
+      for (let i = 0; i < steps.length; i++) { if (st.done?.includes(steps[i].id)) continue; await runStep(i); }
+      showSummary();
+      toast('Done — full round trip completed', 'ok');
+    } catch (e) { toast(e.message, 'bad'); }
+    finally { $('btn-all').disabled = false; }
+  }
+  function showSummary() {
+    if (!st.offramp) return;
+    $('summary').hidden = false;
+    $('summary-kv').innerHTML = `
+      <dt>Customer</dt><dd class="mono">${st.customer}</dd>
+      <dt>On-ramp (payment)</dt><dd>${st.onrampA.usdc} USDC → wallet A · ${txLink(st.onrampA.tx)}</dd>
+      <dt>On-ramp (claimable)</dt><dd>${st.onrampB.usdc} USDC → wallet B · ${txLink(st.onrampB.tx)} · claimed ${txLink(st.onrampB.claim)}</dd>
+      <dt>Off-ramp</dt><dd>${st.onrampA.usdc} USDC → ${st.offramp.try} TRY · ${txLink(st.offramp.tx)} · payout ${st.offramp.payout}</dd>
+      <dt>Round trip</dt><dd>300.00 TRY in → 100 TRY spent twice on-chain, ${st.offramp.try} TRY back from ${st.onrampA.usdc} USDC (2 × ${env.rates.spread_bps} bps spread)</dd>`;
+  }
+  function reset() { const key = st.key, keySource = st.keySource; st = { key, keySource }; save(); render(); progress(); $('summary').hidden = true; }
+
+  /* ---------- key handling ---------- */
+  function setKey(key, source) { st.key = key; st.keySource = source; save(); $('key-state').innerHTML = `<span class="ok">✓ ${source}</span> <span class="mono muted">${key.slice(0, 16)}…</span>`; $('btn-temp').hidden = true; $('key-input').hidden = true; $('btn-usekey').hidden = true; $('btn-all').disabled = false; }
+  async function initKey() {
+    if (params.get('key')) return setKey(params.get('key'), 'key from URL');
+    try { const r = await fetch('/ui/me'); if (r.ok) { const me = await r.json(); return setKey(me.api_key, `dashboard account ${me.email}`); } } catch {}
+    if (st.key) return setKey(st.key, st.keySource || 'saved key');
+    $('key-state').textContent = 'not logged in —';
+    $('btn-temp').hidden = false; $('key-input').hidden = false; $('btn-usekey').hidden = false; $('lnk-dash').hidden = false;
+  }
+  $('btn-temp').onclick = async () => {
+    const r = await fetch('/v1/partners', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: `demo-${Math.random().toString(36).slice(2, 10)}@demo.invalid`, password: Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2), name: 'Demo visitor' }) });
+    const j = await r.json();
+    if (!r.ok) return toast(j.error?.message || 'failed', 'bad');
+    setKey(j.api_key, 'temporary demo account');
+  };
+  $('btn-usekey').onclick = () => { const k = $('key-input').value.trim(); if (k) setKey(k, 'pasted key'); };
+  $('btn-all').onclick = runAll;
+  $('btn-reset').onclick = reset;
+
+  /* ---------- boot ---------- */
+  (async () => {
+    render(); progress();
+    try {
+      env = await (await fetch('/health')).json();
+      $('env').innerHTML = `
+        <dt>Network</dt><dd>Stellar testnet (${env.stellar_mode === 'fake' ? 'fake mode — chain steps will fail' : 'live Horizon'})</dd>
+        <dt>Asset</dt><dd class="mono small">${env.asset.code}:${env.asset.issuer}</dd>
+        <dt>Treasury</dt><dd>${acctLink(env.treasury.address)} · <span class="${env.treasury.low_balance ? 'warn' : 'ok'}">${env.treasury.usdc_balance} USDC</span></dd>
+        <dt>USDC/TRY</dt><dd>mid ${env.rates.mid_rate} · buy ${env.rates.buy_rate} · sell ${env.rates.sell_rate} <span class="muted small">(${env.rates.spread_bps} bps, ${env.rates.source})</span></dd>`;
+    } catch { $('env').innerHTML = '<dt class="bad">Health check failed</dt><dd></dd>'; }
+    await initKey();
+    for (const s of steps) if (st.done?.includes(s.id)) setStatus(s, 'completed (earlier)', 'completed');
+    progress(); showSummary();
+    if (params.get('autorun') === '1' && st.key) runAll();
+  })();
+})();
+</script>
+</body>
+</html>
