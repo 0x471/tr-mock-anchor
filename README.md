@@ -1,6 +1,6 @@
 # TR Mock Anchor
 
-**A mock Turkish TRY ⇄ USDC on/off-ramp on Stellar testnet, for builders who need to integrate a TRY ramp before a production anchor exists.**
+**A mock Turkish TRY ⇄ USDC on/off-ramp on Stellar testnet, for builders who need to integrate a TRY ramp before a production anchor exists.** Two doors, one ledger: a partner-style **API-key REST API** (how Turkish exchanges expose ramps) and a standards-compliant **SEP-6 door** for wallets (SEP-1, SEP-10, SEP-12, SEP-38).
 
 Live sandbox: **https://tr-mock-anchor.fly.dev**
 
@@ -21,6 +21,7 @@ Live sandbox: **https://tr-mock-anchor.fly.dev**
 
 <p align="center"><img src="docs/demo.png" alt="The interactive demo after a full run: eight steps completed with transaction links" width="820"></p>
 <p align="center">
+  <a href="docs/sep6-tx.png"><img src="docs/sep6-tx.png" alt="SEP-6 transaction page (more_info_url)" width="270"></a>
   <a href="docs/landing.png"><img src="docs/landing.png" alt="Landing page with signup" width="270"></a>
   <a href="docs/guide.png"><img src="docs/guide.png" alt="Guide" width="270"></a>
   <a href="docs/apidocs.png"><img src="docs/apidocs.png" alt="API reference" width="270"></a>
@@ -34,6 +35,7 @@ Live sandbox: **https://tr-mock-anchor.fly.dev**
 - [Quickstart](#quickstart)
 - [The interactive demo](#the-interactive-demo)
 - [API overview](#api-overview)
+- [SEP-6 door for wallets](#sep-6-door-for-wallets)
 - [Statuses, errors and events](#statuses-errors-and-events)
 - [Pricing](#pricing)
 - [Stellar details](#stellar-details)
@@ -69,7 +71,7 @@ settlement — and a simulated bank so the whole loop can be exercised in second
 | Balances, ledger, quotes, orders, events, webhooks | **Real logic** | Fixed-point money math, append-only ledger, HMAC-signed webhooks with retries |
 | Incoming TRY bank transfers | *Simulated* | `POST /v1/sandbox/bank-transfers` plays the bank; unknown references are held as `unmatched` |
 | TRY payouts to IBANs | *Simulated* | Instant record with a FAST-style bank reference |
-| KYC | *Simulated* | Instant approval; magic first names `REJECT` / `PENDING`; TCKN and IBAN checksums validated |
+| KYC | *Simulated* | Partner API: instant approval; magic first names `REJECT` / `PENDING`; TCKN and IBAN checksums validated. SEP-12: `NEEDS_INFO` until any `PUT`, then `ACCEPTED`; no personal data required, identity numbers are never stored |
 
 ## How a Turkish ramp works (and how the mock mirrors it)
 
@@ -176,9 +178,69 @@ Base path `/v1`. Auth header `X-API-Key: <key>` (or `Authorization: Bearer <key>
 | Webhooks & events | `POST/GET /webhooks` · `DELETE /webhooks/{id}` · `GET /webhooks/{id}/deliveries` · `GET /events` |
 | Sandbox | `POST/GET /sandbox/bank-transfers` · `POST /sandbox/bank-transfers/{id}/assign` · `POST /sandbox/customers/{id}/kyc` · `GET /sandbox/treasury` · `GET /sandbox/unmatched-deposits` · `POST /sandbox/usdc-deposits` (fake-Stellar mode only) |
 | Public (no auth) | `GET /health` · `/openapi.json` · `/docs` · `/guide` · `/demo` · `/llms.txt` · `/.well-known/stellar.toml` |
+| SEP-10 (wallets) | `GET/POST /auth` |
+| SEP-6 (wallets, JWT) | `GET /sep6/info` · `/sep6/deposit` · `/sep6/deposit-exchange` · `/sep6/withdraw` · `/sep6/withdraw-exchange` · `/sep6/transactions` · `/sep6/transaction` · `GET /sep6/tx/{id}` (more_info_url) · `POST /sep6/tx/{id}/simulate-bank-transfer` (sandbox bank) |
+| SEP-12 (wallets, JWT) | `GET/PUT /sep12/customer` · `PUT /sep12/customer/callback` · `DELETE /sep12/customer/{account}` |
+| SEP-38 | `GET /sep38/info` · `/sep38/prices` · `/sep38/price` · `POST /sep38/quote` (JWT) · `GET /sep38/quote/{id}` (JWT) |
 
 The full field-level reference is the OpenAPI document; the [guide](https://tr-mock-anchor.fly.dev/guide) explains
 the model behind it.
+
+## SEP-6 door for wallets
+
+The same anchor is discoverable and usable by any Stellar wallet or SDK that speaks the SEPs. Nothing is
+duplicated: SEP transactions are views over the same on-ramps, off-ramps, ledger and treasury as the partner API.
+
+| SEP | Where | What it does here |
+| --- | --- | --- |
+| [SEP-1](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md) | `/.well-known/stellar.toml` | Publishes `TRANSFER_SERVER`, `WEB_AUTH_ENDPOINT`, `KYC_SERVER`, `ANCHOR_QUOTE_SERVER`, `SIGNING_KEY`, the USDC currency |
+| [SEP-10](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0010.md) | `/auth` | Challenge signed by `SIGNING_KEY`; verifies client signatures against the account's signers and medium threshold (unfunded accounts: master key), `memo` and `client_domain` supported; returns a JWT (`sub` = `G…`, `G…:memo` or `M…`) |
+| [SEP-12](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0012.md) | `/sep12` | **Simulated KYC.** A new wallet user is `NEEDS_INFO` with only *optional* fields; any `PUT /customer` (even `{}`) makes them `ACCEPTED`. Optional name/email/IBAN are kept; `tax_id`, `id_number`, birth dates and documents are dropped, never stored. Memos separate users on one account; `DELETE` forgets |
+| [SEP-6](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0006.md) | `/sep6` | `deposit` returns SEP-9 `instructions` (`bank_name`, `bank_account_number` = IBAN, `external_transfer_memo` = reference); `withdraw` returns the treasury `account_id` + `memo` (type id); `deposit-exchange` / `withdraw-exchange` accept SEP-38 `quote_id`; `transactions` / `transaction` with `kind`, `limit`, `no_older_than`, `paging_id`, lookups by `id`, `stellar_transaction_id`, `external_transaction_id`; `on_change_callback` with an Ed25519 `Signature` header |
+| [SEP-38](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0038.md) | `/sep38` | `iso4217:TRY` ⇄ `stellar:USDC:<issuer>`; indicative `/prices`, `/price` and firm `/quote` (15 min default, up to 1 h) that satisfy the SEP-38 price formulas; fee expressed in the sell asset |
+
+**The bank is still simulated.** A SEP-6 deposit sits in `pending_user_transfer_start` until the TRY "arrives":
+open the transaction's `more_info_url` (`/sep6/tx/{id}`) and press *Simulate incoming TRY transfer*, or
+`POST /sep6/tx/{id}/simulate-bank-transfer {"amount":"150.00"}`. The anchor then credits the user and pays
+**real testnet USDC** to the wallet (payment, or claimable balance without a trustline). Withdrawals are
+real from the first step: the wallet pays USDC with the memo, the watcher sees it on Horizon, TRY is
+credited and "paid out" to the user's sandbox IBAN (or the IBAN they sent via SEP-12).
+
+Status mapping: `pending_user_transfer_start` (waiting for TRY / for the USDC payment) → `pending_anchor`
+(TRY received, paying USDC; also `treasury_low`) → `pending_stellar` (retrying a submit) → `completed`.
+Failures are `error` with `refunds` when TRY was returned to the balance. `amount_fee` is the spread in TRY.
+
+### Try it with a wallet
+
+1. Open [demo-wallet.stellar.org](https://demo-wallet.stellar.org), create/fund a testnet account.
+2. *Add asset* → home domain `tr-mock-anchor.fly.dev`, asset `USDC` (the wallet reads the toml and offers SEP-6).
+3. **Deposit**: the wallet shows the bank instructions; open the transaction's *more info* link and press the
+   simulate button; USDC lands in the wallet within seconds.
+4. **Withdraw**: the wallet pays USDC to the treasury with the memo; the transaction completes and shows the
+   TRY payout reference.
+
+### Conformance
+
+- `npm run sep:conformance` runs SDF's [`@stellar/anchor-tests`](https://github.com/stellar/stellar-anchor-tests)
+  for SEP-1, 10, 12, 6 and 38 against the deployment (`HOME_DOMAIN=http://localhost:8787 npm run sep:conformance`
+  for a local server). Config in `anchor-tests.config.json`. Current result against production is in the
+  [Testing](#testing) section.
+- `npm run e2e:sep6` drives the whole SEP flow from Node against a running server on real testnet: toml →
+  SEP-10 → SEP-12 → deposit (simulated bank, on-chain USDC asserted via Horizon) → SEP-38 quote →
+  withdraw-exchange (USDC paid back with the memo) → completed with payout. Last production run: deposit
+  [f92c4c6d…](https://stellar.expert/explorer/testnet/tx/f92c4c6d055e720cc6436b069abe908517eec3a90783c863c4a5a156f697565f),
+  withdrawal [437cd15e…](https://stellar.expert/explorer/testnet/tx/437cd15e10446bdbf43f6f74f55a35b8b29962efd97835bb269a41502e49ed24).
+
+### Partner API vs SEP door
+
+| | Partner API (`/v1`) | SEP door |
+| --- | --- | --- |
+| Who authenticates | Your backend, with an API key | The end user's wallet, with SEP-10 |
+| Who owns the UI | You | The wallet |
+| Customers | You create them (`POST /v1/customers`) | Created implicitly per SEP-10 subject |
+| Bank simulation | `POST /v1/sandbox/bank-transfers` | `more_info_url` button or `POST /sep6/tx/{id}/simulate-bank-transfer` |
+| Notifications | HMAC webhooks + `GET /v1/events` | `on_change_callback` (Ed25519 `Signature` header) + polling |
+| Mirrors | Turkish exchange partner APIs (e.g. what BiLira exposes to integrators) | Stellar wallet integrations (demo wallet, wallet SDKs) |
 
 ## Statuses, errors and events
 
@@ -224,14 +286,16 @@ falls back to `STATIC_USDTRY` and reports `rate_source: "static_fallback"`. Quot
                  ┌──────────────── Hono (Node 24) ────────────────┐
  browser ──────▶ │ public pages  /  /dashboard  /demo  /guide  /docs│
  your backend ─▶ │ /v1/* (X-API-Key)  ─┐                           │
-                 │ /ui/* (session)     ├─▶ routes ─▶ core (ledger,  │
-                 │                     │            events, money) │
+ wallets ──────▶ │ /auth /sep6 /sep12  ├─▶ routes ─▶ core (ledger,  │
+                 │ /sep38 (SEP-10 JWT) │            events, money, │
+                 │ /ui/* (session)     │            orders, sep)   │
                  └─────────────────────┼───────────┬───────────────┘
                                        ▼           ▼
                                   node:sqlite   workers (3 loops)
                                   (WAL, one     ├─ settleOnramps   ─▶ Horizon: payment / claimable balance
                                    file)        ├─ watchOfframps   ◀─ Horizon: payments to treasury (cursor persisted)
-                                                └─ deliverWebhooks ─▶ partner URLs (HMAC, retries)
+                                                ├─ deliverWebhooks ─▶ partner URLs (HMAC, retries)
+                                                └─ sepCallbacks    ─▶ wallet on_change_callback (Ed25519 Signature)
                                   rates ◀── Reflector FX oracle (mainnet RPC, simulateTransaction) / static
 ```
 
@@ -243,7 +307,8 @@ falls back to `STATIC_USDTRY` and reports `rate_source: "static_fallback"`. Quot
   the whole API can be tested offline (`STELLAR_MODE=fake`).
 - **Nothing throws after a transaction is submitted.** Post-submit lookups (claimable balance id via Horizon effects)
   are best-effort, so a retry can never pay twice.
-- **Per-account isolation.** Every row carries `partner_id`; API keys are looked up by SHA-256 hash.
+- **Per-account isolation.** Every row carries `partner_id`; API keys are looked up by SHA-256 hash. Wallet users live under a built-in `SEP wallet users` partner, one customer per SEP-10 subject.
+- **SEP transactions are views.** `sep_transactions` links to an on-ramp or off-ramp; the SEP status is derived from the order, so the two doors can never disagree.
 
 ## Running locally
 
@@ -263,10 +328,15 @@ Offline / CI: `STELLAR_MODE=fake RATE_SOURCE=static npm run dev` runs with an in
 ## Testing
 
 ```bash
-npm test          # vitest: money math, IBAN/TCKN, full API flow (in-memory DB + fake Stellar), webhooks
+npm test                 # vitest: money math, IBAN/TCKN, partner API flow, SEP-10/6/12/38 flow (in-memory DB + fake Stellar)
 npm run typecheck
-npm run e2e       # against a RUNNING server: creates wallets, moves real testnet USDC, asserts balances on Horizon
+npm run e2e              # partner API against a RUNNING server: creates wallets, moves real testnet USDC, asserts balances on Horizon
+npm run e2e:sep6         # SEP door against a RUNNING server: SEP-10 -> SEP-12 -> deposit -> SEP-38 quote -> withdraw-exchange, on-chain
+npm run sep:conformance  # SDF anchor-tests for SEP-1/10/12/6/38 (HOME_DOMAIN=... to target another deployment)
 ```
+
+Conformance against production (`https://tr-mock-anchor.fly.dev`, `@stellar/anchor-tests` 0.6.22, 2026-08-28): **80 passed, 4 skipped, 0 failed** across SEP-1, SEP-10, SEP-12, SEP-6 and SEP-38.
+The 4 skipped tests only apply to anchors that run SEP-6 without authentication.
 
 `scripts/e2e.ts` performs the same eight steps as the `/demo` page from Node: on-ramp as payment, on-ramp as
 claimable balance (then claims it), off-ramp with memo, payout — and fails loudly if any on-chain balance disagrees
@@ -289,6 +359,8 @@ All settings are environment variables (see `.env.example`).
 | `MIN_ONRAMP_TRY`, `MAX_ONRAMP_TRY`, `MIN_OFFRAMP_USDC` | `50.00`, `250000.00`, `1.0000000` | Order limits |
 | `BANK_NAME`, `ACCOUNT_HOLDER`, `ANCHOR_IBAN` | mock bank identity | Shown in deposit instructions |
 | `SESSION_SECRET` | auto-generated, persisted in DB | Signs dashboard session cookies |
+| `ANCHOR_SIGNING_SECRET` | auto-generated, persisted in DB | SEP-1 `SIGNING_KEY` / SEP-10 server key / callback signatures. Set it to keep the published key stable across databases |
+| `JWT_SECRET` | auto-generated, persisted in DB | Signs SEP-10 JWTs |
 | `WORKERS`, `*_POLL_MS` | `true`, 3000/5000/2000 | Background loops |
 
 ## Deployment
@@ -334,7 +406,8 @@ customers and orders; the treasury and its on-chain history are unaffected.
 - Passwords are scrypt-hashed; sessions are HMAC-signed cookies (`SESSION_SECRET`).
 - CORS is open (`*`) so hackathon prototypes can call the API from a browser, but an API key is a server credential:
   keep it in a backend and use the browser only for the wallet side.
-- The treasury secret lives only in the server's environment (`.env` locally, Fly secrets in production).
+- The treasury secret lives only in the server's environment (`.env` locally, Fly secrets in production). The anchor signing key and JWT secret are generated once and kept in the database unless pinned via env.
+- SEP-12 never stores identity numbers, birth dates or documents, even if a wallet sends them.
 - Never reuse sandbox passwords or keys anywhere else.
 
 ## Limitations
@@ -357,12 +430,13 @@ src/
   rates.ts                       Reflector oracle client, cache, spread, static fallback
   stellar.ts                     StellarGateway: live Horizon implementation + in-memory fake
   workers.ts                     on-ramp settlement, off-ramp watcher, webhook delivery
-  session.ts, auth.ts            dashboard cookies, API-key middleware
-  routes/                        partners, customers, quotes, onramps, offramps, payouts, webhooks, sandbox, ui, public
-  core/                          ledger, events, serializers, account model, row types
+  session.ts, auth.ts, sepauth.ts, jwt.ts   dashboard cookies, API-key middleware, SEP-10 JWT middleware
+  routes/                        partners, customers, quotes, onramps, offramps, payouts, webhooks, sandbox, ui, public, sep10, sep6, sep12, sep38
+  core/                          ledger, events, orders, serializers, sep (partner/keys/customers), sepstatus, row types
   openapi.ts                     OpenAPI 3.1 document
 public/                          index (signup), dashboard (key + playground), demo (interactive e2e), guide, docs, style.css
-scripts/                         setup-treasury, issue-mock-usdc, sweep, e2e
+scripts/                         setup-treasury, issue-mock-usdc, sweep, e2e, e2e-sep6
+anchor-tests.config.json         SDF anchor-tests configuration
 test/                            vitest suites
 docs/                            screenshots
 Dockerfile, fly.toml             deployment

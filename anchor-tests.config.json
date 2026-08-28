@@ -1,0 +1,48 @@
+{
+  "6": {
+    "deposit": {
+      "transactionFields": {
+        "funding_method": "bank_account"
+      }
+    },
+    "withdraw": {
+      "types": {
+        "bank_account": {
+          "transactionFields": {}
+        }
+      }
+    }
+  },
+  "12": {
+    "customers": {
+      "toBeCreated": {
+        "first_name": "Test",
+        "last_name": "User",
+        "email_address": "test-user@example.com"
+      },
+      "sendingClient": {
+        "first_name": "Sending",
+        "last_name": "Client"
+      },
+      "receivingClient": {
+        "first_name": "Receiving",
+        "last_name": "Client"
+      },
+      "toBeDeleted": {
+        "first_name": "Delete",
+        "last_name": "Me"
+      }
+    },
+    "createCustomer": "toBeCreated",
+    "deleteCustomer": "toBeDeleted",
+    "sameAccountDifferentMemos": [
+      "sendingClient",
+      "receivingClient"
+    ]
+  },
+  "38": {
+    "contexts": [
+      "sep6"
+    ]
+  }
+}

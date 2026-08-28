@@ -45,6 +45,13 @@ export interface StellarGateway {
   sendUsdc(args: { destination: string; amountStroops: bigint; memo?: string }): Promise<SendResult>;
   /** Incoming USDC payments to the treasury after `cursor` (Horizon paging token). */
   incomingUsdc(cursor: string | undefined): Promise<{ payments: IncomingPayment[]; cursor: string | undefined }>;
+  /** Signers + thresholds of an account, or null when the account does not exist (SEP-10 verification). */
+  accountSigners(accountId: string): Promise<AccountSigners | null>;
+}
+
+export interface AccountSigners {
+  signers: Array<{ key: string; weight: number; type: string }>;
+  thresholds: { low_threshold: number; med_threshold: number; high_threshold: number };
 }
 
 export class StellarError extends Error {
@@ -163,6 +170,12 @@ export function createLiveGateway(cfg: Config): StellarGateway {
       return { settlement: 'claimable_balance', txHash: res.hash, claimableBalanceId: balanceId };
     },
 
+    async accountSigners(accountId) {
+      const acct = await loadOrNull(accountId);
+      if (!acct) return null;
+      return { signers: acct.signers.map((x) => ({ key: x.key, weight: x.weight, type: x.type })), thresholds: acct.thresholds };
+    },
+
     async incomingUsdc(cursor) {
       let call = server.payments().forAccount(treasury.publicKey()).join('transactions').order('asc').limit(200);
       let last = cursor;
@@ -217,6 +230,8 @@ interface HorizonPaymentRecord {
 /* ---------------- fake (in-memory) ---------------- */
 
 export interface FakeGateway extends StellarGateway {
+  /** Register an account as existing (SEP-10 threshold path); unknown accounts count as unfunded. */
+  registerAccount(accountId: string, signers?: AccountSigners): void;
   /** Queue a simulated inbound USDC payment to the treasury. */
   simulateIncoming(p: { from?: string; amount: string; memoId?: string; toMuxedId?: string; memoType?: string; memo?: string }): IncomingPayment;
   /** Mark an address as unfunded / lacking a trustline so sendUsdc uses a claimable balance. */
@@ -228,6 +243,7 @@ export function createFakeGateway(cfg: Config, initialBalance = '1000000.0000000
   const treasury = cfg.treasurySecret ? Keypair.fromSecret(cfg.treasurySecret) : Keypair.random();
   let balance = parseUsdc(initialBalance);
   const noTrust = new Set<string>();
+  const accounts = new Map<string, AccountSigners>();
   const queue: IncomingPayment[] = [];
   let seq = 0;
   const sent: FakeGateway['sent'] = [];
@@ -250,6 +266,12 @@ export function createFakeGateway(cfg: Config, initialBalance = '1000000.0000000
         : { settlement: 'payment', txHash };
       sent.push({ destination, amount: fmtUsdc(amountStroops), memo, result });
       return result;
+    },
+    async accountSigners(accountId) {
+      return accounts.get(accountId) ?? null;
+    },
+    registerAccount(accountId, signers) {
+      accounts.set(accountId, signers ?? { signers: [{ key: accountId, weight: 1, type: 'ed25519_public_key' }], thresholds: { low_threshold: 0, med_threshold: 0, high_threshold: 0 } });
     },
     async incomingUsdc(cursor) {
       const start = cursor ? Number(cursor) : 0;

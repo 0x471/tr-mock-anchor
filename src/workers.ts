@@ -7,6 +7,10 @@
  */
 import { createHmac } from 'node:crypto';
 import type { Deps } from './context.js';
+import type { SepContext } from './sepauth.js';
+import { createSepContext } from './sepauth.js';
+import { bundle, sepStatusOf, sepTransactionOut } from './core/sepstatus.js';
+import type { SepTransactionRow } from './core/types.js';
 import { kvGet, kvSet, nowIso, tx } from './db.js';
 import { newBankReference, newId } from './ids.js';
 import { fmtRate, fmtTry, fmtUsdc, parseRate, parseUsdc, usdcToTry } from './money.js';
@@ -20,7 +24,7 @@ const MAX_SEND_ATTEMPTS = 5;
 const WEBHOOK_BACKOFF_SECONDS = [5, 30, 120, 600];
 const CURSOR_KEY = 'horizon_payments_cursor';
 
-export function createWorkers(deps: Deps) {
+export function createWorkers(deps: Deps, sep: SepContext = createSepContext(deps)) {
   const { db, stellar, rates, log } = deps;
 
   /* ---------------- on-ramps ---------------- */
@@ -238,6 +242,50 @@ export function createWorkers(deps: Deps) {
     return delivered;
   }
 
+  /* ---------------- SEP-6 on_change_callback ---------------- */
+
+  /** POST the SEP-6 transaction object to the wallet's callback whenever the status changes. */
+  async function sepCallbacksOnce(): Promise<number> {
+    const rows = db
+      .prepare("SELECT * FROM sep_transactions WHERE on_change_callback IS NOT NULL AND on_change_callback != 'postMessage'")
+      .all() as unknown as SepTransactionRow[];
+    let sent = 0;
+    for (const row of rows) {
+      const b = bundle(db, row);
+      const status = sepStatusOf(b);
+      if (status === row.last_callback_status) continue;
+      const body = JSON.stringify({ transaction: sepTransactionOut(deps.cfg, stellar, b) });
+      const t = Math.floor(Date.now() / 1000);
+      const host = safeHost(row.on_change_callback!);
+      const sig = Buffer.from(sep.signingKeypair.sign(Buffer.from(`${t}.${host}.${body}`))).toString('base64');
+      try {
+        const res = await fetch(row.on_change_callback!, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', Signature: `t=${t}, s=${sig}`, 'X-Stellar-Signature': `t=${t}, s=${sig}` },
+          body,
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        sent++;
+      } catch (e) {
+        log.warn(`sep callback for ${row.id} failed: ${(e as Error).message}`);
+      }
+      // Record the attempt either way so a dead callback does not spin every tick.
+      db.prepare('UPDATE sep_transactions SET last_callback_status = ? WHERE id = ?').run(status, row.id);
+      if (status === 'completed' || status === 'error') {
+        db.prepare('UPDATE sep_transactions SET completed_at = COALESCE(completed_at, ?) WHERE id = ?').run(nowIso(), row.id);
+      }
+    }
+    return sent;
+  }
+  function safeHost(url: string): string {
+    try {
+      return new URL(url).host;
+    } catch {
+      return '';
+    }
+  }
+
   /* ---------------- runner ---------------- */
 
   function loop(name: string, fn: () => Promise<unknown>, ms: number) {
@@ -264,11 +312,13 @@ export function createWorkers(deps: Deps) {
     settleOnrampsOnce,
     watchOfframpsOnce,
     deliverWebhooksOnce,
+    sepCallbacksOnce,
     start() {
       stops = [
         loop('settleOnramps', settleOnrampsOnce, deps.cfg.pollMs.onramp),
         loop('watchOfframps', watchOfframpsOnce, deps.cfg.pollMs.offramp),
         loop('deliverWebhooks', deliverWebhooksOnce, deps.cfg.pollMs.webhook),
+        loop('sepCallbacks', sepCallbacksOnce, deps.cfg.pollMs.webhook),
       ];
       log.info('workers started');
     },

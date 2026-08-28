@@ -178,13 +178,61 @@ CREATE TABLE IF NOT EXISTS kv (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS sep_transactions (
+  id TEXT PRIMARY KEY,
+  partner_id TEXT NOT NULL,
+  customer_id TEXT NOT NULL,
+  stellar_account TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  account TEXT,
+  memo TEXT,
+  memo_type TEXT,
+  amount_expected TEXT,
+  source_asset TEXT,
+  destination_asset TEXT,
+  quote_id TEXT,
+  funding_method TEXT,
+  claimable_balance_supported INTEGER NOT NULL DEFAULT 0,
+  on_change_callback TEXT,
+  lang TEXT,
+  reference TEXT,
+  refund_memo TEXT,
+  refund_memo_type TEXT,
+  onramp_id TEXT,
+  offramp_id TEXT,
+  status_override TEXT,
+  message TEXT,
+  last_callback_status TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS sep_tx_customer ON sep_transactions(customer_id, created_at);
+CREATE INDEX IF NOT EXISTS sep_tx_onramp ON sep_transactions(onramp_id);
+CREATE INDEX IF NOT EXISTS sep_tx_offramp ON sep_transactions(offramp_id);
 `;
+
+/** Additive migrations for databases created before a column existed. */
+const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
+  ['onramps', 'mid_rate', 'TEXT'],
+  ['offramps', 'mid_rate', 'TEXT'],
+  ['customers', 'kyc_callback_url', 'TEXT'],
+  ['customers', 'sep12_registered', 'INTEGER NOT NULL DEFAULT 0'],
+];
+
+function addMissingColumns(db: DatabaseSync) {
+  for (const [table, column, ddl] of COLUMN_MIGRATIONS) {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+  }
+}
 
 export function openDb(path: string): DB {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
   db.exec(SCHEMA);
+  addMissingColumns(db);
   return db;
 }
 

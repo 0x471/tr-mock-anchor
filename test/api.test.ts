@@ -251,7 +251,7 @@ describe('api flow', () => {
     expect(h.json.ok).toBe(true);
     expect(h.json.rates.mid_rate).toBe('40.000000');
     const toml = await app.request('/.well-known/stellar.toml');
-    expect(await toml.text()).toContain(`ACCOUNTS=["${stellar.treasuryPublicKey}"]`);
+    expect(await toml.text()).toContain(`ACCOUNTS=["${stellar.treasuryPublicKey}", `);
     const spec = await req('GET', '/openapi.json', undefined, {});
     expect(spec.json.openapi).toBe('3.1.0');
     expect(Object.keys(spec.json.paths)).toContain('/v1/onramps');

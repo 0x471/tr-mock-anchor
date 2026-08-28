@@ -21,6 +21,8 @@ export interface CustomerRow {
   tckn: string | null;
   iban: string | null;
   kyc_status: 'approved' | 'pending' | 'rejected';
+  kyc_callback_url?: string | null;
+  sep12_registered?: number;
   deposit_reference: string;
   try_balance: string;
   usdc_balance: string;
@@ -67,6 +69,7 @@ export interface OnrampRow {
   amount_try: string;
   amount_usdc: string;
   rate: string;
+  mid_rate: string | null;
   destination_address: string;
   memo: string | null;
   status: 'pending' | 'completed' | 'failed';
@@ -90,6 +93,7 @@ export interface OfframpRow {
   received_usdc: string | null;
   amount_try: string | null;
   rate: string;
+  mid_rate: string | null;
   rate_locked_until: string;
   repriced: number;
   memo_id: string;
@@ -145,4 +149,34 @@ export interface LedgerRow {
   kind: string;
   ref_id: string | null;
   created_at: string;
+}
+
+export interface SepTransactionRow {
+  id: string;
+  partner_id: string;
+  customer_id: string;
+  stellar_account: string;
+  kind: 'deposit' | 'withdrawal';
+  account: string | null;
+  memo: string | null;
+  memo_type: string | null;
+  amount_expected: string | null;
+  source_asset: string | null;
+  destination_asset: string | null;
+  quote_id: string | null;
+  funding_method: string | null;
+  claimable_balance_supported: number;
+  on_change_callback: string | null;
+  lang: string | null;
+  reference: string | null;
+  refund_memo: string | null;
+  refund_memo_type: string | null;
+  onramp_id: string | null;
+  offramp_id: string | null;
+  status_override: string | null;
+  message: string | null;
+  last_callback_status: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
 }

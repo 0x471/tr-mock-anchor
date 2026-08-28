@@ -4,11 +4,12 @@ import { join } from 'node:path';
 import type { AppEnv, Deps } from '../context.js';
 import { fmtRate, fmtUsdc } from '../money.js';
 import { buildOpenApi } from '../openapi.js';
+import type { SepContext } from '../sepauth.js';
 
 const PUBLIC_DIR = process.env.PUBLIC_DIR ?? join(process.cwd(), 'public');
 const page = (name: string) => readFileSync(join(PUBLIC_DIR, name), 'utf8');
 
-export function publicRoutes(deps: Deps) {
+export function publicRoutes(deps: Deps, sep: SepContext) {
   const { cfg, stellar, rates } = deps;
   const app = new Hono<AppEnv>();
   const openapi = buildOpenApi(cfg, stellar);
@@ -33,6 +34,7 @@ export function publicRoutes(deps: Deps) {
       network_passphrase: cfg.networkPassphrase,
       horizon_url: cfg.horizonUrl,
       asset: { code: stellar.assetCode, issuer: stellar.assetIssuer },
+      sep: { signing_key: sep.signingKeypair.publicKey(), web_auth_endpoint: `${cfg.publicUrl}/auth`, transfer_server: `${cfg.publicUrl}/sep6`, kyc_server: `${cfg.publicUrl}/sep12`, anchor_quote_server: `${cfg.publicUrl}/sep38` },
       treasury: {
         address: stellar.treasuryPublicKey,
         usdc_balance: bal === null ? null : fmtUsdc(bal),
@@ -77,6 +79,13 @@ export function publicRoutes(deps: Deps) {
         '5. POST /v1/onramps {customer_id, quote_id|amount_try, destination_address} -> USDC sent on Stellar testnet (payment or claimable balance)',
         '6. POST /v1/offramps {customer_id, amount_usdc} -> deposit address + memo id; send USDC on-chain; TRY credited and paid out to IBAN',
         '7. Webhooks: POST /v1/webhooks {url, events}. Poll alternative: GET /v1/events',
+        '',
+        '## SEP door (wallets)',
+        `- SEP-1: ${cfg.publicUrl}/.well-known/stellar.toml (TRANSFER_SERVER, WEB_AUTH_ENDPOINT, KYC_SERVER, ANCHOR_QUOTE_SERVER, SIGNING_KEY)`,
+        `- SEP-10: GET/POST ${cfg.publicUrl}/auth -> JWT`,
+        `- SEP-6: ${cfg.publicUrl}/sep6/{info,deposit,deposit-exchange,withdraw,withdraw-exchange,transactions,transaction}. Deposits: bank details + reference; simulate the TRY arrival at more_info_url. Withdrawals: treasury account + memo id; pay real testnet USDC.`,
+        `- SEP-12: ${cfg.publicUrl}/sep12/customer (simulated KYC, no personal data required, all fields optional)`,
+        `- SEP-38: ${cfg.publicUrl}/sep38/{info,prices,price,quote} (iso4217:TRY <-> stellar:USDC:<issuer>)`,
       ].join('\n'),
     ),
   );
@@ -86,7 +95,12 @@ export function publicRoutes(deps: Deps) {
       [
         'VERSION="2.7.0"',
         `NETWORK_PASSPHRASE="${cfg.networkPassphrase}"`,
-        `ACCOUNTS=["${stellar.treasuryPublicKey}"]`,
+        `SIGNING_KEY="${sep.signingKeypair.publicKey()}"`,
+        `WEB_AUTH_ENDPOINT="${cfg.publicUrl}/auth"`,
+        `TRANSFER_SERVER="${cfg.publicUrl}/sep6"`,
+        `KYC_SERVER="${cfg.publicUrl}/sep12"`,
+        `ANCHOR_QUOTE_SERVER="${cfg.publicUrl}/sep38"`,
+        `ACCOUNTS=["${stellar.treasuryPublicKey}", "${sep.signingKeypair.publicKey()}"]`,
         '',
         '[DOCUMENTATION]',
         'ORG_NAME="TR Mock Anchor (testnet sandbox)"',
@@ -96,8 +110,12 @@ export function publicRoutes(deps: Deps) {
         '[[CURRENCIES]]',
         `code="${stellar.assetCode}"`,
         `issuer="${stellar.assetIssuer}"`,
+        'status="test"',
         'display_decimals=2',
-        'desc="USDC on Stellar testnet (Circle testnet issuer unless overridden). This anchor ramps it against TRY."',
+        'is_asset_anchored=true',
+        'anchor_asset_type="fiat"',
+        'anchor_asset="TRY"',
+        'desc="USDC on Stellar testnet (Circle testnet issuer unless overridden). This anchor ramps it against TRY via SEP-6 or its partner API."',
         '',
       ].join('\n'),
       200,

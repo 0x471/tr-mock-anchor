@@ -16,8 +16,13 @@ import { offrampRoutes } from './routes/offramps.js';
 import { payoutRoutes } from './routes/payouts.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { sandboxRoutes } from './routes/sandbox.js';
+import { sep10Routes } from './routes/sep10.js';
+import { sep6Routes } from './routes/sep6.js';
+import { sep12Routes } from './routes/sep12.js';
+import { sep38Routes } from './routes/sep38.js';
+import { createSepContext, type SepContext } from './sepauth.js';
 
-export function createApp(deps: Deps) {
+export function createApp(deps: Deps, sep: SepContext = createSepContext(deps)) {
   const app = new Hono<AppEnv>();
 
   // Sandbox: browsers may call this directly during hackathons. Keys are testnet-only.
@@ -42,7 +47,7 @@ export function createApp(deps: Deps) {
     return auth(c, next);
   });
 
-  app.route('/', publicRoutes(deps));
+  app.route('/', publicRoutes(deps, sep));
   app.route('/', uiRoutes(deps));
   app.route('/', partnerRoutes(deps));
   app.route('/', customerRoutes(deps));
@@ -52,6 +57,11 @@ export function createApp(deps: Deps) {
   app.route('/', payoutRoutes(deps));
   app.route('/', webhookRoutes(deps));
   app.route('/', sandboxRoutes(deps));
+  // SEP door: wallets authenticate with SEP-10 and use SEP-6 / SEP-12 / SEP-38.
+  app.route('/', sep10Routes(deps, sep));
+  app.route('/', sep6Routes(deps, sep) as unknown as Hono<AppEnv>);
+  app.route('/', sep12Routes(deps, sep) as unknown as Hono<AppEnv>);
+  app.route('/', sep38Routes(deps, sep) as unknown as Hono<AppEnv>);
 
   app.use('/static/*', serveStatic({ root: './public', rewriteRequestPath: (p) => p.replace(/^\/static/, '') }));
 
