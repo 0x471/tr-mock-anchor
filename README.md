@@ -9,6 +9,7 @@ Live sandbox: **https://tr-mock-anchor.fly.dev**
 | 🏠 [Home / sign up](https://tr-mock-anchor.fly.dev/) | Create an account with your email, get your single API key |
 | ▶️ [How it works](https://tr-mock-anchor.fly.dev/demo) | Runs the whole round trip live in your browser: throwaway wallets, real testnet transactions |
 | 📖 [Guide](https://tr-mock-anchor.fly.dev/guide) | Concepts, Turkish rails, flows, statuses, errors, webhooks, glossary (TR/EN) |
+| 🚀 [Mainnet: what to expect](https://tr-mock-anchor.fly.dev/mainnet) | What changes in production (auth, swap-based ramps, compliance) + a readiness checklist |
 | 🧾 [API reference](https://tr-mock-anchor.fly.dev/docs) | Interactive OpenAPI 3.1 ([raw spec](https://tr-mock-anchor.fly.dev/openapi.json)) |
 | 🎛 [Dashboard](https://tr-mock-anchor.fly.dev/dashboard) | Your key, a playground, live tables of customers / orders / events |
 | 🤖 [llms.txt](https://tr-mock-anchor.fly.dev/llms.txt) · [stellar.toml](https://tr-mock-anchor.fly.dev/.well-known/stellar.toml) · [/health](https://tr-mock-anchor.fly.dev/health) | For agents, wallets and monitors |
@@ -443,8 +444,8 @@ are worth designing for from day one:
 - **Compliance fields become real:** travel-rule originator info, `purpose`/`source_of_funds`, pre-registered
   withdrawal addresses and bank accounts, 2FA on writes.
 
-The guide's [what-will-change section](https://tr-mock-anchor.fly.dev/guide#production) has the full list and a
-sandbox-call → production-equivalent mapping table.
+The dedicated page [Mainnet: what to expect](https://tr-mock-anchor.fly.dev/mainnet) has the full list, a
+sandbox-call → production-equivalent mapping table, and a persistent readiness checklist.
 
 ## Project layout
 

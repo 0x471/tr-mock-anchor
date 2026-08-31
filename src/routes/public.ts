@@ -19,6 +19,7 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
   app.get('/docs', (c) => c.html(page('docs.html')));
   app.get('/demo', (c) => c.html(page('demo.html')));
   app.get('/guide', (c) => c.html(page('guide.html')));
+  app.get('/mainnet', (c) => c.html(page('mainnet.html')));
 
   app.get('/health', async (c) => {
     const [bal, buy, sell] = await Promise.all([
@@ -63,6 +64,7 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
         '',
         `- Base URL: ${cfg.publicUrl}`,
         `- Guide (concepts, flows, errors, webhooks, glossary): ${cfg.publicUrl}/guide`,
+        `- Mainnet expectations (what changes in production, readiness checklist): ${cfg.publicUrl}/mainnet`,
         `- Interactive end-to-end demo: ${cfg.publicUrl}/demo`,
         `- OpenAPI: ${cfg.publicUrl}/openapi.json`,
         `- Health & treasury: ${cfg.publicUrl}/health`,

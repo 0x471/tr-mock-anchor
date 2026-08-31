@@ -390,6 +390,7 @@ print(o['status'], o['settlement'], o['stellar_tx_hash'])</code></pre>
       </tbody></table>
 
       <h3 id="production">From sandbox to a real anchor: what will change</h3>
+      <div class="callout">This topic has a dedicated page with a readiness checklist: <a href="/mainnet">Mainnet: what to expect</a>.</div>
       <p>The API shape is deliberately close to what Turkish exchanges expose to partners, and we have studied a real production partner API to keep this list honest. Build against the sandbox, but structure your code so these six things are cheap to swap:</p>
       <ul>
         <li><b>Auth will almost certainly differ.</b> This sandbox uses a static <code>X-API-Key</code>. Real Turkish partner APIs typically use <b>OAuth2 client-credentials</b>: a <code>client_id</code> + <code>client_secret</code> exchanged at a token endpoint for a <b>short-lived JWT</b> plus a refresh token, with <b>granular scopes</b> per capability (read vs create/confirm) — and often an <b>IP allowlist</b>, so your calls must originate from a static egress IP. Isolate auth in one module; assume the token can expire mid-flow.</li>
