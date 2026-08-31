@@ -430,6 +430,22 @@ customers and orders; the treasury and its on-chain history are unaffected.
 - Rates are indicative; the spread is a flat number, not an order book.
 - A shared sandbox may be reset. Do not build anything that depends on its data persisting.
 
+## Sandbox → production: what will change
+
+The API shape is close to what Turkish exchanges expose to partners, so the deltas are predictable — and they
+are worth designing for from day one:
+
+- **Auth:** expect OAuth2 client-credentials (client_id/secret → short-lived JWT + refresh token) with granular
+  read/create **scopes** and an **IP allowlist**, instead of a static key. Isolate auth in one module.
+- **The ramp may decompose:** exchange-style production APIs turn one `POST /v1/onramps` into *deposit + swap
+  (quote→confirm, commission, sometimes via websocket) + crypto withdrawal to a pre-registered address*; fiat
+  deposits may happen outside the API entirely. This sandbox's flat spread stands in for the swap commission.
+- **Compliance fields become real:** travel-rule originator info, `purpose`/`source_of_funds`, pre-registered
+  withdrawal addresses and bank accounts, 2FA on writes.
+
+The guide's [what-will-change section](https://tr-mock-anchor.fly.dev/guide#production) has the full list and a
+sandbox-call → production-equivalent mapping table.
+
 ## Project layout
 
 ```
