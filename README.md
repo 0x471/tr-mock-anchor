@@ -41,7 +41,7 @@ Live sandbox: **https://tr-mock-anchor.fly.dev**
 - [Stellar details](#stellar-details)
 - [Architecture](#architecture)
 - [Running locally](#running-locally)
-- [Testing](#testing)
+- [Testing the full flow](#testing-the-full-flow)
 - [Configuration](#configuration)
 - [Deployment](#deployment)
 - [Operating the sandbox](#operating-the-sandbox)
@@ -224,7 +224,7 @@ Failures are `error` with `refunds` when TRY was returned to the balance. `amoun
 - `npm run sep:conformance` runs SDF's [`@stellar/anchor-tests`](https://github.com/stellar/stellar-anchor-tests)
   for SEP-1, 10, 12, 6 and 38 against the deployment (`HOME_DOMAIN=http://localhost:8787 npm run sep:conformance`
   for a local server). Config in `anchor-tests.config.json`. Current result against production is in the
-  [Testing](#testing) section.
+  [Testing the full flow](#testing-the-full-flow) section.
 - `npm run e2e:sep6` drives the whole SEP flow from Node against a running server on real testnet: toml →
   SEP-10 → SEP-12 → deposit (simulated bank, on-chain USDC asserted via Horizon) → SEP-38 quote →
   withdraw-exchange (USDC paid back with the memo) → completed with payout. Last production run: deposit
@@ -325,15 +325,27 @@ npm run dev                     # http://localhost:8787 — API, dashboard, demo
 Offline / CI: `STELLAR_MODE=fake RATE_SOURCE=static npm run dev` runs with an in-memory chain; then
 `POST /v1/sandbox/usdc-deposits` stands in for the wallet's payment. The `/demo` page needs live mode.
 
-## Testing
+## Testing the full flow
+
+Four ways to exercise a complete TRY ⇄ USDC round trip, from no-code to CLI:
+
+| # | Where | What it does | Needs |
+| --- | --- | --- | --- |
+| 1 | **[/demo](https://tr-mock-anchor.fly.dev/demo)** — the interactive demo page | Runs all 8 partner-API steps live in the browser (customer → bank simulation → in-browser wallet + trustline → on-ramp as payment → on-ramp as claimable balance + claim → off-ramp with memo → ledger). Shows every request/response and links each real testnet tx. `?autorun=1` starts it automatically. | Nothing — uses your dashboard session, a pasted key, or a temporary demo account |
+| 2 | **[demo-wallet.stellar.org](https://demo-wallet.stellar.org)** — a real Stellar wallet (SEP door) | Create/fund a testnet account → *Add asset* `USDC` with home domain `tr-mock-anchor.fly.dev` → **SEP-6 Deposit** (open the transaction's *more info* link, press *Simulate incoming TRY transfer*) → USDC arrives → **SEP-6 Withdraw** (wallet pays USDC with the memo) → TRY payout. | A testnet wallet |
+| 3 | **[/dashboard](https://tr-mock-anchor.fly.dev/dashboard)** — Playground | The same partner flow run against **your own API key**, with live tables of customers, on-ramps, off-ramps and events. | Sign up (email) |
+| 4 | **CLI / CI** (below) | Scripted end-to-end and protocol-conformance runs against any deployment. | Node ≥ 22.13, a clone |
 
 ```bash
 npm test                 # vitest: money math, IBAN/TCKN, partner API flow, SEP-10/6/12/38 flow (in-memory DB + fake Stellar)
 npm run typecheck
-npm run e2e              # partner API against a RUNNING server: creates wallets, moves real testnet USDC, asserts balances on Horizon
-npm run e2e:sep6         # SEP door against a RUNNING server: SEP-10 -> SEP-12 -> deposit -> SEP-38 quote -> withdraw-exchange, on-chain
-npm run sep:conformance  # SDF anchor-tests for SEP-1/10/12/6/38 (HOME_DOMAIN=... to target another deployment)
+# against a RUNNING server (default http://localhost:8787; BASE_URL=… to target production):
+BASE_URL=https://tr-mock-anchor.fly.dev npm run e2e         # partner API: creates wallets, moves real testnet USDC, asserts balances on Horizon
+BASE_URL=https://tr-mock-anchor.fly.dev npm run e2e:sep6    # SEP door: SEP-10 -> SEP-12 -> deposit -> SEP-38 quote -> withdraw-exchange, on-chain
+HOME_DOMAIN=https://tr-mock-anchor.fly.dev npm run sep:conformance   # SDF anchor-tests for SEP-1/10/12/6/38
 ```
+
+Prefer curl? Follow the [Quickstart](#quickstart) for the partner API, or the SEP steps in the [guide](https://tr-mock-anchor.fly.dev/guide#sep6). Every endpoint is in the [API reference](https://tr-mock-anchor.fly.dev/docs).
 
 Conformance against production (`https://tr-mock-anchor.fly.dev`, `@stellar/anchor-tests` 0.6.22, 2026-08-28): **80 passed, 4 skipped, 0 failed** across SEP-1, SEP-10, SEP-12, SEP-6 and SEP-38.
 The 4 skipped tests only apply to anchors that run SEP-6 without authentication.
