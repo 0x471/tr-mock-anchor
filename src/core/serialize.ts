@@ -1,5 +1,6 @@
 import type { Config } from '../config.js';
 import { formatIban } from '../turkey.js';
+import { stellarPayUri } from '../sep7.js';
 import type {
   BankTransferRow,
   CustomerRow,
@@ -114,7 +115,9 @@ export const offrampOut = (o: OfframpRow, assetCode: string, assetIssuer: string
     address: o.deposit_address,
     memo_type: 'id',
     memo: o.memo_id,
-    instructions: `Send ${o.expected_usdc ?? 'any amount of'} ${assetCode} to ${o.deposit_address} with memo (type id) ${o.memo_id}. A muxed address with id ${o.memo_id} also works.`,
+    instructions: `Send ${assetCode} to ${o.deposit_address} with memo (type id) ${o.memo_id} (a muxed address with that id also works). The MEMO is what routes your deposit \u2014 the amount is flexible (whatever you send, min 1 ${assetCode}, is converted). The treasury address is the same for every off-ramp; each off-ramp has its own memo.`,
+    // SEP-7: open a pre-filled payment in a Stellar wallet (Freighter, Lobstr, …) or render it as a QR.
+    payment_uri: stellarPayUri({ destination: o.deposit_address, assetCode, assetIssuer, memoId: o.memo_id, amount: o.expected_usdc, msg: 'TR Mock Anchor off-ramp' }),
   },
   auto_payout: !!o.auto_payout,
   payout_iban: o.payout_iban,

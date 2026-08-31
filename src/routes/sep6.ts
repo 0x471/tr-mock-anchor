@@ -19,6 +19,7 @@ import { emitEvent } from '../core/events.js';
 import { bankTransferOut } from '../core/serialize.js';
 import { createOfframp, createOnramp, resolveRate } from '../core/orders.js';
 import { TRY_ASSET, usdcAsset } from '../core/sep.js';
+import { stellarPayUri } from '../sep7.js';
 import { bundle, depositInstructions, loadSepTx, sepStatusOf, sepTransactionOut, type SepBundle } from '../core/sepstatus.js';
 import { sepError, sepJwtAuth, subAccount, type SepContext, type SepEnv } from '../sepauth.js';
 import type { BankTransferRow, QuoteRow, SepTransactionRow } from '../core/types.js';
@@ -314,6 +315,7 @@ export function sep6Routes(deps: Deps, sep: SepContext) {
         fee_percent: feePercent,
         extra_info: {
           message: `Send ${offramp.expected_usdc ?? 'any amount of'} ${stellar.assetCode} to ${offramp.deposit_address} with memo (type id) ${offramp.memo_id}. Rate ${offramp.rate} TRY/USDC locked until ${offramp.rate_locked_until}. TRY is paid (simulated) to ${customer.iban}.`,
+          payment_uri: stellarPayUri({ destination: offramp.deposit_address, assetCode: stellar.assetCode, assetIssuer: stellar.assetIssuer, memoId: offramp.memo_id, amount: offramp.expected_usdc, msg: 'TR Mock Anchor withdrawal' }),
         },
       });
     } catch (e) {
@@ -381,7 +383,7 @@ export function sep6Routes(deps: Deps, sep: SepContext) {
   /* ---------------- more_info_url page ---------------- */
 
   function page(title: string, body: string, extraHead = '') {
-    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)} · TR Mock Anchor</title><link rel="stylesheet" href="/static/style.css">${extraHead}</head><body><div class="wrap" style="max-width:760px"><header class="top"><div class="brand"><a href="/" style="color:inherit"><span class="dot"></span> TR Mock Anchor</a> <span class="tag">SEP-6 transaction</span></div><nav><a href="/guide#sep6">Guide</a></nav></header>${body}<footer>Testnet sandbox. No real money moves.</footer></div></body></html>`;
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)} · TR Mock Anchor</title><link rel="stylesheet" href="/static/style.css"><script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>${extraHead}</head><body><div class="wrap" style="max-width:760px"><header class="top"><div class="brand"><a href="/" style="color:inherit"><span class="dot"></span> TR Mock Anchor</a> <span class="tag">SEP-6 transaction</span></div><nav><a href="/guide#sep6">Guide</a></nav></header>${body}<footer>Testnet sandbox. No real money moves.</footer></div></body></html>`;
   }
   const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]!);
 
@@ -401,7 +403,12 @@ export function sep6Routes(deps: Deps, sep: SepContext) {
       action = `<section class="panel accent"><h3>Play the bank</h3><p>In real life the customer now sends TRY to <span class="mono">${esc(instr.bank_account_number.value)}</span> with <b class="mono">${esc(b.tx.reference)}</b> in the description. This is a sandbox, so press the button and the anchor will treat the transfer as received, then pay real testnet ${esc(stellar.assetCode)} to <span class="mono">${esc(b.tx.account)}</span>.</p>
         <form method="post" action="/sep6/tx/${esc(b.tx.id)}/simulate-bank-transfer" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input type="hidden" name="_" value="1"><label for="amt" class="small">TRY amount</label><input id="amt" name="amount" type="number" step="0.01" min="${esc(cfg.minOnrampTry)}" value="${esc(b.tx.amount_expected ?? '1000.00')}" style="max-width:160px"><button class="primary" type="submit">Simulate incoming TRY transfer</button></form></section>`;
     } else if (b.tx.kind === 'withdrawal' && status === 'pending_user_transfer_start') {
-      action = `<section class="panel accent"><h3>Waiting for your USDC</h3><p>Send <b>${esc(b.offramp?.expected_usdc ?? 'any amount of')} ${esc(stellar.assetCode)}</b> from your wallet to <span class="mono">${esc(b.offramp?.deposit_address)}</span> with memo (type <b>id</b>) <b class="mono">${esc(b.offramp?.memo_id)}</b>. This page refreshes every 5 seconds.</p></section>`;
+      const uri = stellarPayUri({ destination: b.offramp!.deposit_address, assetCode: stellar.assetCode, assetIssuer: stellar.assetIssuer, memoId: b.offramp!.memo_id, amount: b.offramp!.expected_usdc, msg: 'TR Mock Anchor withdrawal' });
+      action = `<section class="panel accent"><h3>Waiting for your USDC</h3><p>Send <b>${esc(b.offramp?.expected_usdc ?? 'any amount of')} ${esc(stellar.assetCode)}</b> from your wallet to <span class="mono">${esc(b.offramp?.deposit_address)}</span> with memo (type <b>id</b>) <b class="mono">${esc(b.offramp?.memo_id)}</b>.</p>
+        <p><a class="btn" href="${esc(uri)}">Open in a Stellar wallet</a> <button class="small" type="button" onclick="navigator.clipboard.writeText(${JSON.stringify(uri)});this.textContent='Copied'">Copy pay link</button></p>
+        <div id="qr" style="background:#fff;display:inline-block;padding:10px;border-radius:10px"></div>
+        <p class="muted small">Scan with a Stellar wallet, or click above. This page refreshes every 5 seconds.</p>
+        <script>try{var q=qrcode(0,'M');q.addData(${JSON.stringify(uri)});q.make();document.getElementById('qr').innerHTML=q.createImgTag(4,10);}catch(e){document.getElementById('qr').remove();}</script></section>`;
     } else if (status === 'completed') {
       action = `<section class="panel"><h3 class="ok">Completed</h3><p>${esc(t.message)}</p></section>`;
     }

@@ -200,7 +200,12 @@
     try {
       const o = await api('POST', '/v1/offramps', { customer_id: state.customer, amount_usdc: '5.0000000' });
       state.offramp = o.id; savePg();
-      log(`Off-ramp <span class="mono">${o.id}</span>: send ${o.deposit.asset_code} on testnet to <span class="mono">${o.deposit.address}</span> with <b>memo (id) ${o.deposit.memo}</b>. Rate ${o.rate} locked until ${new Date(o.rate_locked_until).toLocaleTimeString()}; TRY will be paid to ${esc(o.payout_iban)}. Polling…`);
+      log(`Off-ramp <span class="mono">${o.id}</span>: send ${o.deposit.asset_code} to <span class="mono">${o.deposit.address}</span> with <b>memo (id) ${o.deposit.memo}</b>. The <b>memo routes it</b> \u2014 amount is flexible (min 1). Same treasury address every time; each off-ramp gets its own memo. Rate ${o.rate} locked until ${new Date(o.rate_locked_until).toLocaleTimeString()}; TRY \u2192 ${esc(o.payout_iban)}. Polling…`);
+      // This dashboard has no access to your wallet key, so it cannot send the USDC for you. Give the user a one-click / scannable payment.
+      const payUri = o.deposit.payment_uri;
+      let qrImg = '';
+      try { const qr = qrcode(0, 'M'); qr.addData(payUri); qr.make(); qrImg = qr.createImgTag(3, 8); } catch {}
+      log(`<b>To finish, pay from your own wallet</b> (this page can't — it has no key): <a href="${esc(payUri)}">open in a Stellar wallet</a> · <button class="small" type="button" onclick="navigator.clipboard.writeText('${esc(payUri)}');this.textContent='Copied'">Copy pay link</button><br><span class="muted small">Freighter: send ${o.deposit.asset_code} to the address above and set the memo (type id) to <b class="mono">${o.deposit.memo}</b>. Or run the <a href="/demo">interactive demo</a>, which pays with a throwaway wallet for you.</span><br>${qrImg ? '<div style="background:#fff;display:inline-block;padding:8px;border-radius:8px;margin-top:6px">' + qrImg + '</div>' : ''}`, 'warn');
       refreshTables();
       for (let i = 0; i < 120; i++) {
         await new Promise((r) => setTimeout(r, 5000));
@@ -231,6 +236,7 @@
   })();
 })();
 </script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 <script src="/static/site.js"></script>
 </body>
 </html>

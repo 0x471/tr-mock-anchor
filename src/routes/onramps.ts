@@ -29,7 +29,7 @@ export function onrampRoutes(deps: Deps) {
     const body = await parseBody(c, CreateOnramp);
     const customer = getCustomer(db, partner.id, body.customer_id);
     if (!customer) throw notFound('customer');
-    if (!isStellarAddress(body.destination_address)) throw badRequest('invalid_destination_address', 'destination_address must be a Stellar G... or M... address');
+    if (!isStellarAddress(body.destination_address)) throw badRequest('invalid_destination_address', 'destination_address must be a Stellar account (G...) or muxed (M...) address. Contract addresses (C...) are not supported: USDC is a classic asset paid via a classic payment, which cannot target a contract.');
 
     let kurus: bigint;
     let quote: QuoteRow | null = null;

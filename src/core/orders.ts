@@ -38,7 +38,7 @@ export function createOnramp(
 ): OnrampRow {
   const { db, cfg } = deps;
   if (customer.kyc_status !== 'approved') throw unprocessable('kyc_not_approved', `Customer KYC status is ${customer.kyc_status}`);
-  if (!isStellarAddress(args.destination)) throw badRequest('invalid_destination_address', 'destination must be a Stellar G... or M... address');
+  if (!isStellarAddress(args.destination)) throw badRequest('invalid_destination_address', 'destination must be a Stellar account (G...) or muxed (M...) address. Contract addresses (C...) are not supported: USDC is a classic asset paid via a classic payment, which cannot target a contract.');
   if (args.kurus < parseTry(cfg.minOnrampTry)) throw unprocessable('below_minimum', `Minimum on-ramp is ${cfg.minOnrampTry} TRY`);
   if (args.kurus > parseTry(cfg.maxOnrampTry)) throw unprocessable('above_maximum', `Maximum on-ramp is ${cfg.maxOnrampTry} TRY`);
   const stroops = tryToUsdc(args.kurus, args.rate.rateMicro);
