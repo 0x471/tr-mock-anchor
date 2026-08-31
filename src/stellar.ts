@@ -11,6 +11,7 @@ import {
   Memo,
   MuxedAccount,
   Operation,
+  rpc,
   StrKey,
   TransactionBuilder,
 } from '@stellar/stellar-sdk';
@@ -79,7 +80,12 @@ export function createLiveGateway(cfg: Config): StellarGateway {
   if (!cfg.treasurySecret) throw new Error('TREASURY_SECRET is required when STELLAR_MODE=live (run: npm run setup:treasury)');
   const treasury = Keypair.fromSecret(cfg.treasurySecret);
   const server = new Horizon.Server(cfg.horizonUrl);
+  // Hybrid: submit + read the treasury's sequence via Stellar RPC (async submit + poll — more robust than
+  // Horizon's synchronous submit, and the strategic submission path). Horizon stays for payment ingestion
+  // (the off-ramp watcher) because RPC has no per-account payment history and only sees Soroban events.
+  const rpcServer = new rpc.Server(cfg.rpcUrl, { allowHttp: cfg.rpcUrl.startsWith('http://') });
   const asset = new Asset(cfg.usdcCode, cfg.usdcIssuer);
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const fee = String(Number(BASE_FEE) * 100); // 10_000 stroops = 0.001 XLM; generous so testnet surges don't stall us
 
   const isUsdc = (b: { asset_type: string; asset_code?: string; asset_issuer?: string }) =>
@@ -94,21 +100,64 @@ export function createLiveGateway(cfg: Config): StellarGateway {
     }
   }
 
-  async function submit(build: (b: TransactionBuilder) => TransactionBuilder) {
-    const source = await server.loadAccount(treasury.publicKey());
+  /**
+   * Build, sign and submit a transaction via Stellar RPC, then poll to a terminal state.
+   * Returns { hash } on success.
+   *  - sendTransaction ERROR / TRY_AGAIN_LATER  -> not included, safe to retry (no double-spend).
+   *  - getTransaction FAILED                    -> included but failed (deterministic), do not retry.
+   */
+  async function submit(build: (b: TransactionBuilder) => TransactionBuilder): Promise<{ hash: string }> {
+    let source;
+    try {
+      source = await rpcServer.getAccount(treasury.publicKey());
+    } catch (e) {
+      throw new StellarError(`rpc getAccount failed: ${(e as Error).message}`, true);
+    }
     const tx = build(new TransactionBuilder(source, { fee, networkPassphrase: cfg.networkPassphrase }))
       .setTimeout(60)
       .build();
     tx.sign(treasury);
+
+    let sent;
     try {
-      return await server.submitTransaction(tx);
+      sent = await rpcServer.sendTransaction(tx);
     } catch (e) {
-      const data = (e as { response?: { data?: { extras?: { result_codes?: { transaction?: string; operations?: string[] } } } } })
-        .response?.data;
-      const codes = data?.extras?.result_codes;
-      const txCode = codes?.transaction ?? '';
-      const retryable = !codes || txCode === 'tx_bad_seq' || txCode === 'tx_too_late' || txCode === 'tx_insufficient_fee';
-      throw new StellarError(`submit failed: ${txCode || (e as Error).message} ${codes?.operations?.join(',') ?? ''}`.trim(), retryable, codes);
+      throw new StellarError(`rpc sendTransaction failed: ${(e as Error).message}`, true);
+    }
+    if (sent.status === 'ERROR') {
+      // Rejected before inclusion. Not on-chain, so a retry cannot double-pay.
+      throw new StellarError(`submit rejected: ${xdrCode(sent.errorResult)}`, true, sent.errorResult);
+    }
+    if (sent.status === 'TRY_AGAIN_LATER') {
+      throw new StellarError('submit deferred: TRY_AGAIN_LATER', true);
+    }
+
+    // PENDING or DUPLICATE: poll getTransaction until SUCCESS/FAILED.
+    for (let i = 0; i < 30; i++) {
+      let got;
+      try {
+        got = await rpcServer.getTransaction(sent.hash);
+      } catch (e) {
+        await sleep(1000);
+        continue;
+      }
+      if (got.status === 'SUCCESS') return { hash: sent.hash };
+      if (got.status === 'FAILED') {
+        // Included and failed: deterministic (e.g. op_underfunded, op_no_trust). Do not retry.
+        throw new StellarError(`tx failed on-chain: ${sent.hash}`, false, got);
+      }
+      await sleep(1000); // NOT_FOUND yet: still being ingested by RPC
+    }
+    // Submitted but not yet observed. Retrying is unsafe (may double-pay), so surface as non-retryable.
+    throw new StellarError(`tx ${sent.hash} submitted but not confirmed within timeout`, false);
+  }
+
+  /** Best-effort transaction result code from a sendTransaction error result (RPC), for logging only. */
+  function xdrCode(errorResult: unknown): string {
+    try {
+      return (errorResult as { result?: () => { switch: () => { name: string } } })?.result?.().switch?.().name ?? 'unknown';
+    } catch {
+      return 'unknown';
     }
   }
 

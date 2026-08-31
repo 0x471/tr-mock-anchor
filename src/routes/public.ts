@@ -21,6 +21,115 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
   app.get('/guide', (c) => c.html(page('guide.html')));
   app.get('/mainnet', (c) => c.html(page('mainnet.html')));
 
+  // Endpoint list derived from the OpenAPI doc, so it never drifts from the real API.
+  const apiEndpoints = () =>
+    Object.entries(openapi.paths).flatMap(([p, ops]) =>
+      Object.entries(ops as Record<string, { summary?: string; tags?: string[] }>)
+        .filter(([m]) => ['get', 'post', 'patch', 'delete', 'put'].includes(m))
+        .map(([m, o]) => ({ method: m.toUpperCase(), path: p, summary: o.summary ?? '', tag: o.tags?.[0] ?? 'Other' })),
+    );
+
+  const PAGES: Array<[string, string, string]> = [
+    ['/', 'Home & sign up', 'Create an account with your email, get your single API key.'],
+    ['/demo', 'How it works (interactive demo)', 'Runs the full partner-API round trip live in the browser with real testnet transactions.'],
+    ['/guide', 'Guide', 'Concepts, Turkish rails, on/off-ramp flows, SEP-6 door, statuses, errors, webhooks, glossary (TR/EN).'],
+    ['/mainnet', 'Mainnet: what to expect', 'What changes moving from this sandbox to a production anchor, plus a readiness checklist.'],
+    ['/docs', 'API reference', 'Interactive OpenAPI 3.1 reference.'],
+    ['/dashboard', 'Dashboard', 'Your API key, a playground, and live tables of customers / orders / events (login required).'],
+  ];
+  const MACHINE: Array<[string, string]> = [
+    ['/openapi.json', 'OpenAPI 3.1 specification (JSON).'],
+    ['/llms.txt', 'Concise machine index of this anchor (this file).'],
+    ['/llms-full.txt', 'Full text: quickstart, every endpoint, statuses, pricing, mainnet notes — one document.'],
+    ['/sitemap.md', 'Human- and AI-readable Markdown sitemap.'],
+    ['/sitemap.xml', 'XML sitemap for crawlers.'],
+    ['/health', 'Service, treasury balance, live rates, SEP endpoints (JSON).'],
+    ['/.well-known/stellar.toml', 'SEP-1 metadata (SIGNING_KEY, TRANSFER_SERVER, WEB_AUTH_ENDPOINT, KYC_SERVER, ANCHOR_QUOTE_SERVER).'],
+  ];
+
+  app.get('/sitemap.md', (c) =>
+    c.text(
+      [
+        '# TR Mock Anchor — Sitemap',
+        '',
+        `> Mock Turkish TRY <-> USDC on/off-ramp on Stellar testnet. Two doors on one ledger: an API-key partner REST API and a SEP-6 wallet door. Base URL: ${cfg.publicUrl}`,
+        '',
+        'If you are an AI reading this: fetch `/llms-full.txt` for the complete reference in one request, or `/openapi.json` for the machine-readable API spec.',
+        '',
+        '## Pages',
+        ...PAGES.map(([p, t, d]) => `- [${t}](${cfg.publicUrl}${p}) — ${d}`),
+        '',
+        '## Machine-readable',
+        ...MACHINE.map(([p, d]) => `- [${cfg.publicUrl}${p}](${cfg.publicUrl}${p}) — ${d}`),
+        '',
+        '## API endpoints',
+        ...apiEndpoints().map((e) => `- \`${e.method} ${e.path}\` — ${e.summary} _(${e.tag})_`),
+        '',
+      ].join('\n'),
+      200,
+      { 'content-type': 'text/markdown; charset=utf-8', 'access-control-allow-origin': '*' },
+    ),
+  );
+
+  app.get('/sitemap.xml', (c) => {
+    const urls = PAGES.map(([p]) => p).concat(MACHINE.map(([p]) => p));
+    return c.text(
+      `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
+        urls.map((u) => `  <url><loc>${cfg.publicUrl}${u}</loc></url>`).join('\n') +
+        `\n</urlset>\n`,
+      200,
+      { 'content-type': 'application/xml; charset=utf-8', 'access-control-allow-origin': '*' },
+    );
+  });
+
+  app.get('/llms-full.txt', async (c) => {
+    const [buy, sell] = await Promise.all([rates.quote('buy'), rates.quote('sell')]);
+    const byTag = new Map<string, ReturnType<typeof apiEndpoints>>();
+    for (const e of apiEndpoints()) (byTag.get(e.tag) ?? byTag.set(e.tag, []).get(e.tag)!).push(e);
+    const endpointBlock = [...byTag.entries()].flatMap(([tag, list]) => [`### ${tag}`, ...list.map((e) => `- ${e.method} ${e.path} — ${e.summary}`), '']);
+    return c.text(
+      [
+        '# TR Mock Anchor — full reference',
+        `Base URL: ${cfg.publicUrl}`,
+        '',
+        'Mock Turkish TRY <-> USDC on/off-ramp on Stellar testnet, for builders integrating a TRY ramp before a production anchor exists. Two doors on one ledger:',
+        'partner REST API (header X-API-Key) and a SEP-6 wallet door (SEP-1/10/12/38). The bank and KYC are simulated; the Stellar leg is real testnet USDC.',
+        `Asset: ${stellar.assetCode}:${stellar.assetIssuer}. Treasury: ${stellar.treasuryPublicKey}.`,
+        `Rates: USD/TRY from Reflector oracle + ${buy.spreadBps} bps spread (buy ${fmtRate(buy.rateMicro)}, sell ${fmtRate(sell.rateMicro)}). Amounts are decimal strings (TRY 2dp, USDC 7dp).`,
+        '',
+        '## Partner API quickstart',
+        '1. POST /v1/partners {"email","password","name"} -> {api_key}. Send it as X-API-Key on every /v1 call.',
+        '2. POST /v1/customers {first_name,last_name,iban?,tckn?} -> {id, deposit_reference, kyc_status:"approved"}.',
+        '3. GET /v1/customers/{id}/deposit-instructions -> IBAN + reference to write in the transfer description.',
+        '4. POST /v1/sandbox/bank-transfers {reference, amount_try} -> simulates the incoming TRY transfer; credits TRY balance.',
+        '5. POST /v1/quotes {side:"buy",amount,amount_currency} -> rate locked 120s (optional).',
+        '6. POST /v1/onramps {customer_id, amount_try|quote_id, destination_address} -> real testnet USDC to the wallet (payment, or claimable balance if no trustline). Poll GET /v1/onramps/{id}.',
+        '7. Off-ramp: POST /v1/offramps {customer_id, amount_usdc} -> {deposit:{address,memo_type:"id",memo}}. Send USDC on-chain with that memo; TRY is credited and paid out to the IBAN. Poll GET /v1/offramps/{id}.',
+        '8. Notifications: POST /v1/webhooks {url,events} (HMAC-signed) or poll GET /v1/events.',
+        '',
+        '## SEP door quickstart (wallets)',
+        'SEP-1 stellar.toml at /.well-known/stellar.toml. SEP-10 auth: GET/POST /auth -> JWT (Bearer). SEP-6: /sep6/{info,deposit,withdraw,deposit-exchange,withdraw-exchange,transactions,transaction}.',
+        'SEP-12 simulated KYC (no personal data required). SEP-38 quotes: iso4217:TRY <-> stellar:USDC:<issuer>. Deposits wait until the simulated bank transfer is triggered at the transaction more_info_url (/sep6/tx/{id}).',
+        '',
+        '## Statuses',
+        'On-ramp: pending -> completed | failed (TRY refunded). settlement: payment | claimable_balance.',
+        'Off-ramp: awaiting_deposit -> completed | cancelled.',
+        'SEP-6: pending_user_transfer_start -> pending_anchor -> pending_stellar -> completed | error.',
+        '',
+        '## Errors',
+        'JSON {"error":{"code","message","details?"}}. 400 validation/invalid_iban/invalid_tckn; 401 unauthorized; 404 not_found; 409 email_taken/duplicate_external_id; 422 insufficient_balance/kyc_not_approved/quote_expired/quote_consumed/below_minimum/missing_iban; 502 stellar_error.',
+        '',
+        '## What changes on mainnet',
+        'Auth likely becomes OAuth2 client-credentials (JWT + refresh, scopes, IP allowlist). The ramp may decompose into deposit + swap (quote->confirm, commission) + crypto withdrawal to a pre-registered address. Real compliance fields (travel-rule originator, purpose, source_of_funds), 2FA, per-tier limits. Fiat deposits may be observe-only. Notifications may be a websocket. Mainnet USDC issuer GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN. See /mainnet.',
+        '',
+        '## All API endpoints',
+        ...endpointBlock,
+      ].join('\n'),
+      200,
+      { 'content-type': 'text/plain; charset=utf-8', 'access-control-allow-origin': '*' },
+    );
+  });
+
   app.get('/health', async (c) => {
     const [bal, buy, sell] = await Promise.all([
       stellar.treasuryUsdcBalance().catch(() => null),
@@ -63,6 +172,8 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
         '> Mock Turkish TRY <-> USDC on/off-ramp for Stellar testnet builders. API-key based, modelled on how Turkish exchanges ramp: bank transfer with a reference code -> TRY balance -> convert to USDC at USD/TRY -> USDC paid to the wallet. Off-ramp is the reverse. Nothing here is a real financial service.',
         '',
         `- Base URL: ${cfg.publicUrl}`,
+        `- Full reference in one document: ${cfg.publicUrl}/llms-full.txt`,
+        `- Sitemap (Markdown): ${cfg.publicUrl}/sitemap.md`,
         `- Guide (concepts, flows, errors, webhooks, glossary): ${cfg.publicUrl}/guide`,
         `- Mainnet expectations (what changes in production, readiness checklist): ${cfg.publicUrl}/mainnet`,
         `- Interactive end-to-end demo: ${cfg.publicUrl}/demo`,

@@ -14,6 +14,7 @@ export const config = {
   // Stellar
   stellarMode: str(env.STELLAR_MODE, 'live') as 'live' | 'fake',
   horizonUrl: str(env.HORIZON_URL, 'https://horizon-testnet.stellar.org'),
+  rpcUrl: str(env.RPC_URL, 'https://soroban-testnet.stellar.org'),
   networkPassphrase: str(env.NETWORK_PASSPHRASE, Networks.TESTNET),
   usdcCode: 'USDC',
   // Circle's USDC issuer on Stellar testnet.

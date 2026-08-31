@@ -24,7 +24,7 @@
 <div class="wrap">
   <header class="top">
     <div class="brand"><a href="/" style="color:inherit"><span class="dot"></span> TR Mock Anchor</a> <span class="tag">guide</span></div>
-    <nav><a href="/demo">How it works</a><a href="/docs">API reference</a><a href="/dashboard">Dashboard</a></nav>
+    <nav aria-label="Primary" class="primary-nav"><a href="/">Home</a><a href="/demo">How it works</a><a href="/guide">Guide</a><a href="/mainnet">Mainnet</a><a href="/docs">API</a><a href="/dashboard">Dashboard</a></nav>
   </header>
 
   <div class="layout">
@@ -372,6 +372,7 @@ print(o['status'], o['settlement'], o['stellar_tx_hash'])</code></pre>
       <table><tbody>
         <tr><th>Network</th><td>Testnet · passphrase <code>Test SDF Network ; September 2015</code></td></tr>
         <tr><th>Horizon</th><td><code>https://horizon-testnet.stellar.org</code></td></tr>
+        <tr><th>Endpoints</th><td>Submission + treasury sequence via <b>Stellar RPC</b> (<code>soroban-testnet.stellar.org</code>, async send + poll); incoming-payment watcher via <b>Horizon</b> (RPC has no per-account payment history). See <a href="/mainnet">Mainnet</a> for the production reasoning.</td></tr>
         <tr><th>Asset</th><td><code>USDC</code> issued by Circle's testnet issuer <code>GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5</code> (authoritative value: <code>GET /health</code>)</td></tr>
         <tr><th>Treasury</th><td>See <code>GET /health</code> / <code>GET /v1/sandbox/treasury</code>. Off-ramp deposits go here; on-ramps are paid from here.</td></tr>
         <tr><th>stellar.toml</th><td><a href="/.well-known/stellar.toml">/.well-known/stellar.toml</a> — SEP-1 with <code>TRANSFER_SERVER</code>, <code>WEB_AUTH_ENDPOINT</code>, <code>KYC_SERVER</code>, <code>ANCHOR_QUOTE_SERVER</code>, <code>SIGNING_KEY</code></td></tr>
@@ -445,5 +446,6 @@ print(o['status'], o['settlement'], o['stellar_tx_hash'])</code></pre>
   const dark = matchMedia('(prefers-color-scheme: dark)').matches;
   mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'neutral', securityLevel: 'loose' });
 </script>
+<script src="/static/site.js"></script>
 </body>
 </html>

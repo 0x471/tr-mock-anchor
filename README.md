@@ -274,6 +274,7 @@ falls back to `STATIC_USDTRY` and reports `rate_source: "static_fallback"`. Quot
 | --- | --- |
 | Network | Testnet — `Test SDF Network ; September 2015` |
 | Horizon | `https://horizon-testnet.stellar.org` |
+| Endpoints | Submission + treasury sequence via **Stellar RPC** (`soroban-testnet.stellar.org`); incoming-payment watcher via **Horizon** (RPC has no per-account payment history) |
 | Asset | `USDC` issued by Circle's testnet issuer `GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5` (authoritative: `GET /health`) |
 | Treasury | `GCLCZEQZ2THTEDAOFI66LACNPLY4OBKN7VKLEZFMBIHYKYQOW2W7T3Z6` — pays every on-ramp, receives every off-ramp |
 | Off-ramp routing | `memo_type: id` (12-digit id) or a muxed `M…` address with that id |

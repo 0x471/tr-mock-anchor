@@ -5,12 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>TR Mock Anchor · TRY ⇄ USDC sandbox on Stellar testnet</title>
 <link rel="stylesheet" href="/static/style.css" />
+<link rel="alternate" type="text/markdown" href="/sitemap.md" title="Sitemap (Markdown)" />
+<link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt" />
 </head>
 <body>
 <div class="wrap">
   <header class="top">
     <div class="brand"><span class="dot"></span> TR Mock Anchor <span class="tag">testnet sandbox</span></div>
-    <nav><a href="/demo">How it works</a><a href="/guide">Guide</a><a href="/mainnet">Mainnet</a><a href="/docs">API reference</a><a href="/dashboard" id="nav-dash" hidden>Dashboard</a></nav>
+    <nav aria-label="Primary" class="primary-nav"><a href="/">Home</a><a href="/demo">How it works</a><a href="/guide">Guide</a><a href="/mainnet">Mainnet</a><a href="/docs">API</a><a href="/dashboard">Dashboard</a></nav>
   </header>
 
   <h1>A Turkish TRY ⇄ USDC on/off-ramp you can build against today.</h1>
@@ -90,7 +92,7 @@ curl -X POST $BASE/v1/onramps -H "X-API-Key: $KEY" -H 'content-type: application
 # poll GET $BASE/v1/onramps/{id} until status = completed → stellar_tx_hash</pre>
   </section>
 
-  <footer>Sandbox for Stellar testnet builders. No real money, no real bank, no real KYC. Rates: Reflector USD/TRY oracle (Stellar mainnet) with a configurable spread. <a href="/llms.txt">llms.txt</a> · <a href="/.well-known/stellar.toml">stellar.toml</a></footer>
+  <footer>Sandbox for Stellar testnet builders. No real money, no real bank, no real KYC. Rates: Reflector USD/TRY oracle (Stellar mainnet) with a configurable spread. For AIs: <a href="/llms.txt">llms.txt</a> · <a href="/llms-full.txt">llms-full.txt</a> · <a href="/sitemap.md">sitemap.md</a> · <a href="/.well-known/stellar.toml">stellar.toml</a></footer>
 </div>
 <div class="toast" id="toast"></div>
 <script>
@@ -114,7 +116,6 @@ curl -X POST $BASE/v1/onramps -H "X-API-Key: $KEY" -H 'content-type: application
   $('signup').onsubmit = async (ev) => { ev.preventDefault(); $('auth-error').hidden = true; try { await post('/ui/signup', { email: $('su-email').value, password: $('su-pass').value, name: $('su-name').value || undefined }); location.href = '/dashboard'; } catch (e) { showErr(e); } };
   $('login').onsubmit = async (ev) => { ev.preventDefault(); $('auth-error').hidden = true; try { await post('/ui/login', { email: $('li-email').value, password: $('li-pass').value }); location.href = '/dashboard'; } catch (e) { showErr(e); } };
 
-  fetch('/ui/me').then((r) => { if (r.ok) $('nav-dash').hidden = false; });
   fetch('/health').then((r) => r.json()).then((h) => {
     const bal = h.treasury.usdc_balance;
     $('status').innerHTML = `
@@ -126,5 +127,6 @@ curl -X POST $BASE/v1/onramps -H "X-API-Key: $KEY" -H 'content-type: application
   }).catch(() => { $('status').innerHTML = '<dt class="bad">Health check failed</dt><dd></dd>'; });
 })();
 </script>
+<script src="/static/site.js"></script>
 </body>
 </html>

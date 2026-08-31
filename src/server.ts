@@ -21,6 +21,7 @@ export async function main() {
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
     log.info(`tr-mock-anchor listening on http://localhost:${info.port} (public: ${config.publicUrl})`);
     log.info(`stellar: mode=${stellar.mode} asset=${stellar.assetCode}:${stellar.assetIssuer}`);
+    if (stellar.mode === 'live') log.info(`stellar endpoints: submit/seq via RPC ${config.rpcUrl}; payment watcher via Horizon ${config.horizonUrl}`);
     log.info(`treasury: ${stellar.treasuryPublicKey}`);
     log.info(`sep: signing key ${sep.signingKeypair.publicKey()} home_domain ${sep.homeDomain}`);
   });
