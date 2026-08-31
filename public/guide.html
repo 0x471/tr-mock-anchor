@@ -60,7 +60,7 @@
       <a class="h" href="#reference">Reference</a>
       <a href="#stellar">Stellar details</a>
       <a href="#limits">Limits &amp; configuration</a>
-      <a href="#production">From sandbox to a real anchor</a>
+      <a href="#production">Production: what will change</a>
       <a href="#faq">FAQ</a>
       <a href="#glossary">Glossary (TR/EN)</a>
     </nav>
@@ -389,16 +389,26 @@ print(o['status'], o['settlement'], o['stellar_tx_hash'])</code></pre>
         <tr><td>Pagination</td><td><code>limit</code> 1–200 (default 50), <code>offset</code></td></tr>
       </tbody></table>
 
-      <h3 id="production">From sandbox to a real anchor</h3>
-      <p>The API shape is deliberately close to what a Turkish anchor would expose to partners, so the parts of your integration that change are predictable:</p>
+      <h3 id="production">From sandbox to a real anchor: what will change</h3>
+      <p>The API shape is deliberately close to what Turkish exchanges expose to partners, and we have studied a real production partner API to keep this list honest. Build against the sandbox, but structure your code so these six things are cheap to swap:</p>
       <ul>
-        <li><b>Bank transfers become real.</b> <code>POST /v1/sandbox/bank-transfers</code> disappears; the anchor's bank integration credits balances, typically within seconds on FAST. Expect delays and the unmatched-transfer path to matter.</li>
-        <li><b>KYC becomes real.</b> Customer creation returns <code>pending</code> until identity checks pass; you will handle document upload or a hosted KYC page and <code>customer.kyc_updated</code> events. Limits depend on KYC tier.</li>
-        <li><b>Payouts have schedules and limits.</b> FAST caps per transaction; EFT runs in banking hours.</li>
-        <li><b>Pricing is a live book.</b> Spreads move with liquidity; quotes are shorter-lived.</li>
-        <li><b>Mainnet asset.</b> USDC's mainnet issuer is <code>GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN</code>; trustlines and treasury addresses change.</li>
-        <li><b>Credentials.</b> Production keys are scoped, rotated and never stored in clear; some anchors add request signing (HMAC of body + timestamp) on top of the key.</li>
+        <li><b>Auth will almost certainly differ.</b> This sandbox uses a static <code>X-API-Key</code>. Real Turkish partner APIs typically use <b>OAuth2 client-credentials</b>: a <code>client_id</code> + <code>client_secret</code> exchanged at a token endpoint for a <b>short-lived JWT</b> plus a refresh token, with <b>granular scopes</b> per capability (read vs create/confirm) — and often an <b>IP allowlist</b>, so your calls must originate from a static egress IP. Isolate auth in one module; assume the token can expire mid-flow.</li>
+        <li><b>The ramp may not be one call.</b> Production APIs are often exchange-style: the TL you deposit becomes a <b>TL-stablecoin balance</b>, conversion is an explicit <b>swap</b> (<code>quote</code> → <code>confirm</code>, with a TTL and a commission in the from-asset, sometimes delivered over a websocket), and the on-chain leg is a separate <b>crypto withdrawal</b>. Where this sandbox has <code>POST /v1/onramps</code>, expect to compose <i>deposit + swap + withdraw</i>. The sandbox's flat spread stands in for the swap commission.</li>
+        <li><b>Compliance fields become real.</b> Expect travel-rule originator information on deposits, <code>purpose</code> / <code>source_of_funds</code> on stablecoin withdrawals, withdrawal addresses and bank accounts that must be <b>registered before use</b>, 2FA on sensitive writes, KYC tiers with limits, and compliance-driven rejections (HTTP 451-style).</li>
+        <li><b>Fiat deposits may live outside the API.</b> The customer sends TL through the bank rail with a reference; your app may only <i>observe</i> the deposit in a transactions list rather than initiate or simulate it. The unmatched-transfer path matters — build the support flow.</li>
+        <li><b>Notifications may be a websocket.</b> Some partner APIs stream quotes and status changes over Socket.IO-style websockets instead of (or besides) webhooks. Keep your status handling transport-agnostic; polling always works.</li>
+        <li><b>Mainnet details.</b> USDC's mainnet issuer is <code>GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN</code>; trustlines, treasury addresses and rate sources change; pricing is a live book with shorter-lived quotes.</li>
       </ul>
+      <p>What carries over unchanged: the deposit-reference model, balances and ledgers, quote-then-execute thinking, address+memo routing for incoming crypto, IBAN payouts, status polling, and the discipline of treating every state in the status tables above.</p>
+      <table><thead><tr><th>Sandbox call</th><th>Production equivalent (typical Turkish partner API)</th></tr></thead><tbody>
+        <tr><td><code>POST /v1/partners</code> → API key</td><td>OAuth2 <code>client_credentials</code> → JWT (+ refresh), scopes, IP allowlist</td></tr>
+        <tr><td><code>POST /v1/sandbox/bank-transfers</code></td><td>— (customer pays TL via bank; you watch the fiat transactions list)</td></tr>
+        <tr><td><code>POST /v1/quotes</code></td><td>swap <code>quote</code> + <code>confirm</code> (TTL, commission, possibly via websocket)</td></tr>
+        <tr><td><code>POST /v1/onramps</code></td><td>swap TL-stablecoin→USDC + crypto withdrawal to a <b>pre-registered</b> address (+ purpose, source_of_funds)</td></tr>
+        <tr><td><code>POST /v1/offramps</code> deposit leg</td><td>per-asset/network crypto <b>deposit wallet</b> (+ travel-rule originator info)</td></tr>
+        <tr><td><code>POST /v1/payouts</code></td><td>fiat withdrawal to a <b>pre-registered</b> IBAN</td></tr>
+        <tr><td>Webhooks / <code>GET /v1/events</code></td><td>websocket stream and/or transaction polling</td></tr>
+      </tbody></table>
 
       <h3 id="faq">FAQ</h3>
       <dl class="gloss">
