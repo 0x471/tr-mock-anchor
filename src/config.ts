@@ -46,6 +46,9 @@ export const config = {
   // Structurally valid TR IBAN with a fictional bank code (00099).
   anchorIban: str(env.ANCHOR_IBAN, makeTrIban('00099', '0000000000000001')),
 
+  adminUser: str(env.ADMIN_USER, ''),
+  adminPassword: str(env.ADMIN_PASSWORD, ''),
+
   workers: str(env.WORKERS, 'true') !== 'false',
   pollMs: {
     onramp: num(env.ONRAMP_POLL_MS, 3000),

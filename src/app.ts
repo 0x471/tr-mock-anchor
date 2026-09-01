@@ -16,6 +16,7 @@ import { offrampRoutes } from './routes/offramps.js';
 import { payoutRoutes } from './routes/payouts.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { sandboxRoutes } from './routes/sandbox.js';
+import { adminRoutes } from './routes/admin.js';
 import { sep10Routes } from './routes/sep10.js';
 import { sep6Routes } from './routes/sep6.js';
 import { sep12Routes } from './routes/sep12.js';
@@ -47,6 +48,7 @@ export function createApp(deps: Deps, sep: SepContext = createSepContext(deps)) 
     return auth(c, next);
   });
 
+  app.route('/', adminRoutes(deps));
   app.route('/', publicRoutes(deps, sep));
   app.route('/', uiRoutes(deps));
   app.route('/', partnerRoutes(deps));
