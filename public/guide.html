@@ -16,7 +16,7 @@
   article pre code { background: none; padding: 0; }
   .callout { border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); padding: 10px 14px; border-radius: 6px; margin: 14px 0; max-width: 78ch; }
   .callout.warn { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
-  .mermaid { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 12px 0 18px; overflow-x: auto; }
+  .mermaid { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 12px 0 18px; overflow-x: auto; min-height: 180px; }
   dl.gloss dt { font-weight: 700; margin-top: 8px; } dl.gloss dd { margin: 0 0 4px; color: var(--muted); }
 </style>
 </head>
@@ -461,7 +461,19 @@ print(o['status'], o['settlement'], o['stellar_tx_hash'])</code></pre>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <script>
   const dark = matchMedia('(prefers-color-scheme: dark)').matches;
-  mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'neutral', securityLevel: 'loose' });
+  // Mermaid renders after load and changes page height, so an anchor jump made before rendering
+  // lands in the wrong place (often blank space). Render first, then (re-)scroll to the hash.
+  const scrollToHash = () => {
+    if (!location.hash) return;
+    const el = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    if (el) el.scrollIntoView({ block: 'start', behavior: 'auto' });
+  };
+  mermaid.initialize({ startOnLoad: false, theme: dark ? 'dark' : 'neutral', securityLevel: 'loose' });
+  mermaid.run().then(scrollToHash).catch(scrollToHash);
+  // Fallbacks so the hash lands correctly even if mermaid is slow or fails to load.
+  window.addEventListener('load', () => setTimeout(scrollToHash, 400));
+  // Clicking a TOC link changes the hash; re-scroll once layout is stable.
+  window.addEventListener('hashchange', scrollToHash);
 </script>
 <script src="/static/site.js"></script>
 </body>
