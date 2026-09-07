@@ -7,6 +7,12 @@
 <link rel="stylesheet" href="/static/style.css?v=3" />
 <style>
   .layout { display: grid; grid-template-columns: 240px 1fr; gap: 32px; align-items: start; }
+  /* Let the 1fr column shrink so wide code/tables scroll inside instead of blowing out the
+     layout (grid items default to min-width:auto, which caused horizontal overflow and made
+     content slide to the top-left when an anchor scrolled it into view). */
+  .layout > * { min-width: 0; }
+  article pre { max-width: 100%; }
+  article table { display: block; overflow-x: auto; }
   @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .toc { position: static !important; } }
   .toc { position: sticky; top: 16px; font-size: 13px; max-height: calc(100vh - 32px); overflow: auto; }
   .toc a { display: block; padding: 3px 0; color: var(--muted); } .toc a:hover { color: var(--text); } .toc .h { margin-top: 10px; font-weight: 700; color: var(--text); }
