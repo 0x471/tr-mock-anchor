@@ -45,6 +45,10 @@ footer { margin-top: 40px; color: var(--muted); font-size: 13px; border-top: 1px
 
 /* --- shared chrome: sticky nav, copy buttons (site.js) --- */
 header.top { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+/* Anchor jumps: land the heading below the sticky header instead of hidden under it. */
+html { scroll-behavior: smooth; }
+:target { scroll-margin-top: 84px; }
+h1[id], h2[id], h3[id], [id] { scroll-margin-top: 84px; }
 nav.primary-nav { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 nav.primary-nav a { margin-left: 0; padding: 6px 10px; border-radius: 7px; color: var(--muted); font-size: 14px; }
 nav.primary-nav a:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 10%, transparent); text-decoration: none; }

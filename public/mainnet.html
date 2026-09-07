@@ -10,12 +10,7 @@
   .delta { border-left: 3px solid var(--warn); padding-left: 14px; margin: 0 0 6px; }
   .keeps { border-left: 3px solid var(--ok); padding-left: 14px; }
   ul.tight { margin: 8px 0; padding-left: 20px; } ul.tight li { margin: 4px 0; max-width: 78ch; }
-  .checklist { list-style: none; padding: 0; margin: 0; }
-  .checklist li { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px dashed var(--line); max-width: none; }
-  .checklist input { margin-top: 4px; accent-color: var(--accent); width: 16px; height: 16px; flex: none; }
-  .checklist b { display: block; }
-  .checklist .why { color: var(--muted); font-size: 13px; }
-  .progress { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: 10px 0 4px; } .progress > div { height: 100%; background: var(--ok); width: 0; transition: width .3s; }
+  .note { border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); padding: 10px 14px; border-radius: 6px; margin: 12px 0; max-width: 82ch; }
   article table { width: 100%; }
   h2 { font-size: 22px; margin: 34px 0 10px; } h3 { text-transform: none; letter-spacing: 0; color: var(--text); font-size: 16px; margin: 18px 0 6px; }
   p, li { max-width: 82ch; }
@@ -31,6 +26,8 @@
   <h1>Mainnet: what to expect</h1>
   <p class="lead">This sandbox teaches you the <em>model</em> of a Turkish TRY ⇄ USDC ramp. A production anchor keeps the concepts and changes the mechanics — in predictable ways. This page lists what carries over, what will likely change, and the seams to build into your code <b>now</b> so the switch is a config change, not a rewrite.</p>
   <p class="small muted">Everything here is generalized from how production Turkish exchanges and payment institutions expose partner APIs. Every anchor differs in detail — when yours publishes docs, those win.</p>
+
+  <div class="note"><b>Two paths, two migration stories.</b> If you built on the <a href="/sep">SEP path</a> (the portable one), going live is mostly a config change: switch the network passphrase to public and point at the real anchor's home domain — the endpoint shapes are the standard and do not change. The one dependency: the mainnet anchor must implement SEP-6/24. <b>Most of this page is the other case</b> — what changes if you built on the custom <code>/v1</code> API, whose shape is specific to this mock and does <b>not</b> port. That is the business/partner-integration model.</div>
 
   <section class="panel keeps" style="margin-top:8px">
     <h2>What carries over unchanged</h2>
@@ -116,40 +113,8 @@
     </table></div>
   </section>
 
-  <h2>Readiness checklist</h2>
-  <section class="panel">
-    <p class="small muted">Seams to build while you're still on the sandbox. Ticks are saved in your browser.</p>
-    <div class="progress"><div id="bar"></div></div>
-    <ul class="checklist" id="checklist">
-      <li><input type="checkbox" id="c1"><label for="c1"><b>Auth lives in one module</b><span class="why">Swapping X-API-Key → OAuth2 (token cache, refresh, 401-retry) touches one file, not every call site.</span></label></li>
-      <li><input type="checkbox" id="c2"><label for="c2"><b>Conversion is behind an interface</b><span class="why">`getQuote()/execute()` today wraps one sandbox call; tomorrow it wraps swap quote + confirm without the UI noticing.</span></label></li>
-      <li><input type="checkbox" id="c3"><label for="c3"><b>The ramp is modeled as a pipeline, not a call</b><span class="why">Deposit, conversion and on-chain legs each have their own state in your DB, even while the sandbox does them atomically.</span></label></li>
-      <li><input type="checkbox" id="c4"><label for="c4"><b>Every documented status has a rendering and a reaction</b><span class="why">Including unmatched, refunded, canceled, failed — production lives in the unhappy paths.</span></label></li>
-      <li><input type="checkbox" id="c5"><label for="c5"><b>Asset issuer, network and endpoints are config</b><span class="why">Testnet → mainnet USDC issuer swap is an env change; nothing on-chain is hardcoded.</span></label></li>
-      <li><input type="checkbox" id="c6"><label for="c6"><b>Notifications are transport-agnostic</b><span class="why">One internal "transaction changed" event, fed by webhook today, websocket or polling tomorrow.</span></label></li>
-      <li><input type="checkbox" id="c7"><label for="c7"><b>Reconciliation replays from transaction lists</b><span class="why">If your DB burned down, could you rebuild balances from the anchor's paginated history? That's also your dispute tool.</span></label></li>
-      <li><input type="checkbox" id="c8"><label for="c8"><b>Compliance fields exist in your data model</b><span class="why">Purpose, source of funds, originator info, pre-registered addresses — nullable today, required tomorrow.</span></label></li>
-      <li><input type="checkbox" id="c9"><label for="c9"><b>Secrets are managed, egress is static</b><span class="why">client_secret in a secret store, never in the repo; a fixed egress IP you can hand to the anchor's allowlist.</span></label></li>
-      <li><input type="checkbox" id="c10"><label for="c10"><b>Writes are idempotent, reads are rate-limit-aware</b><span class="why">Retry with the same idempotency reference; back off on 429 without losing state.</span></label></li>
-    </ul>
-  </section>
-
   <footer>Testnet sandbox. Patterns generalized from production Turkish partner APIs; your anchor's documentation is the source of truth. <a href="/guide#production">Guide section</a> · <a href="/guide">Full guide</a> · <a href="/api">API reference</a></footer>
 </div>
-<script>
-(() => {
-  const boxes = [...document.querySelectorAll('.checklist input')];
-  let saved = {};
-  try { saved = JSON.parse(localStorage.getItem('trma_mainnet_checklist') || '{}'); } catch {}
-  const bar = document.getElementById('bar');
-  const render = () => { bar.style.width = (boxes.filter(b => b.checked).length / boxes.length * 100) + '%'; };
-  for (const b of boxes) {
-    b.checked = !!saved[b.id];
-    b.onchange = () => { saved[b.id] = b.checked; try { localStorage.setItem('trma_mainnet_checklist', JSON.stringify(saved)); } catch {} render(); };
-  }
-  render();
-})();
-</script>
 <script src="/static/site.js"></script>
 </body>
 </html>

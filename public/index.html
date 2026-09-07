@@ -7,6 +7,13 @@
 <link rel="stylesheet" href="/static/style.css" />
 <link rel="alternate" type="text/markdown" href="/sitemap.md" title="Sitemap (Markdown)" />
 <link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt" />
+<style>
+  .flow-mini { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; margin: 0 0 14px; }
+  .flow-mini .n { background: var(--code); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; display: flex; flex-direction: column; justify-content: center; font-size: 12px; font-weight: 600; line-height: 1.15; }
+  .flow-mini .n small { display: block; font-weight: 400; color: var(--muted); font-size: 10px; }
+  .flow-mini .n.rate { border-style: dashed; }
+  .flow-mini .a { align-self: center; color: var(--muted); }
+</style>
 </head>
 <body>
 <div class="wrap">
@@ -39,6 +46,12 @@
   <div class="grid two" style="margin-top:18px">
     <section class="panel">
       <h2>On-ramp · TRY → USDC</h2>
+      <div class="flow-mini" aria-hidden="true">
+        <span class="n">TRY<small>bank transfer</small></span><span class="a">→</span>
+        <span class="n">TRY balance</span><span class="a">→</span>
+        <span class="n rate">USD/TRY<small>quote</small></span><span class="a">→</span>
+        <span class="n">USDC<small>to wallet</small></span>
+      </div>
       <ol class="steps">
         <li>The user logs in with their Stellar key (SEP-10) and starts a deposit</li>
         <li>The anchor returns bank details: an IBAN and a <b>reference</b> to write in the transfer description (<i>açıklama</i>)</li>
@@ -49,6 +62,12 @@
     </section>
     <section class="panel">
       <h2>Off-ramp · USDC → TRY</h2>
+      <div class="flow-mini" aria-hidden="true">
+        <span class="n">USDC<small>+ memo</small></span><span class="a">→</span>
+        <span class="n">USDC received</span><span class="a">→</span>
+        <span class="n rate">USD/TRY<small>locked</small></span><span class="a">→</span>
+        <span class="n">TRY<small>to IBAN</small></span>
+      </div>
       <ol class="steps">
         <li>The user starts a withdrawal and gets the treasury address + a <b>memo id</b></li>
         <li>The wallet sends USDC on Stellar testnet with that memo</li>
