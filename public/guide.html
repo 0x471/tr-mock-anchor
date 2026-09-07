@@ -24,7 +24,7 @@
 <div class="wrap">
   <header class="top">
     <div class="brand"><a href="/" style="color:inherit"><span class="dot"></span> TR Mock Anchor</a> <span class="tag">guide</span></div>
-    <nav aria-label="Primary" class="primary-nav"><a href="/">Home</a><a href="/demo">How it works</a><a href="/explorer">Explorer</a><a href="/guide">Guide</a><a href="/mainnet">Mainnet</a><a href="/docs">API</a><a href="/dashboard">Dashboard</a></nav>
+    <nav aria-label="Primary" class="primary-nav"><a href="/">Home</a><a href="/demo">API demo</a><a href="/explorer">SEP demo</a><a href="/guide">Guide</a><a href="/mainnet">Mainnet</a><a href="/docs">API</a><a href="/dashboard">Dashboard</a></nav>
   </header>
 
   <div class="layout">
@@ -79,7 +79,7 @@
         <li>The customer buys USDC at the USD/TRY rate and it is <b>paid on Stellar</b> to their wallet.</li>
         <li>Off-ramp is the reverse: send USDC with a memo → TRY balance → payout to the IBAN.</li>
       </ol>
-      <div class="callout">Try it live: <a href="/demo">How it works</a> runs the full round trip from your browser with real testnet transactions. The <a href="/docs">API reference</a> documents every field.</div>
+      <div class="callout">Try it live: <a href="/demo">API demo</a> runs the full round trip from your browser with real testnet transactions. The <a href="/docs">API reference</a> documents every field.</div>
 
       <h3 id="tr-summary">Türkçe özet</h3>
       <p>Bu servis, Türkiye'deki borsaların çalıştığı şekilde bir <b>TL ⇄ USDC ramp'ini</b> Stellar testnet üzerinde taklit eder. Kullanıcı e-postasıyla kaydolur ve tek bir API anahtarı alır. Uygulamanız müşteriyi oluşturur; müşteriye özel bir <b>referans kodu</b> verilir. Gerçek hayatta müşteri bu kodu banka transferinin açıklamasına yazar; sandbox'ta bu transferi <code>POST /v1/sandbox/bank-transfers</code> ile siz simüle edersiniz. TL bakiyesi oluşur, kur (Reflector USD/TRY oracle + spread) kilitlenir ve <b>gerçek testnet USDC</b> müşterinin Stellar adresine gönderilir (trustline yoksa claimable balance). Offramp'te müşteri memo ile USDC gönderir; anchor ödemeyi tespit eder, TL'ye çevirir ve IBAN'a ödemeyi simüle eder. Banka, KYC ve ödeme tarafı sahte; Stellar tarafı gerçektir.</p>

@@ -32,8 +32,8 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
 
   const PAGES: Array<[string, string, string]> = [
     ['/', 'Home & sign up', 'Create an account with your email, get your single API key.'],
-    ['/demo', 'How it works (interactive demo)', 'Runs the full partner-API round trip live in the browser with real testnet transactions.'],
-    ['/explorer', 'SEP Explorer (interactive)', 'Run the SEP-6 door live in your browser — SEP-1/10/6 discovery, key-signature login, deposit and withdraw against this anchor, with real testnet transactions. The regional counterpart to the SDF test-anchor explorer.'],
+    ['/demo', 'API demo (interactive)', 'The partner API-key door: runs the full partner-API round trip live in the browser with real testnet transactions.'],
+    ['/explorer', 'SEP demo (interactive)', 'The SEP door: run SEP-1/10/6 live in your browser — discovery, key-signature login, deposit and withdraw against this anchor, with real testnet transactions and no API key. The regional counterpart to the SDF test-anchor explorer.'],
     ['/guide', 'Guide', 'Concepts, Turkish rails, on/off-ramp flows, SEP-6 door, statuses, errors, webhooks, glossary (TR/EN).'],
     ['/mainnet', 'Mainnet: what to expect', 'What changes moving from this sandbox to a production anchor, plus a readiness checklist.'],
     ['/docs', 'API reference', 'Interactive OpenAPI 3.1 reference.'],
