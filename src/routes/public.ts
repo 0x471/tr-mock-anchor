@@ -18,6 +18,7 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
   app.get('/dashboard', (c) => c.html(page('dashboard.html')));
   app.get('/docs', (c) => c.html(page('docs.html')));
   app.get('/demo', (c) => c.html(page('demo.html')));
+  app.get('/see-it-run', (c) => c.html(page('see-it-run.html')));
   app.get('/guide', (c) => c.html(page('guide.html')));
   app.get('/mainnet', (c) => c.html(page('mainnet.html')));
 
@@ -32,6 +33,7 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
   const PAGES: Array<[string, string, string]> = [
     ['/', 'Home & sign up', 'Create an account with your email, get your single API key.'],
     ['/demo', 'How it works (interactive demo)', 'Runs the full partner-API round trip live in the browser with real testnet transactions.'],
+    ['/see-it-run', 'See it run (SEP-6 door)', 'A real, completed SEP-6 round trip against this anchor — SEP-10 login, deposit, on-chain USDC, withdraw — with on-chain proof links.'],
     ['/guide', 'Guide', 'Concepts, Turkish rails, on/off-ramp flows, SEP-6 door, statuses, errors, webhooks, glossary (TR/EN).'],
     ['/mainnet', 'Mainnet: what to expect', 'What changes moving from this sandbox to a production anchor, plus a readiness checklist.'],
     ['/docs', 'API reference', 'Interactive OpenAPI 3.1 reference.'],
@@ -110,6 +112,7 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
         '## SEP door quickstart (wallets)',
         'SEP-1 stellar.toml at /.well-known/stellar.toml. SEP-10 auth: GET/POST /auth -> JWT (Bearer). SEP-6: /sep6/{info,deposit,withdraw,deposit-exchange,withdraw-exchange,transactions,transaction}.',
         'SEP-12 simulated KYC (no personal data required). SEP-38 quotes: iso4217:TRY <-> stellar:USDC:<issuer>. Deposits wait until the simulated bank transfer is triggered at the transaction more_info_url (/sep6/tx/{id}).',
+        'A real completed SEP-6 round trip (with on-chain proof links) is documented at /see-it-run.',
         '',
         '## Statuses',
         'On-ramp: pending -> completed | failed (TRY refunded). settlement: payment | claimable_balance.',
@@ -177,6 +180,7 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
         `- Guide (concepts, flows, errors, webhooks, glossary): ${cfg.publicUrl}/guide`,
         `- Mainnet expectations (what changes in production, readiness checklist): ${cfg.publicUrl}/mainnet`,
         `- Interactive end-to-end demo: ${cfg.publicUrl}/demo`,
+        `- See it run (a real completed SEP-6 round trip, with on-chain proof): ${cfg.publicUrl}/see-it-run`,
         `- OpenAPI: ${cfg.publicUrl}/openapi.json`,
         `- Health & treasury: ${cfg.publicUrl}/health`,
         `- Dashboard (sign up with email, get your single API key): ${cfg.publicUrl}/`,
