@@ -23,7 +23,7 @@
 <div class="wrap">
   <header class="top">
     <div class="brand"><a href="/" style="color:inherit"><span class="dot"></span> TR Mock Anchor</a> <span class="tag">the SEP path</span></div>
-    <nav aria-label="Primary" class="primary-nav"><a href="/">Home</a><a href="/sep">SEP path</a><a href="/explorer">SEP demo</a><a href="/demo">API demo</a><a href="/guide">Guide</a><a href="/mainnet">Mainnet</a><a href="/docs">API</a><a href="/dashboard">Dashboard</a></nav>
+    <nav aria-label="Primary" class="primary-nav"><a href="/">Home</a><a href="/sep">SEP path</a><a href="/explorer">SEP demo</a><a href="/api">API</a><a href="/guide">Guide</a><a href="/mainnet">Mainnet</a><a href="/dashboard">Dashboard</a></nav>
   </header>
 
   <h1>The SEP path: one portable integration, testnet to mainnet.</h1>
@@ -121,7 +121,7 @@ curl -X POST https://tr-mock-anchor.fly.dev/auth \
   <p>The SEP path is designed to carry over. What changes: the <b>network passphrase</b> (public), the <b>home domain</b> (the real anchor's), and the legs that were simulated become real (bank transfer, KYC, live assets). The endpoint shapes and your integration code do not change. One dependency: the target mainnet anchor must implement SEP-6/24. Full detail: <a href="/mainnet">/mainnet</a>.</p>
 
   <h2 id="api">The API path (optional, not portable)</h2>
-  <p>This anchor also exposes a custom partner REST API at <code>/v1/*</code>, authenticated with an API key. Try it at <a href="/demo">/demo</a> (the API demo) and read it at <a href="/docs">/docs</a>.</p>
+  <p>This anchor also exposes a custom partner REST API at <code>/v1/*</code>, authenticated with an API key. Try it at <a href="/api">/demo</a> (the API demo) and read it at <a href="/api">/docs</a>.</p>
   <div class="warn-note">
     <p style="margin:0 0 6px"><b>Use it only when the SEP path does not fit.</b> It is a business / compatibility layer, not the portable path:</p>
     <ul style="margin:0">
@@ -131,7 +131,7 @@ curl -X POST https://tr-mock-anchor.fly.dev/auth \
     </ul>
   </div>
 
-  <footer>Testnet only. See the SEP flow run live at <a href="/explorer">/explorer</a>, the broader <a href="/guide">guide</a>, or the <a href="/docs">API reference</a>. Machine-readable: <a href="/llms-full.txt">/llms-full.txt</a>, <a href="/sitemap.md">/sitemap.md</a>.</footer>
+  <footer>Testnet only. See the SEP flow run live at <a href="/explorer">/explorer</a>, the broader <a href="/guide">guide</a>, or the <a href="/api">API reference</a>. Machine-readable: <a href="/llms-full.txt">/llms-full.txt</a>, <a href="/sitemap.md">/sitemap.md</a>.</footer>
 </div>
 <script src="/static/site.js"></script>
 </body>

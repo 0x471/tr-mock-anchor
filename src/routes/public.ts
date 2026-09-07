@@ -17,8 +17,10 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
   app.get('/', (c) => c.html(page('index.html')));
   app.get('/sep', (c) => c.html(page('sep.html')));
   app.get('/dashboard', (c) => c.html(page('dashboard.html')));
-  app.get('/docs', (c) => c.html(page('docs.html')));
-  app.get('/demo', (c) => c.html(page('demo.html')));
+  // The API demo and the API reference are now one page. Keep the old URLs working.
+  app.get('/api', (c) => c.html(page('api.html')));
+  app.get('/docs', (c) => c.redirect('/api', 301));
+  app.get('/demo', (c) => c.redirect('/api', 301));
   app.get('/explorer', (c) => c.html(page('explorer.html')));
   app.get('/guide', (c) => c.html(page('guide.html')));
   app.get('/mainnet', (c) => c.html(page('mainnet.html')));
@@ -35,10 +37,9 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
     ['/', 'Home & sign up', 'Create an account with your email, get your single API key.'],
     ['/sep', 'The SEP path (start here)', 'The main, portable way to use this anchor: standard SEP-1/10/6/12/38 over one home domain + asset. Full guide with copyable requests. Integrate once on testnet, ship to any real SEP anchor by changing the home domain. Also explains why the /v1 API is an optional, non-portable business layer.'],
     ['/explorer', 'SEP demo (interactive)', 'The SEP door: run SEP-1/10/6 live in your browser — discovery, key-signature login, deposit and withdraw against this anchor, with real testnet transactions and no API key. The regional counterpart to the SDF test-anchor explorer.'],
-    ['/demo', 'API demo (interactive)', 'The optional partner API-key layer (business/back-office model, NOT the portable path): runs the full custom-API round trip live in the browser with real testnet transactions.'],
+    ['/api', 'API (optional layer)', 'The custom /v1 partner API on one page: interactive demo + full OpenAPI reference. An optional business/compatibility layer, NOT the portable path (these endpoints are specific to this mock). For the portable way, see /sep.'],
     ['/guide', 'Guide', 'Concepts, Turkish rails, on/off-ramp flows, SEP-6 door, statuses, errors, webhooks, glossary (TR/EN).'],
     ['/mainnet', 'Mainnet: what to expect', 'What changes moving from this sandbox to a production anchor, plus a readiness checklist.'],
-    ['/docs', 'API reference', 'Interactive OpenAPI 3.1 reference.'],
     ['/dashboard', 'Dashboard', 'Your API key, a playground, and live tables of customers / orders / events (login required).'],
   ];
   const MACHINE: Array<[string, string]> = [
@@ -186,7 +187,7 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
         `- Guide (concepts, flows, errors, webhooks, glossary): ${cfg.publicUrl}/guide`,
         `- Mainnet expectations (what changes in production, readiness checklist): ${cfg.publicUrl}/mainnet`,
         `- SEP demo (run the SEP path live in your browser, no wallet app, no API key): ${cfg.publicUrl}/explorer`,
-        `- API demo (the OPTIONAL, non-portable /v1 business layer, interactive): ${cfg.publicUrl}/demo`,
+        `- API (the OPTIONAL, non-portable /v1 business layer): interactive demo + full reference on one page: ${cfg.publicUrl}/api`,
         `- OpenAPI: ${cfg.publicUrl}/openapi.json`,
         `- Health & treasury: ${cfg.publicUrl}/health`,
         `- Dashboard (sign up with email, get your single API key): ${cfg.publicUrl}/`,

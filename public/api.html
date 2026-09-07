@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>TR Mock Anchor · How it works (live demo)</title>
+<title>TR Mock Anchor · API</title>
 <link rel="stylesheet" href="/static/style.css" />
 <style>
   .step { position: relative; padding-left: 56px; }
@@ -30,12 +30,12 @@
 <body>
 <div class="wrap">
   <header class="top">
-    <div class="brand"><a href="/" style="color:inherit"><span class="dot"></span> TR Mock Anchor</a> <span class="tag">how it works</span></div>
-    <nav aria-label="Primary" class="primary-nav"><a href="/">Home</a><a href="/sep">SEP path</a><a href="/explorer">SEP demo</a><a href="/demo">API demo</a><a href="/guide">Guide</a><a href="/mainnet">Mainnet</a><a href="/docs">API</a><a href="/dashboard">Dashboard</a></nav>
+    <div class="brand"><a href="/" style="color:inherit"><span class="dot"></span> TR Mock Anchor</a> <span class="tag">API (optional layer)</span></div>
+    <nav aria-label="Primary" class="primary-nav"><a href="/">Home</a><a href="/sep">SEP path</a><a href="/explorer">SEP demo</a><a href="/api">API</a><a href="/guide">Guide</a><a href="/mainnet">Mainnet</a><a href="/dashboard">Dashboard</a></nav>
   </header>
 
-  <h1>Watch a TRY ⇄ USDC ramp run end to end.</h1>
-  <p class="lead">Every step below is a real call to this sandbox's API and, where the chain is involved, a real transaction on Stellar testnet. Wallets are throwaway keys generated in your browser. Nothing is faked except the bank — and you get to play the bank.</p>
+  <h1>The partner API: demo + full reference, on one page.</h1>
+  <p class="lead">Run the custom <code>/v1</code> API end to end below (real testnet transactions; you play the bank), then read every endpoint in the reference at the bottom. Wallets are throwaway keys generated in your browser.</p>
 
   <p class="note" style="border-left:3px solid var(--bad);background:color-mix(in srgb, var(--bad) 8%, transparent);padding:8px 12px;border-radius:6px">This page exercises the <b>custom partner API</b> (<code>/v1</code>, API-key). It is an <b>optional business / compatibility layer — not the portable path.</b> These endpoints are specific to this mock and do not exist on a real anchor. For the main, portable way (integrate once, ship to any real SEP anchor), start at <a href="/sep"><b>the SEP path</b></a> or try the <a href="/explorer">SEP demo</a>.</p>
 
@@ -66,7 +66,14 @@
     <p class="small muted" style="margin-top:10px">Everything above is inspectable: the customer, orders, ledger and events are in your <a href="/dashboard">dashboard</a>; the transactions are on <a href="https://stellar.expert/explorer/testnet" target="_blank" rel="noopener">stellar.expert</a>.</p>
   </section>
 
-  <footer>Testnet only. Read the <a href="/guide">guide</a> for the full model, or the <a href="/docs">API reference</a> for every field.</footer>
+  <section class="panel" id="reference" style="margin-top:18px">
+    <h2>Full API reference</h2>
+    <p class="small muted">Every <code>/v1</code> endpoint, generated from the OpenAPI 3.1 spec (raw: <a href="/openapi.json">/openapi.json</a>).</p>
+    <script id="api-reference" data-url="/openapi.json" data-configuration='{"theme":"default","hideDownloadButton":false,"defaultHttpClient":{"targetKey":"shell","clientKey":"curl"}}'></script>
+    <noscript><p>The interactive reference needs JavaScript. The raw spec is at <a href="/openapi.json">/openapi.json</a>.</p></noscript>
+  </section>
+
+  <footer>Testnet only. Read the <a href="/guide">guide</a> for the full model. The main, portable path is <a href="/sep">the SEP path</a>.</footer>
 </div>
 <div class="toast" id="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@17/dist/stellar-sdk.min.js"></script>
@@ -352,6 +359,7 @@
   })();
 })();
 </script>
+<script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
 <script src="/static/site.js"></script>
 </body>
 </html>
