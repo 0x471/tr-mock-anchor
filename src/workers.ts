@@ -48,7 +48,21 @@ export function createWorkers(deps: Deps, sep: SepContext = createSepContext(dep
         continue;
       }
       try {
-        const res = await stellar.sendUsdc({ destination: row.destination_address, amountStroops: stroops, memo: row.memo ?? undefined });
+        const res = await stellar.sendUsdc({
+          destination: row.destination_address,
+          amountStroops: stroops,
+          memo: row.memo ?? undefined,
+          allowClaimableBalance: row.claimable_balance_supported !== 0,
+        });
+        if (res.settlement === 'awaiting_trust') {
+          // Wallet did not opt into claimable balances and has no trustline yet. Hold (no funds move,
+          // no attempt spent); a later tick pays directly once the trustline appears.
+          if (row.pending_reason !== 'awaiting_trust') {
+            db.prepare("UPDATE onramps SET pending_reason = 'awaiting_trust', updated_at = ? WHERE id = ?").run(nowIso(), row.id);
+            log.info(`onramp ${row.id} awaiting a USDC trustline on ${row.destination_address}`);
+          }
+          continue;
+        }
         treasury -= stroops;
         const ts = nowIso();
         const done: OnrampRow = {
@@ -56,7 +70,7 @@ export function createWorkers(deps: Deps, sep: SepContext = createSepContext(dep
           status: 'completed',
           pending_reason: null,
           settlement: res.settlement,
-          tx_hash: res.txHash,
+          tx_hash: res.txHash ?? null,
           claimable_balance_id: res.claimableBalanceId ?? null,
           updated_at: ts,
           completed_at: ts,

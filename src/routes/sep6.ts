@@ -247,6 +247,9 @@ export function sep6Routes(deps: Deps, sep: SepContext) {
         rate,
         destination: b.tx.account!,
         memo: b.tx.memo_type === 'text' ? b.tx.memo : null,
+        // Respect SEP-6 claimable_balance_supported: when the wallet did not opt in, hold the USDC
+        // in pending_trust until a trustline exists instead of sending a claimable balance.
+        claimableBalanceSupported: b.tx.claimable_balance_supported === 1,
       });
       const note = b.tx.quote_id && !quote ? 'Quote expired or amount differed; converted at the live rate.' : null;
       db.prepare('UPDATE sep_transactions SET onramp_id = ?, message = ?, updated_at = ? WHERE id = ?').run(onramp.id, note, ts, b.tx.id);

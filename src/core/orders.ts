@@ -34,7 +34,7 @@ export async function resolveRate(deps: Deps, side: 'buy' | 'sell', quote: Quote
 export function createOnramp(
   deps: Deps,
   customer: CustomerRow,
-  args: { kurus: bigint; rate: RateLock; destination: string; memo?: string | null },
+  args: { kurus: bigint; rate: RateLock; destination: string; memo?: string | null; claimableBalanceSupported?: boolean },
 ): OnrampRow {
   const { db, cfg } = deps;
   if (customer.kyc_status !== 'approved') throw unprocessable('kyc_not_approved', `Customer KYC status is ${customer.kyc_status}`);
@@ -56,6 +56,9 @@ export function createOnramp(
     mid_rate: fmtRate(args.rate.midMicro),
     destination_address: args.destination,
     memo: args.memo ?? null,
+    // Default true: the API door and older callers keep the claimable-balance fallback. The SEP door
+    // passes the wallet's claimable_balance_supported flag; when false we hold in pending_trust instead.
+    claimable_balance_supported: args.claimableBalanceSupported === false ? 0 : 1,
     status: 'pending',
     pending_reason: null,
     settlement: null,
@@ -69,9 +72,9 @@ export function createOnramp(
   };
   applyLedger(db, customer.id, 'TRY', -args.kurus, 'onramp', row.id);
   db.prepare(
-    `INSERT INTO onramps(id, partner_id, customer_id, quote_id, amount_try, amount_usdc, rate, mid_rate, destination_address, memo, status, attempts, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,0,?,?)`,
-  ).run(row.id, row.partner_id, row.customer_id, row.quote_id, row.amount_try, row.amount_usdc, row.rate, row.mid_rate, row.destination_address, row.memo, row.status, ts, ts);
+    `INSERT INTO onramps(id, partner_id, customer_id, quote_id, amount_try, amount_usdc, rate, mid_rate, destination_address, memo, claimable_balance_supported, status, attempts, created_at, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)`,
+  ).run(row.id, row.partner_id, row.customer_id, row.quote_id, row.amount_try, row.amount_usdc, row.rate, row.mid_rate, row.destination_address, row.memo, row.claimable_balance_supported, row.status, ts, ts);
   if (row.quote_id) db.prepare('UPDATE quotes SET consumed_by = ? WHERE id = ?').run(row.id, row.quote_id);
   emitEvent(db, customer.partner_id, 'onramp.created', onrampOut(row));
   return row;

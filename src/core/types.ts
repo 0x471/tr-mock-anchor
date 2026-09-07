@@ -72,6 +72,7 @@ export interface OnrampRow {
   mid_rate: string | null;
   destination_address: string;
   memo: string | null;
+  claimable_balance_supported: number;
   status: 'pending' | 'completed' | 'failed';
   pending_reason: string | null;
   settlement: 'payment' | 'claimable_balance' | null;

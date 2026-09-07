@@ -183,6 +183,33 @@ describe('SEP door', () => {
     expect(byHash.json.transaction.id).toBe(depositId);
   });
 
+  it('SEP-6 deposit honors claimable_balance_supported=false: holds in pending_trust until a trustline exists', async () => {
+    // Isolated wallet/customer so this does not affect the default wallet's transaction listing.
+    const holder = Keypair.random();
+    const a = await authenticate(holder);
+    expect(a.status).toBe(200);
+    const h = { authorization: `Bearer ${a.token}` };
+    stellar.markNoTrustline(holder.publicKey());
+    // Flag omitted -> the wallet did not opt into claimable balances.
+    const dep = await get(`/sep6/deposit?asset_code=USDC&account=${holder.publicKey()}&funding_method=bank_account&amount=200.00`, h);
+    expect(dep.status).toBe(200);
+    const id = dep.json.id;
+    await app.request(`/sep6/tx/${id}/simulate-bank-transfer`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ amount: '200.00' }) });
+
+    // No trustline + not supported: the anchor holds, no claimable balance, no chain payment.
+    await workers.settleOnrampsOnce();
+    let t = await get(`/sep6/transaction?id=${id}`, h);
+    expect(t.json.transaction.status).toBe('pending_trust');
+    expect(t.json.transaction.stellar_transaction_id).toBeFalsy();
+
+    // Trustline appears: the next tick pays directly and completes.
+    stellar.markTrustline(holder.publicKey());
+    await workers.settleOnrampsOnce();
+    t = await get(`/sep6/transaction?id=${id}`, h);
+    expect(t.json.transaction.status).toBe('completed');
+    expect(t.json.transaction.stellar_transaction_id).toHaveLength(64);
+  });
+
   it('SEP-6 withdraw: returns the treasury account + memo, completes when the payment lands', async () => {
     const w = await get(`/sep6/withdraw?asset_code=USDC&type=bank_account&amount=2.5`);
     expect(w.status).toBe(200);

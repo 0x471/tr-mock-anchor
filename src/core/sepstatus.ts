@@ -42,7 +42,10 @@ export function sepStatusOf(b: SepBundle): SepStatus {
   if (b.tx.status_override) return b.tx.status_override as SepStatus;
   if (b.tx.kind === 'deposit') {
     if (!b.onramp) return 'pending_user_transfer_start';
-    if (b.onramp.status === 'pending') return b.onramp.pending_reason?.startsWith('retrying') ? 'pending_stellar' : 'pending_anchor';
+    if (b.onramp.status === 'pending') {
+      if (b.onramp.pending_reason === 'awaiting_trust') return 'pending_trust';
+      return b.onramp.pending_reason?.startsWith('retrying') ? 'pending_stellar' : 'pending_anchor';
+    }
     if (b.onramp.status === 'completed') return 'completed';
     return 'error';
   }
@@ -57,6 +60,7 @@ function sepMessage(b: SepBundle, status: SepStatus): string | null {
   if (b.tx.kind === 'deposit') {
     if (status === 'pending_user_transfer_start') return 'Waiting for the TRY bank transfer. Sandbox: simulate it from more_info_url.';
     if (status === 'pending_anchor') return b.onramp?.pending_reason === 'treasury_low' ? 'Treasury is low on USDC; the payout will settle once it is refilled.' : 'TRY received; paying USDC on Stellar.';
+    if (status === 'pending_trust') return `Add a USDC trustline to ${b.tx.account}; the anchor pays the USDC once the trustline exists.`;
     if (status === 'pending_stellar') return b.onramp?.pending_reason ?? null;
     if (status === 'error') return b.onramp?.failure_reason ?? 'On-ramp failed; TRY was refunded to the balance.';
   } else {

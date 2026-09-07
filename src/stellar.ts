@@ -30,8 +30,8 @@ export interface IncomingPayment {
 }
 
 export interface SendResult {
-  settlement: 'payment' | 'claimable_balance';
-  txHash: string;
+  settlement: 'payment' | 'claimable_balance' | 'awaiting_trust';
+  txHash?: string;
   claimableBalanceId?: string;
 }
 
@@ -41,9 +41,10 @@ export interface StellarGateway {
   readonly assetCode: string;
   readonly assetIssuer: string;
   treasuryUsdcBalance(): Promise<bigint>;
-  /** Pay USDC to a G... or M... address. Falls back to a claimable balance when the
-   *  destination account is missing or has no USDC trustline. */
-  sendUsdc(args: { destination: string; amountStroops: bigint; memo?: string }): Promise<SendResult>;
+  /** Pay USDC to a G... or M... address. When the destination is missing or has no USDC trustline:
+   *  falls back to a claimable balance if allowClaimableBalance (default), otherwise returns
+   *  settlement 'awaiting_trust' without moving funds so the caller can hold in pending_trust. */
+  sendUsdc(args: { destination: string; amountStroops: bigint; memo?: string; allowClaimableBalance?: boolean }): Promise<SendResult>;
   /** Incoming USDC payments to the treasury after `cursor` (Horizon paging token). */
   incomingUsdc(cursor: string | undefined): Promise<{ payments: IncomingPayment[]; cursor: string | undefined }>;
   /** Signers + thresholds of an account, or null when the account does not exist (SEP-10 verification). */
@@ -184,7 +185,7 @@ export function createLiveGateway(cfg: Config): StellarGateway {
       return bal ? parseUsdc(bal.balance) : 0n;
     },
 
-    async sendUsdc({ destination, amountStroops, memo }) {
+    async sendUsdc({ destination, amountStroops, memo, allowClaimableBalance = true }) {
       const amount = fmtUsdc(amountStroops);
       const base = baseAccountOf(destination);
       const acct = await loadOrNull(base);
@@ -198,6 +199,9 @@ export function createLiveGateway(cfg: Config): StellarGateway {
         });
         return { settlement: 'payment', txHash: res.hash };
       }
+
+      // No trustline and the caller did not opt into claimable balances: hold, do not move funds.
+      if (!allowClaimableBalance) return { settlement: 'awaiting_trust' };
 
       // Destination is unfunded or lacks the USDC trustline: park the funds in a claimable balance.
       const res = await submit((b) =>
@@ -285,6 +289,8 @@ export interface FakeGateway extends StellarGateway {
   simulateIncoming(p: { from?: string; amount: string; memoId?: string; toMuxedId?: string; memoType?: string; memo?: string }): IncomingPayment;
   /** Mark an address as unfunded / lacking a trustline so sendUsdc uses a claimable balance. */
   markNoTrustline(address: string): void;
+  /** Undo markNoTrustline: the address now has a USDC trustline, so a later send pays directly. */
+  markTrustline(address: string): void;
   sent: Array<{ destination: string; amount: string; memo?: string; result: SendResult }>;
 }
 
@@ -306,11 +312,13 @@ export function createFakeGateway(cfg: Config, initialBalance = '1000000.0000000
     async treasuryUsdcBalance() {
       return balance;
     },
-    async sendUsdc({ destination, amountStroops, memo }) {
+    async sendUsdc({ destination, amountStroops, memo, allowClaimableBalance = true }) {
+      const noTrustline = noTrust.has(baseAccountOf(destination));
+      if (noTrustline && !allowClaimableBalance) return { settlement: 'awaiting_trust' };
       if (amountStroops > balance) throw new StellarError('submit failed: op_underfunded', false);
       balance -= amountStroops;
       const txHash = `fake${(++seq).toString().padStart(4, '0')}${'0'.repeat(56)}`.slice(0, 64);
-      const result: SendResult = noTrust.has(baseAccountOf(destination))
+      const result: SendResult = noTrustline
         ? { settlement: 'claimable_balance', txHash, claimableBalanceId: `00000000${txHash}` }
         : { settlement: 'payment', txHash };
       sent.push({ destination, amount: fmtUsdc(amountStroops), memo, result });
@@ -343,6 +351,10 @@ export function createFakeGateway(cfg: Config, initialBalance = '1000000.0000000
       };
       queue.push(payment);
       return payment;
+    },
+    markTrustline(address) {
+      noTrust.delete(address);
+      noTrust.delete(baseAccountOf(address));
     },
     markNoTrustline(address) {
       noTrust.add(address);

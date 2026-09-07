@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS onramps (
   rate TEXT NOT NULL,
   destination_address TEXT NOT NULL,
   memo TEXT,
+  claimable_balance_supported INTEGER NOT NULL DEFAULT 1,
   status TEXT NOT NULL,
   pending_reason TEXT,
   settlement TEXT,
@@ -215,6 +216,7 @@ CREATE INDEX IF NOT EXISTS sep_tx_offramp ON sep_transactions(offramp_id);
 /** Additive migrations for databases created before a column existed. */
 const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   ['onramps', 'mid_rate', 'TEXT'],
+  ['onramps', 'claimable_balance_supported', 'INTEGER NOT NULL DEFAULT 1'],
   ['offramps', 'mid_rate', 'TEXT'],
   ['customers', 'kyc_callback_url', 'TEXT'],
   ['customers', 'sep12_registered', 'INTEGER NOT NULL DEFAULT 0'],
