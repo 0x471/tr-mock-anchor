@@ -395,7 +395,7 @@ All settings are environment variables (see `.env.example`).
 | `TREASURY_SECRET` | — | Treasury signing key (required in live mode) |
 | `RATE_SOURCE`, `STATIC_USDTRY` | `reflector`, `47.50` | Rate source and fallback |
 | `SPREAD_BPS`, `QUOTE_TTL_SECONDS`, `OFFRAMP_RATE_LOCK_SECONDS` | `50`, `120`, `1800` | Pricing behaviour |
-| `MIN_ONRAMP_TRY`, `MAX_ONRAMP_TRY`, `MIN_OFFRAMP_USDC` | `50.00`, `250000.00`, `1.0000000` | Order limits |
+| `MIN_ONRAMP_TRY`, `MAX_ONRAMP_TRY`, `MIN_OFFRAMP_USDC` | `50.00`, `3000.00`, `1.0000000` | Order limits (per on-ramp cap keeps the shared testnet treasury from draining) |
 | `BANK_NAME`, `ACCOUNT_HOLDER`, `ANCHOR_IBAN` | mock bank identity | Shown in deposit instructions |
 | `SESSION_SECRET` | auto-generated, persisted in DB | Signs dashboard session cookies |
 | `ANCHOR_SIGNING_SECRET` | auto-generated, persisted in DB | SEP-1 `SIGNING_KEY` / SEP-10 server key / callback signatures. Set it to keep the published key stable across databases |

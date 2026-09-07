@@ -191,7 +191,7 @@ sequenceDiagram
   A-->>App: onramp.completed + stellar_tx_hash
       </pre>
       <p><code>POST /v1/onramps</code> needs <code>customer_id</code>, <code>destination_address</code> (a <code>G…</code> or muxed <code>M…</code> address) and either <code>quote_id</code> or <code>amount_try</code>; <code>memo</code> (≤28 chars text) is optional. The TRY is debited immediately and the order is <code>pending</code>. A worker settles pending orders every few seconds and the order becomes <code>completed</code> with <code>settlement</code>, <code>stellar_tx_hash</code> and, for claimable balances, <code>claimable_balance_id</code>. If the send fails permanently the order is <code>failed</code> and the TRY is refunded.</p>
-      <p>Limits: 50.00 – 250,000.00 TRY per order (configurable).</p>
+      <p>Limits: <span class="lim-onramp">50 – 3000 TRY</span> per order (configurable; live values from <code>/health</code>).</p>
 
       <h3 id="offramp">Off-ramp (USDC → TRY)</h3>
       <pre class="mermaid">
@@ -407,7 +407,7 @@ print(o['status'], o['settlement'], o['stellar_tx_hash'])</code></pre>
         <tr><td>Spread</td><td>50 bps each side</td></tr>
         <tr><td>Quote validity</td><td>120 s</td></tr>
         <tr><td>Off-ramp rate lock</td><td>30 min, then repriced</td></tr>
-        <tr><td>On-ramp per order</td><td>50.00 – 250,000.00 TRY</td></tr>
+        <tr><td>On-ramp per order</td><td><span class="lim-onramp">50 – 3000 TRY</span></td></tr>
         <tr><td>Off-ramp minimum</td><td>1 USDC (when <code>amount_usdc</code> is given)</td></tr>
         <tr><td>Settlement cadence</td><td>on-ramps every 3 s, off-ramp detection every 5 s, webhooks every 2 s</td></tr>
         <tr><td>Pagination</td><td><code>limit</code> 1–200 (default 50), <code>offset</code></td></tr>
@@ -480,6 +480,12 @@ print(o['status'], o['settlement'], o['stellar_tx_hash'])</code></pre>
   window.addEventListener('load', () => setTimeout(scrollToHash, 400));
   // Clicking a TOC link changes the hash; re-scroll once layout is stable.
   window.addEventListener('hashchange', scrollToHash);
+  // Live on-ramp limits so the numbers never go stale against the deployed config.
+  fetch('/health').then((r) => r.json()).then((h) => {
+    if (!h.limits) return;
+    const t = `${Number(h.limits.min_onramp_try)} – ${Number(h.limits.max_onramp_try)} TRY`;
+    document.querySelectorAll('.lim-onramp').forEach((el) => { el.textContent = t; });
+  }).catch(() => {});
 </script>
 <script src="/static/site.js?v=3"></script>
 </body>

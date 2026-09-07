@@ -5,6 +5,12 @@ primary_region = "fra"
 [build]
   dockerfile = "Dockerfile"
 
+# Single machine + a volume: rolling tries to create a 2nd machine for the same volume
+# and gets stuck ("insufficient resources ... existing volume"). immediate = stop old, start
+# new on the same volume (a few seconds of downtime per deploy).
+[deploy]
+  strategy = "immediate"
+
 [env]
   PORT = "8787"
   DB_PATH = "/data/anchor.db"

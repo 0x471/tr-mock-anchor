@@ -165,6 +165,11 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
         spread_bps: buy.spreadBps,
         source: buy.mid.source,
       },
+      limits: {
+        min_onramp_try: cfg.minOnrampTry,
+        max_onramp_try: cfg.maxOnrampTry,
+        min_offramp_usdc: cfg.minOfframpUsdc,
+      },
       time: new Date().toISOString(),
     });
   });

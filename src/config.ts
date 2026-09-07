@@ -37,7 +37,7 @@ export const config = {
 
   // Limits (decimal strings)
   minOnrampTry: str(env.MIN_ONRAMP_TRY, '50.00'),
-  maxOnrampTry: str(env.MAX_ONRAMP_TRY, '250000.00'),
+  maxOnrampTry: str(env.MAX_ONRAMP_TRY, '3000.00'),
   minOfframpUsdc: str(env.MIN_OFFRAMP_USDC, '1.0000000'),
 
   // Mock bank identity shown in deposit instructions.
