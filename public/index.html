@@ -12,28 +12,22 @@
 <div class="wrap">
   <header class="top">
     <div class="brand"><span class="dot"></span> TR Mock Anchor <span class="tag">testnet sandbox</span></div>
-    <nav aria-label="Primary" class="primary-nav"><a href="/">Home</a><a href="/sep">SEP path</a><a href="/explorer">SEP demo</a><a href="/api">API</a><a href="/guide">Guide</a><a href="/mainnet">Mainnet</a><a href="/dashboard">Dashboard</a></nav>
+    <nav aria-label="Primary" class="primary-nav"><a href="/">Home</a><a href="/sep">SEP path</a><a href="/explorer">SEP demo</a><a href="/api">API</a><a href="/guide">Guide</a><a href="/mainnet">Mainnet</a></nav>
   </header>
 
-  <h1>A Turkish TRY ⇄ USDC on/off-ramp you can build against today.</h1>
-  <p class="lead">API-key based, modelled on how Turkish exchanges actually ramp: bank transfer with a reference code → TRY balance → USDC on Stellar. The bank is simulated; the Stellar leg is real testnet USDC. Sign up with your email and get one API key — or <a href="/api">watch the whole round trip run live</a> first.</p>
+  <h1>A Turkish TRY ⇄ USDC on/off-ramp your users can use — the standard, portable way.</h1>
+  <p class="lead">Integrate the <b><a href="/sep">SEP path</a></b> once against this testnet mock, and the same code works against any real Stellar anchor later — you only change the network and the home domain. The bank is simulated; the Stellar leg is real testnet USDC.</p>
 
   <div class="grid two">
     <section class="panel accent">
-      <div class="tabs"><button class="active" id="tab-signup" type="button">Sign up</button><button id="tab-login" type="button">Log in</button></div>
-      <form id="signup">
-        <div class="row"><label for="su-email">Email</label><input id="su-email" type="email" required autocomplete="email" placeholder="you@example.com" /></div>
-        <div class="row"><label for="su-name">Name or project (optional)</label><input id="su-name" type="text" autocomplete="organization" placeholder="My hackathon app" /></div>
-        <div class="row"><label for="su-pass">Password (min 8 chars)</label><input id="su-pass" type="password" required minlength="8" autocomplete="new-password" /></div>
-        <button class="primary" type="submit">Create account &amp; get API key</button>
-        <p class="small muted">One account per email, one API key per account. You can rotate it any time from the dashboard.</p>
-      </form>
-      <form id="login" hidden>
-        <div class="row"><label for="li-email">Email</label><input id="li-email" type="email" required autocomplete="email" /></div>
-        <div class="row"><label for="li-pass">Password</label><input id="li-pass" type="password" required autocomplete="current-password" /></div>
-        <button class="primary" type="submit">Log in</button>
-      </form>
-      <p id="auth-error" class="bad small" hidden></p>
+      <h3>Start with the SEP path</h3>
+      <p class="small">The whole handoff is two values. Everything else — where to log in, deposit, withdraw, the issuer — is discovered from <code>stellar.toml</code>.</p>
+      <dl class="kv">
+        <dt>Home domain</dt><dd class="mono" id="home-domain">tr-mock-anchor.fly.dev</dd>
+        <dt>Asset</dt><dd class="mono">USDC</dd>
+      </dl>
+      <p style="margin:12px 0 4px"><a href="/sep"><b>Read the SEP path →</b></a> &nbsp;·&nbsp; <a href="/explorer">Try the SEP demo live</a></p>
+      <p class="small muted">Or open <a href="https://demo-wallet.stellar.org" target="_blank" rel="noopener">demo-wallet.stellar.org</a> and add asset <code>USDC</code> with that home domain. No API key, no password — the user's key is the identity. Verified with SDF's anchor-tests.</p>
     </section>
 
     <section class="panel">
@@ -46,35 +40,60 @@
     <section class="panel">
       <h2>On-ramp · TRY → USDC</h2>
       <ol class="steps">
-        <li><code>POST /v1/customers</code> → customer with a <b>deposit reference</b></li>
-        <li><code>GET /v1/customers/{id}/deposit-instructions</code> → our IBAN + the reference the user writes in the transfer description (<i>açıklama</i>)</li>
-        <li><code>POST /v1/sandbox/bank-transfers</code> → <b>you play the bank</b>: the TRY arrives, the balance is credited</li>
-        <li><code>POST /v1/quotes</code> → USDC/TRY rate locked 120 s (Reflector USD/TRY oracle + spread)</li>
-        <li><code>POST /v1/onramps</code> → TRY debited, <b>real testnet USDC</b> paid to the wallet (payment or claimable balance)</li>
+        <li>The user logs in with their Stellar key (SEP-10) and starts a deposit</li>
+        <li>The anchor returns bank details: an IBAN and a <b>reference</b> to write in the transfer description (<i>açıklama</i>)</li>
+        <li><b>You play the bank</b> in this sandbox: the TRY "arrives" and is credited</li>
+        <li>The rate is locked at USD/TRY (Reflector oracle + spread) via a SEP-38 quote</li>
+        <li><b>Real testnet USDC</b> is paid to the user's wallet (or held until a trustline exists)</li>
       </ol>
     </section>
     <section class="panel">
       <h2>Off-ramp · USDC → TRY</h2>
       <ol class="steps">
-        <li><code>POST /v1/offramps</code> → treasury address + <b>memo id</b></li>
-        <li>Wallet sends USDC on Stellar testnet with that memo</li>
-        <li>We detect the payment, sell at the locked rate, credit TRY</li>
-        <li><code>auto_payout</code> → TRY “sent” to the customer's IBAN (simulated FAST)</li>
-        <li>Track with <code>GET /v1/offramps/{id}</code>, webhooks, or <code>GET /v1/events</code></li>
+        <li>The user starts a withdrawal and gets the treasury address + a <b>memo id</b></li>
+        <li>The wallet sends USDC on Stellar testnet with that memo</li>
+        <li>The anchor detects the payment and sells at the locked rate</li>
+        <li>TRY is paid to the user's IBAN (simulated FAST)</li>
+        <li>Both sides track status through SEP-6 <code>/transaction</code></li>
       </ol>
     </section>
   </div>
 
   <section class="panel" style="margin-top:18px">
-    <h2>Two doors, one ledger</h2>
+    <h2>Two paths, one ledger</h2>
     <div class="grid two">
-      <div><h3>Partner API · X-API-Key</h3><p class="small">How Turkish exchanges expose ramps to integrators: your backend holds a key, you own the UI, you drive customers, quotes, on-ramps and off-ramps through <code>/v1</code>. Sign up above.</p><p class="small muted">⚠ Production Turkish ramps differ in predictable ways — OAuth2 + scopes + IP allowlist instead of a key, swap-based conversion, real compliance fields. <a href="/mainnet">What will change on mainnet</a>.</p></div>
-      <div><h3>SEP-6 door · wallets</h3><p class="small">Standards-compliant: <code>stellar.toml</code> discovery (SEP-1), <code>/auth</code> (SEP-10), <code>/sep6</code> deposit &amp; withdraw, <code>/sep12</code> simulated KYC (no personal data), <code>/sep38</code> quotes. Try it in the <a href="https://demo-wallet.stellar.org" target="_blank" rel="noopener">Stellar demo wallet</a>: add asset <code>USDC</code> with home domain <code id="home-domain">tr-mock-anchor.fly.dev</code>. Verified with SDF's anchor-tests. <a href="/guide#sep6">Details</a>.</p></div>
+      <div>
+        <h3>SEP path · standard, portable <span class="muted small">(start here)</span></h3>
+        <p class="small"><code>stellar.toml</code> discovery (SEP-1), <code>/auth</code> (SEP-10), <code>/sep6</code> deposit &amp; withdraw, <code>/sep12</code> simulated KYC (no personal data), <code>/sep38</code> quotes. Non-custodial: the user's key is the identity. Integrate once, ship to any real SEP anchor by changing the home domain. <a href="/sep">The SEP path →</a></p>
+      </div>
+      <div>
+        <h3>API path · optional business layer <span class="warn small">(not portable)</span></h3>
+        <p class="small">A custom <code>/v1</code> REST API with an API key, for a business backend that orchestrates many users server-side (webhooks, event feed, back-office). Its endpoints are specific to this mock and do <b>not</b> exist on a real anchor. <a href="/api">API demo + reference →</a></p>
+      </div>
     </div>
   </section>
 
   <section class="panel" style="margin-top:18px">
-    <h2>Quickstart</h2>
+    <h2>Need the optional API? Get a key <span class="muted small" style="font-weight:400">— the SEP path needs no signup</span></h2>
+    <div class="grid two">
+      <div>
+        <div class="tabs"><button class="active" id="tab-signup" type="button">Sign up</button><button id="tab-login" type="button">Log in</button></div>
+        <form id="signup">
+          <div class="row"><label for="su-email">Email</label><input id="su-email" type="email" required autocomplete="email" placeholder="you@example.com" /></div>
+          <div class="row"><label for="su-name">Name or project (optional)</label><input id="su-name" type="text" autocomplete="organization" placeholder="My hackathon app" /></div>
+          <div class="row"><label for="su-pass">Password (min 8 chars)</label><input id="su-pass" type="password" required minlength="8" autocomplete="new-password" /></div>
+          <button class="primary" type="submit">Create account &amp; get API key</button>
+          <p class="small muted">One account per email, one API key per account. Rotate it any time from the dashboard.</p>
+        </form>
+        <form id="login" hidden>
+          <div class="row"><label for="li-email">Email</label><input id="li-email" type="email" required autocomplete="email" /></div>
+          <div class="row"><label for="li-pass">Password</label><input id="li-pass" type="password" required autocomplete="current-password" /></div>
+          <button class="primary" type="submit">Log in</button>
+        </form>
+        <p id="auth-error" class="bad small" hidden></p>
+      </div>
+      <div>
+        <h3>API quickstart</h3>
 <pre id="quick">curl -X POST $BASE/v1/partners -H 'content-type: application/json' \
   -d '{"email":"you@example.com","password":"correct-horse-battery","name":"My app"}'
 # → { "api_key": "trma_test_…" }
@@ -84,12 +103,12 @@ curl -X POST $BASE/v1/customers -H "X-API-Key: $KEY" -H 'content-type: applicati
   -d '{"first_name":"Ayşe","last_name":"Yılmaz","iban":"TR330006100519786457841326"}'
 # → { "id": "cus_…", "deposit_reference": "TRMA-XXXX-XXXX", ... }
 
-curl -X POST $BASE/v1/sandbox/bank-transfers -H "X-API-Key: $KEY" -H 'content-type: application/json' \
-  -d '{"reference":"TRMA-XXXX-XXXX","amount_try":"1000.00"}'
-
 curl -X POST $BASE/v1/onramps -H "X-API-Key: $KEY" -H 'content-type: application/json' \
   -d '{"customer_id":"cus_…","amount_try":"1000.00","destination_address":"G…"}'
-# poll GET $BASE/v1/onramps/{id} until status = completed → stellar_tx_hash</pre>
+# poll GET $BASE/v1/onramps/{id} until status = completed</pre>
+        <p class="small muted">Full demo + reference on the <a href="/api">API page</a>.</p>
+      </div>
+    </div>
   </section>
 
   <footer>Sandbox for Stellar testnet builders. No real money, no real bank, no real KYC. Rates: Reflector USD/TRY oracle (Stellar mainnet) with a configurable spread. For AIs: <a href="/llms.txt">llms.txt</a> · <a href="/llms-full.txt">llms-full.txt</a> · <a href="/sitemap.md">sitemap.md</a> · <a href="/.well-known/stellar.toml">stellar.toml</a></footer>

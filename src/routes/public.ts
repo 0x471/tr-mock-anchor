@@ -40,7 +40,7 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
     ['/api', 'API (optional layer)', 'The custom /v1 partner API on one page: interactive demo + full OpenAPI reference. An optional business/compatibility layer, NOT the portable path (these endpoints are specific to this mock). For the portable way, see /sep.'],
     ['/guide', 'Guide', 'Concepts, Turkish rails, on/off-ramp flows, SEP-6 door, statuses, errors, webhooks, glossary (TR/EN).'],
     ['/mainnet', 'Mainnet: what to expect', 'What changes moving from this sandbox to a production anchor, plus a readiness checklist.'],
-    ['/dashboard', 'Dashboard', 'Your API key, a playground, and live tables of customers / orders / events (login required).'],
+    ['/dashboard', 'Dashboard (part of the API path)', 'Your API key, a playground, and live tables of customers / orders / events (login required). Only relevant to the optional /v1 API path.'],
   ];
   const MACHINE: Array<[string, string]> = [
     ['/openapi.json', 'OpenAPI 3.1 specification (JSON).'],

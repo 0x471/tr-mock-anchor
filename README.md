@@ -1,16 +1,17 @@
 # TR Mock Anchor
 
-**A mock Turkish TRY ⇄ USDC on/off-ramp on Stellar testnet, for builders who need to integrate a TRY ramp before a production anchor exists.** Two doors, one ledger: a partner-style **API-key REST API** (how Turkish exchanges expose ramps) and a standards-compliant **SEP-6 door** for wallets (SEP-1, SEP-10, SEP-12, SEP-38).
+**A mock Turkish TRY ⇄ USDC on/off-ramp on Stellar testnet, for builders who need to integrate a TRY ramp before a production anchor exists.** The main door is the standard, portable **SEP path** (SEP-1, SEP-10, SEP-6, SEP-12, SEP-38) — integrate it once here, then move to any real SEP anchor by changing only the network and the home domain; a partner-style **API-key REST API** (`/v1`) is also available as an optional, **non-portable** business/compatibility layer.
 
 Live sandbox: **https://tr-mock-anchor.fly.dev**
 
 | | |
 | --- | --- |
 | 🏠 [Home / sign up](https://tr-mock-anchor.fly.dev/) | Create an account with your email, get your single API key |
-| ▶️ [How it works](https://tr-mock-anchor.fly.dev/demo) | Runs the whole round trip live in your browser: throwaway wallets, real testnet transactions |
+| 🧭 [The SEP path](https://tr-mock-anchor.fly.dev/sep) | **Start here.** The main, portable integration guide (SEP-1/10/6/12/38) |
+| ▶️ [SEP demo](https://tr-mock-anchor.fly.dev/explorer) | Run the SEP path live in your browser, no wallet app |
+| 🧾 [API](https://tr-mock-anchor.fly.dev/api) | Interactive demo + full OpenAPI reference on one page ([raw spec](https://tr-mock-anchor.fly.dev/openapi.json)). Optional, non-portable business layer |
 | 📖 [Guide](https://tr-mock-anchor.fly.dev/guide) | Concepts, Turkish rails, flows, statuses, errors, webhooks, glossary (TR/EN) |
 | 🚀 [Mainnet: what to expect](https://tr-mock-anchor.fly.dev/mainnet) | What changes in production (auth, swap-based ramps, compliance) + a readiness checklist |
-| 🧾 [API reference](https://tr-mock-anchor.fly.dev/docs) | Interactive OpenAPI 3.1 ([raw spec](https://tr-mock-anchor.fly.dev/openapi.json)) |
 | 🎛 [Dashboard](https://tr-mock-anchor.fly.dev/dashboard) | Your key, a playground, live tables of customers / orders / events |
 | 🤖 [llms.txt](https://tr-mock-anchor.fly.dev/llms.txt) · [stellar.toml](https://tr-mock-anchor.fly.dev/.well-known/stellar.toml) · [/health](https://tr-mock-anchor.fly.dev/health) | For agents, wallets and monitors |
 
@@ -53,14 +54,19 @@ Live sandbox: **https://tr-mock-anchor.fly.dev**
 
 ## Why this exists
 
-Turkish exchanges and payment institutions expose fiat ramps to partners through **API-key based REST APIs**: the
-integrator owns the customer UI, holds a key, and drives the journey (register customer → show bank details → detect
-deposit → convert → pay out on-chain). That is a different shape from the wallet-initiated SEP-24 / SEP-6 flows the
-Stellar test anchor implements, and it is the shape hackathon and pilot builders will meet when a production
-Turkish anchor launches.
+No production Turkish anchor exists yet. This sandbox fills the gap with the standard, portable **SEP path**
+(SEP-1/10/6/12/38): integrate it once against this mock and the same code moves to any real SEP anchor by
+changing only the network and the home domain — everything else is discovered from the anchor's stellar.toml.
+The [/sep](https://tr-mock-anchor.fly.dev/sep) page is the full guide. (This anchor speaks SEP-6, the
+programmatic flow — not SEP-24's anchor-hosted popup UI.)
 
-This project gives them something to build against today: the same shape, the same vocabulary, real Stellar
-settlement — and a simulated bank so the whole loop can be exercised in seconds without moving lira.
+Turkish exchanges and payment institutions, meanwhile, expose fiat ramps to partners through **API-key based REST
+APIs**: the integrator owns the customer UI, holds a key, and drives the journey (register customer → show bank
+details → detect deposit → convert → pay out on-chain). The optional `/v1` partner API mirrors that business
+shape — same vocabulary, real Stellar settlement, and a simulated bank so the whole loop can be exercised in
+seconds without moving lira. But it is **not portable**: its endpoints are specific to this mock and do not exist
+on a real anchor. Use it only when you want the business/back-office model (many users under one credential,
+webhooks, an event feed, server-side orchestration).
 
 ## What is real and what is simulated
 
@@ -109,6 +115,9 @@ sequenceDiagram
 
 ## Quickstart
 
+This quickstart drives the optional `/v1` partner API. For the main, portable SEP path, start at
+[/sep](https://tr-mock-anchor.fly.dev/sep) or jump to [SEP-6 door for wallets](#sep-6-door-for-wallets) below.
+
 1. Sign up at https://tr-mock-anchor.fly.dev with your email; copy the API key from the dashboard
    (or `POST /v1/partners {"email","password","name"}`).
 2. Get a testnet wallet (Freighter on testnet, or [Stellar Lab](https://lab.stellar.org/account/create)), fund it with
@@ -149,9 +158,11 @@ JavaScript and Python versions of the same flow are pre-filled with your key in 
 
 ## The interactive demo
 
-[`/demo`](https://tr-mock-anchor.fly.dev/demo) is the end-to-end test turned into a page. It runs eight steps
-against the live API and Stellar testnet from your browser, showing every request and response and linking every
-transaction to stellar.expert:
+[`/api`](https://tr-mock-anchor.fly.dev/api) is the end-to-end test turned into a page: the interactive demo on
+top, the full OpenAPI reference below (the old `/demo` and `/docs` URLs redirect here). It demos the optional
+partner API; for the SEP path, [`/explorer`](https://tr-mock-anchor.fly.dev/explorer) runs the SEP flow live in
+the browser, no wallet app needed. The demo runs eight steps against the live API and Stellar testnet from your
+browser, showing every request and response and linking every transaction to stellar.expert:
 
 1. create the customer → 2. show the bank details → 3. play the bank (300 TRY arrives) → 4. generate a throwaway
 wallet, Friendbot-fund it and open a USDC trustline → 5. quote + on-ramp 100 TRY, verify the wallet balance on
@@ -167,6 +178,8 @@ start automatically (handy for livestreams).
 
 Base path `/v1`. Auth header `X-API-Key: <key>` (or `Authorization: Bearer <key>`). All amounts are decimal
 **strings** — TRY has 2 decimals, USDC 7, rates 6. Pagination: `limit` (1–200, default 50) and `offset`.
+The `/v1` endpoints are the optional business layer and exist only on this mock; the SEP rows at the bottom of
+the table are the standard, portable door.
 
 | Area | Endpoints |
 | --- | --- |
@@ -178,7 +191,7 @@ Base path `/v1`. Auth header `X-API-Key: <key>` (or `Authorization: Bearer <key>
 | Payouts | `POST/GET /payouts` · `GET /payouts/{id}` |
 | Webhooks & events | `POST/GET /webhooks` · `DELETE /webhooks/{id}` · `GET /webhooks/{id}/deliveries` · `GET /events` |
 | Sandbox | `POST/GET /sandbox/bank-transfers` · `POST /sandbox/bank-transfers/{id}/assign` · `POST /sandbox/customers/{id}/kyc` · `GET /sandbox/treasury` · `GET /sandbox/unmatched-deposits` · `POST /sandbox/usdc-deposits` (fake-Stellar mode only) |
-| Public (no auth) | `GET /health` · `/openapi.json` · `/docs` · `/guide` · `/demo` · `/llms.txt` · `/.well-known/stellar.toml` |
+| Public (no auth) | `GET /health` · `/openapi.json` · `/sep` · `/explorer` · `/api` · `/guide` · `/llms.txt` · `/.well-known/stellar.toml` |
 | SEP-10 (wallets) | `GET/POST /auth` |
 | SEP-6 (wallets, JWT) | `GET /sep6/info` · `/sep6/deposit` · `/sep6/deposit-exchange` · `/sep6/withdraw` · `/sep6/withdraw-exchange` · `/sep6/transactions` · `/sep6/transaction` · `GET /sep6/tx/{id}` (more_info_url) · `POST /sep6/tx/{id}/simulate-bank-transfer` (sandbox bank) |
 | SEP-12 (wallets, JWT) | `GET/PUT /sep12/customer` · `PUT /sep12/customer/callback` · `DELETE /sep12/customer/{account}` |
@@ -189,8 +202,12 @@ the model behind it.
 
 ## SEP-6 door for wallets
 
-The same anchor is discoverable and usable by any Stellar wallet or SDK that speaks the SEPs. Nothing is
-duplicated: SEP transactions are views over the same on-ramps, off-ramps, ledger and treasury as the partner API.
+This is the main, portable integration path. The same anchor is discoverable and usable by any Stellar wallet or
+SDK that speaks the SEPs, and the whole handoff is two values — home domain `tr-mock-anchor.fly.dev` and asset
+`USDC`; everything else is discovered from stellar.toml. The full guide lives at
+[/sep](https://tr-mock-anchor.fly.dev/sep), and [/explorer](https://tr-mock-anchor.fly.dev/explorer) runs the
+flow live in the browser. Nothing is duplicated: SEP transactions are views over the same on-ramps, off-ramps,
+ledger and treasury as the partner API.
 
 | SEP | Where | What it does here |
 | --- | --- | --- |
@@ -233,6 +250,13 @@ Failures are `error` with `refunds` when TRY was returned to the balance. `amoun
   withdrawal [437cd15e…](https://stellar.expert/explorer/testnet/tx/437cd15e10446bdbf43f6f74f55a35b8b29962efd97835bb269a41502e49ed24).
 
 ### Partner API vs SEP door
+
+The SEP door is the **standard, portable, default path**: every real Stellar anchor speaks it, and code written
+against it moves between anchors by swapping the network and home domain. The partner API is the **optional,
+non-portable business layer** — its `/v1` endpoints are specific to this mock and do not exist on a real anchor.
+Pick it only for a business/back-office model: many users under one credential, webhooks, an event feed,
+server-side orchestration. That is the shape real exchange partner APIs take (BiLira's Trade API, for instance,
+is a business OAuth2 API, not SEP).
 
 | | Partner API (`/v1`) | SEP door |
 | --- | --- | --- |
@@ -280,13 +304,13 @@ falls back to `STATIC_USDTRY` and reports `rate_source: "static_fallback"`. Quot
 | Off-ramp routing | `memo_type: id` (12-digit id) or a muxed `M…` address with that id |
 | First-time wallets | No account / no trustline → claimable balance with the destination as sole unconditional claimant |
 | Memos on on-ramps | Optional text memo, ≤ 28 bytes |
-| stellar.toml | SEP-1, informational only — this anchor does not implement SEP-10/24/31 |
+| stellar.toml | SEP-1 at `/.well-known/stellar.toml`; publishes the SEP endpoints and signing key. SEP-24 (hosted UI) and SEP-31 are not implemented — SEP-6 is the programmatic door |
 
 ## Architecture
 
 ```
                  ┌──────────────── Hono (Node 24) ────────────────┐
- browser ──────▶ │ public pages  /  /dashboard  /demo  /guide  /docs│
+ browser ──────▶ │ pages  /sep  /explorer  /api  /guide  /dashboard│
  your backend ─▶ │ /v1/* (X-API-Key)  ─┐                           │
  wallets ──────▶ │ /auth /sep6 /sep12  ├─▶ routes ─▶ core (ledger,  │
                  │ /sep38 (SEP-10 JWT) │            events, money, │
@@ -321,22 +345,23 @@ npm install
 cp .env.example .env
 npm run setup:treasury          # creates a testnet account + USDC trustline, prints TREASURY_SECRET
 # paste TREASURY_SECRET into .env, then fund the treasury (see "Operating the sandbox")
-npm run dev                     # http://localhost:8787 — API, dashboard, demo, guide, docs
+npm run dev                     # http://localhost:8787 — API, dashboard, /sep, /explorer, /api, guide
 ```
 
 Offline / CI: `STELLAR_MODE=fake RATE_SOURCE=static npm run dev` runs with an in-memory chain; then
-`POST /v1/sandbox/usdc-deposits` stands in for the wallet's payment. The `/demo` page needs live mode.
+`POST /v1/sandbox/usdc-deposits` stands in for the wallet's payment. The `/api` demo needs live mode.
 
 ## Testing the full flow
 
-Four ways to exercise a complete TRY ⇄ USDC round trip, from no-code to CLI:
+Five ways to exercise a complete TRY ⇄ USDC round trip, from no-code to CLI:
 
 | # | Where | What it does | Needs |
 | --- | --- | --- | --- |
-| 1 | **[/demo](https://tr-mock-anchor.fly.dev/demo)** — the interactive demo page | Runs all 8 partner-API steps live in the browser (customer → bank simulation → in-browser wallet + trustline → on-ramp as payment → on-ramp as claimable balance + claim → off-ramp with memo → ledger). Shows every request/response and links each real testnet tx. `?autorun=1` starts it automatically. | Nothing — uses your dashboard session, a pasted key, or a temporary demo account |
+| 1 | **[/explorer](https://tr-mock-anchor.fly.dev/explorer)** — the SEP demo page | Runs the SEP path (the main, portable door) live in the browser, no wallet app needed. | Nothing |
 | 2 | **[demo-wallet.stellar.org](https://demo-wallet.stellar.org)** — a real Stellar wallet (SEP door) | Create/fund a testnet account → *Add asset* `USDC` with home domain `tr-mock-anchor.fly.dev` → **SEP-6 Deposit** (open the transaction's *more info* link, press *Simulate incoming TRY transfer*) → USDC arrives → **SEP-6 Withdraw** (wallet pays USDC with the memo) → TRY payout. | A testnet wallet |
-| 3 | **[/dashboard](https://tr-mock-anchor.fly.dev/dashboard)** — Playground | The same partner flow run against **your own API key**, with live tables of customers, on-ramps, off-ramps and events. | Sign up (email) |
-| 4 | **CLI / CI** (below) | Scripted end-to-end and protocol-conformance runs against any deployment. | Node ≥ 22.13, a clone |
+| 3 | **[/api](https://tr-mock-anchor.fly.dev/api)** — the interactive API demo (optional business layer) | Runs all 8 partner-API steps live in the browser (customer → bank simulation → in-browser wallet + trustline → on-ramp as payment → on-ramp as claimable balance + claim → off-ramp with memo → ledger). Shows every request/response and links each real testnet tx. `?autorun=1` starts it automatically. | Nothing — uses your dashboard session, a pasted key, or a temporary demo account |
+| 4 | **[/dashboard](https://tr-mock-anchor.fly.dev/dashboard)** — Playground | The same partner flow run against **your own API key**, with live tables of customers, on-ramps, off-ramps and events. | Sign up (email) |
+| 5 | **CLI / CI** (below) | Scripted end-to-end and protocol-conformance runs against any deployment. | Node ≥ 22.13, a clone |
 
 ```bash
 npm test                 # vitest: money math, IBAN/TCKN, partner API flow, SEP-10/6/12/38 flow (in-memory DB + fake Stellar)
@@ -347,12 +372,12 @@ BASE_URL=https://tr-mock-anchor.fly.dev npm run e2e:sep6    # SEP door: SEP-10 -
 HOME_DOMAIN=https://tr-mock-anchor.fly.dev npm run sep:conformance   # SDF anchor-tests for SEP-1/10/12/6/38
 ```
 
-Prefer curl? Follow the [Quickstart](#quickstart) for the partner API, or the SEP steps in the [guide](https://tr-mock-anchor.fly.dev/guide#sep6). Every endpoint is in the [API reference](https://tr-mock-anchor.fly.dev/docs).
+Prefer curl? Follow the [Quickstart](#quickstart) for the partner API, or the SEP steps in the [guide](https://tr-mock-anchor.fly.dev/guide#sep6). Every endpoint is in the [API reference](https://tr-mock-anchor.fly.dev/api).
 
 Conformance against production (`https://tr-mock-anchor.fly.dev`, `@stellar/anchor-tests` 0.6.22, 2026-08-28): **80 passed, 4 skipped, 0 failed** across SEP-1, SEP-10, SEP-12, SEP-6 and SEP-38.
 The 4 skipped tests only apply to anchors that run SEP-6 without authentication.
 
-`scripts/e2e.ts` performs the same eight steps as the `/demo` page from Node: on-ramp as payment, on-ramp as
+`scripts/e2e.ts` performs the same eight steps as the `/api` demo from Node: on-ramp as payment, on-ramp as
 claimable balance (then claims it), off-ramp with memo, payout — and fails loudly if any on-chain balance disagrees
 with the API. Run it against production with `BASE_URL=https://tr-mock-anchor.fly.dev npm run e2e`.
 
@@ -434,8 +459,11 @@ customers and orders; the treasury and its on-chain history are unaffected.
 
 ## Sandbox → production: what will change
 
-The API shape is close to what Turkish exchanges expose to partners, so the deltas are predictable — and they
-are worth designing for from day one:
+**SEP integrations port.** If you built against the SEP door, moving to a real anchor means changing only the
+network (passphrase + Horizon/RPC URLs) and the home domain; endpoints, auth, KYC and quotes are re-discovered
+from the new anchor's stellar.toml. **`/v1` partner-API code does not port** — those endpoints exist only on this
+mock. If you chose the business-API shape anyway, it is close to what Turkish exchanges expose to partners, so
+the deltas are predictable — and worth designing for from day one:
 
 - **Auth:** expect OAuth2 client-credentials (client_id/secret → short-lived JWT + refresh token) with granular
   read/create **scopes** and an **IP allowlist**, instead of a static key. Isolate auth in one module.
@@ -464,7 +492,7 @@ src/
   routes/                        partners, customers, quotes, onramps, offramps, payouts, webhooks, sandbox, ui, public, sep10, sep6, sep12, sep38
   core/                          ledger, events, orders, serializers, sep (partner/keys/customers), sepstatus, row types
   openapi.ts                     OpenAPI 3.1 document
-public/                          index (signup), dashboard (key + playground), demo (interactive e2e), guide, docs, style.css
+public/                          index (signup), dashboard (key + playground), sep (SEP path guide), explorer (SEP demo), api (interactive demo + OpenAPI reference), guide, mainnet, site.js, style.css
 scripts/                         setup-treasury, issue-mock-usdc, sweep, e2e, e2e-sep6
 anchor-tests.config.json         SDF anchor-tests configuration
 test/                            vitest suites
