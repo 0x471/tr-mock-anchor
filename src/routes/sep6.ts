@@ -99,11 +99,14 @@ export function sep6Routes(deps: Deps, sep: SepContext) {
 
   /* ---------------- deposit ---------------- */
 
-  function parseCommon(c: Context<SepEnv>) {
+  // The on-chain asset comes from a different query param per endpoint: `asset_code` for plain
+  // deposit/withdraw, `destination_asset` for deposit-exchange, `source_asset` for withdraw-exchange
+  // (the -exchange endpoints have no `asset_code`; the off-chain leg is the other SEP-38 param).
+  function parseCommon(c: Context<SepEnv>, onchainAssetParam: string) {
     const q = (k: string) => c.req.query(k);
-    const assetCode = q('asset_code');
-    if (!assetCode) return { error: "'asset_code' is required" };
-    if (assetCode !== stellar.assetCode) return { error: `unsupported asset_code '${assetCode}'; this anchor ramps ${stellar.assetCode}` };
+    const assetCode = q(onchainAssetParam);
+    if (!assetCode) return { error: `'${onchainAssetParam}' is required` };
+    if (assetCode !== stellar.assetCode) return { error: `unsupported ${onchainAssetParam} '${assetCode}'; this anchor ramps ${stellar.assetCode}` };
     const funding = q('funding_method') ?? q('type');
     if (funding && funding !== FUNDING_METHOD) return { error: `unsupported funding_method '${funding}'; use ${FUNDING_METHOD}` };
     const lang = q('lang') ?? null;
@@ -125,7 +128,7 @@ export function sep6Routes(deps: Deps, sep: SepContext) {
   }
 
   async function deposit(c: Context<SepEnv>, exchange: boolean) {
-    const common = parseCommon(c);
+    const common = parseCommon(c, exchange ? 'destination_asset' : 'asset_code');
     if ('error' in common) return sepError(c, 400, common.error as string);
     const q = (k: string) => c.req.query(k);
     const customer = c.get('sepCustomer');
@@ -140,10 +143,9 @@ export function sep6Routes(deps: Deps, sep: SepContext) {
     let amount: string | null = null;
     let quote: QuoteRow | null = null;
     if (exchange) {
-      const source = q('source_asset');
-      const dest = q('destination_asset');
-      if (source !== TRY_ASSET) return sepError(c, 400, `'source_asset' must be ${TRY_ASSET}`);
-      if (dest !== USDC) return sepError(c, 400, `'destination_asset' must be ${USDC}`);
+      // destination_asset (the on-chain USDC code) is validated in parseCommon; here we check the
+      // off-chain leg. source_asset is the SEP-38 identifier for TRY.
+      if (q('source_asset') !== TRY_ASSET) return sepError(c, 400, `'source_asset' must be ${TRY_ASSET}`);
       if (!q('amount')) return sepError(c, 400, "'amount' is required for /deposit-exchange");
       if (q('quote_id')) {
         quote = db.prepare('SELECT * FROM quotes WHERE id = ? AND customer_id = ?').get(q('quote_id')!, customer.id) as unknown as QuoteRow | undefined ?? null;
@@ -255,7 +257,7 @@ export function sep6Routes(deps: Deps, sep: SepContext) {
   /* ---------------- withdraw ---------------- */
 
   async function withdraw(c: Context<SepEnv>, exchange: boolean) {
-    const common = parseCommon(c);
+    const common = parseCommon(c, exchange ? 'source_asset' : 'asset_code');
     if ('error' in common) return sepError(c, 400, common.error as string);
     const q = (k: string) => c.req.query(k);
     const customer = c.get('sepCustomer');
@@ -263,7 +265,8 @@ export function sep6Routes(deps: Deps, sep: SepContext) {
     let expected: bigint | null = null;
     let quote: QuoteRow | null = null;
     if (exchange) {
-      if (q('source_asset') !== USDC) return sepError(c, 400, `'source_asset' must be ${USDC}`);
+      // source_asset (the on-chain USDC code) is validated in parseCommon; here we check the
+      // off-chain leg. destination_asset is the SEP-38 identifier for TRY.
       if (q('destination_asset') !== TRY_ASSET) return sepError(c, 400, `'destination_asset' must be ${TRY_ASSET}`);
       if (!q('amount')) return sepError(c, 400, "'amount' is required for /withdraw-exchange");
       if (q('quote_id')) {

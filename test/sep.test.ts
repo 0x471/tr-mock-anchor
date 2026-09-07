@@ -249,10 +249,20 @@ describe('SEP door', () => {
     expect(noauth.status).toBe(403);
 
     // withdraw-exchange with the quote locks its rate
-    const wx = await get(`/sep6/withdraw-exchange?asset_code=USDC&source_asset=stellar:USDC:${stellar.assetIssuer}&destination_asset=iso4217:TRY&amount=10&quote_id=${quote.id}&funding_method=bank_account`);
+    const wx = await get(`/sep6/withdraw-exchange?source_asset=USDC&destination_asset=iso4217:TRY&amount=10&quote_id=${quote.id}&funding_method=bank_account`);
     expect(wx.status).toBe(200);
     const t = await get(`/sep6/transaction?id=${wx.json.id}`);
     expect(t.json.transaction.quote_id).toBe(quote.id);
+
+    // deposit-exchange (the path wallets take): destination_asset is the on-chain code, source_asset
+    // is the SEP-38 TRY identifier, and there is no asset_code param.
+    const dq = await app.request('/sep38/quote', { method: 'POST', headers: { ...auth(), 'content-type': 'application/json' }, body: JSON.stringify({ sell_asset: 'iso4217:TRY', buy_asset: `stellar:USDC:${stellar.assetIssuer}`, sell_amount: '100', context: 'sep6' }) });
+    expect(dq.status).toBe(201);
+    const dquote = (await dq.json()) as any;
+    const dx = await get(`/sep6/deposit-exchange?destination_asset=USDC&source_asset=iso4217:TRY&amount=100&quote_id=${dquote.id}&type=bank_account`);
+    expect(dx.status).toBe(200);
+    const dxTx = await get(`/sep6/transaction?id=${dx.json.id}`);
+    expect(dxTx.json.transaction.quote_id).toBe(dquote.id);
   });
 
   it('SEP-6 on_change_callback: posts signed status changes', async () => {
