@@ -74,11 +74,12 @@ export function sep10Routes(deps: Deps, sep: SepContext) {
     const clientAccount = read.clientAccountID;
     const baseAccount = StrKey.isValidMed25519PublicKey(clientAccount) ? Keypair.fromPublicKey(clientAccount).publicKey() : clientAccount;
 
-    // Optional client_domain operation: its source (the client's SIGNING_KEY) must have signed too.
+    // Optional client_domain operation (wallet attribution). It adds a second signature from the
+    // wallet's domain key. verifyChallengeTx* below auto-detects that op and already requires its
+    // signature, so no separate verification is needed. We only read the domain for the JWT claim.
     const clientDomainOp = read.tx.operations.find((op) => op.type === 'manageData' && op.name === 'client_domain') as
       | { source?: string; value?: Buffer | null }
       | undefined;
-    const clientDomainKey = clientDomainOp?.source;
     const clientDomain = clientDomainOp?.value ? Buffer.from(clientDomainOp.value).toString('utf8') : undefined;
 
     try {
@@ -88,11 +89,9 @@ export function sep10Routes(deps: Deps, sep: SepContext) {
         const summary = acct.signers.map((s) => ({ key: s.key, weight: s.weight, type: s.type })) as never;
         WebAuth.verifyChallengeTxThreshold(transaction, server.publicKey(), cfg.networkPassphrase, threshold, summary, homeDomain, homeDomain);
       } else {
-        // Unfunded account: exactly the master key must have signed.
+        // Unfunded account: the master key must have signed (plus the client_domain key if present,
+        // which verifyChallengeTxSigners auto-detects and requires).
         WebAuth.verifyChallengeTxSigners(transaction, server.publicKey(), cfg.networkPassphrase, [baseAccount], homeDomain, homeDomain);
-      }
-      if (clientDomainKey) {
-        WebAuth.verifyChallengeTxSigners(transaction, server.publicKey(), cfg.networkPassphrase, [clientDomainKey], homeDomain, homeDomain);
       }
     } catch (e) {
       return err(c, 400, `challenge verification failed: ${(e as Error).message}`);

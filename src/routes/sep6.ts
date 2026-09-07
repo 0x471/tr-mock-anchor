@@ -41,9 +41,19 @@ export function sep6Routes(deps: Deps, sep: SepContext) {
       fee_percent: feePercent,
       funding_methods: [FUNDING_METHOD],
     };
+    // Some wallets (e.g. the Stellar demo wallet) assume a `type` field with choices exists on the
+    // deposit info and read `fields.type.choices` directly. Provide it so those wallets can render
+    // the deposit form. Our handler treats `type` as an alias of `funding_method`.
+    const depositFields = {
+      type: {
+        description: 'How the TRY arrives. Only bank_account (bank transfer) is supported.',
+        choices: [FUNDING_METHOD],
+        optional: false,
+      },
+    };
     return c.json({
-      deposit: { [stellar.assetCode]: { ...asset, fields: {} } },
-      'deposit-exchange': { [stellar.assetCode]: { ...asset, fields: {} } },
+      deposit: { [stellar.assetCode]: { ...asset, fields: depositFields } },
+      'deposit-exchange': { [stellar.assetCode]: { ...asset, fields: depositFields } },
       withdraw: { [stellar.assetCode]: { ...asset, types: { [FUNDING_METHOD]: { fields: {} } } } },
       'withdraw-exchange': { [stellar.assetCode]: { ...asset, types: { [FUNDING_METHOD]: { fields: {} } } } },
       fee: { enabled: false, description: 'Fee is a flat spread over the USD/TRY mid rate; see /sep38/price or the fee fields on each transaction.' },
