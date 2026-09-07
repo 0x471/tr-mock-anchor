@@ -65,6 +65,12 @@ export function createApp(deps: Deps, sep: SepContext = createSepContext(deps)) 
   app.route('/', sep12Routes(deps, sep) as unknown as Hono<AppEnv>);
   app.route('/', sep38Routes(deps, sep) as unknown as Hono<AppEnv>);
 
+  // Revalidate static assets every load so CSS/JS changes reach browsers immediately
+  // (no Cache-Control previously meant browsers heuristically cached stale style.css / site.js).
+  app.use('/static/*', async (c, next) => {
+    await next();
+    c.header('Cache-Control', 'no-cache');
+  });
   app.use('/static/*', serveStatic({ root: './public', rewriteRequestPath: (p) => p.replace(/^\/static/, '') }));
 
   return app;

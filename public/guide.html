@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>TR Mock Anchor · Guide</title>
-<link rel="stylesheet" href="/static/style.css" />
+<link rel="stylesheet" href="/static/style.css?v=3" />
 <style>
   .layout { display: grid; grid-template-columns: 240px 1fr; gap: 32px; align-items: start; }
   @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .toc { position: static !important; } }
@@ -475,6 +475,6 @@ print(o['status'], o['settlement'], o['stellar_tx_hash'])</code></pre>
   // Clicking a TOC link changes the hash; re-scroll once layout is stable.
   window.addEventListener('hashchange', scrollToHash);
 </script>
-<script src="/static/site.js"></script>
+<script src="/static/site.js?v=3"></script>
 </body>
 </html>
