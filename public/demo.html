@@ -31,13 +31,13 @@
 <div class="wrap">
   <header class="top">
     <div class="brand"><a href="/" style="color:inherit"><span class="dot"></span> TR Mock Anchor</a> <span class="tag">how it works</span></div>
-    <nav aria-label="Primary" class="primary-nav"><a href="/">Home</a><a href="/demo">API demo</a><a href="/explorer">SEP demo</a><a href="/guide">Guide</a><a href="/mainnet">Mainnet</a><a href="/docs">API</a><a href="/dashboard">Dashboard</a></nav>
+    <nav aria-label="Primary" class="primary-nav"><a href="/">Home</a><a href="/sep">SEP path</a><a href="/explorer">SEP demo</a><a href="/demo">API demo</a><a href="/guide">Guide</a><a href="/mainnet">Mainnet</a><a href="/docs">API</a><a href="/dashboard">Dashboard</a></nav>
   </header>
 
   <h1>Watch a TRY ⇄ USDC ramp run end to end.</h1>
   <p class="lead">Every step below is a real call to this sandbox's API and, where the chain is involved, a real transaction on Stellar testnet. Wallets are throwaway keys generated in your browser. Nothing is faked except the bank — and you get to play the bank.</p>
 
-  <p class="small muted">This page exercises the <b>partner API</b>. The same anchor also speaks <b>SEP-6</b> for wallets — try it from the <a href="https://demo-wallet.stellar.org" target="_blank" rel="noopener">Stellar demo wallet</a> with home domain <code>tr-mock-anchor.fly.dev</code>, or read the <a href="/guide#sep6">guide</a>.</p>
+  <p class="note" style="border-left:3px solid var(--bad);background:color-mix(in srgb, var(--bad) 8%, transparent);padding:8px 12px;border-radius:6px">This page exercises the <b>custom partner API</b> (<code>/v1</code>, API-key). It is an <b>optional business / compatibility layer — not the portable path.</b> These endpoints are specific to this mock and do not exist on a real anchor. For the main, portable way (integrate once, ship to any real SEP anchor), start at <a href="/sep"><b>the SEP path</b></a> or try the <a href="/explorer">SEP demo</a>.</p>
 
   <section class="panel setup accent">
     <h3>Setup</h3>

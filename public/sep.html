@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TR Mock Anchor · The SEP path</title>
+<link rel="stylesheet" href="/static/style.css" />
+<style>
+  .lede { font-size: 18px; }
+  .note { border-left: 3px solid var(--accent); padding: 8px 12px; background: color-mix(in srgb, var(--accent) 8%, transparent); border-radius: 6px; margin: 12px 0; }
+  .warn-note { border-left: 3px solid var(--bad); padding: 8px 12px; background: color-mix(in srgb, var(--bad) 8%, transparent); border-radius: 6px; margin: 12px 0; }
+  .big { font-size: 15px; }
+  h2 { margin-top: 30px; border-top: 1px solid var(--line); padding-top: 18px; }
+  h3 { margin-top: 20px; }
+  pre { white-space: pre-wrap; word-break: break-word; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; border-bottom: 1px solid var(--line); padding: 6px 8px; vertical-align: top; }
+  .step-h { font-weight: 700; }
+  ol.flow { padding-left: 20px; } ol.flow > li { margin: 10px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><a href="/" style="color:inherit"><span class="dot"></span> TR Mock Anchor</a> <span class="tag">the SEP path</span></div>
+    <nav aria-label="Primary" class="primary-nav"><a href="/">Home</a><a href="/sep">SEP path</a><a href="/explorer">SEP demo</a><a href="/demo">API demo</a><a href="/guide">Guide</a><a href="/mainnet">Mainnet</a><a href="/docs">API</a><a href="/dashboard">Dashboard</a></nav>
+  </header>
+
+  <h1>The SEP path: one portable integration, testnet to mainnet.</h1>
+  <p class="lede">This is the main way to use this anchor. The SEP path is the <b>standard</b> Stellar way to move between Turkish Lira and USDC. You integrate it once, against this testnet mock, and the same code works against any real SEP anchor later — you only change the network and the home domain.</p>
+
+  <p class="note big"><b>The entire handoff is two values:</b> a <b>home domain</b> (<code>tr-mock-anchor.fly.dev</code>) and an <b>asset</b> (<code>USDC</code>). Everything else — where to log in, where to deposit and withdraw, the asset issuer, the signing key — is discovered automatically from the home domain's <code>stellar.toml</code>. A wallet or dApp needs nothing more.</p>
+
+  <h2 id="what">What "SEP" is (and is not)</h2>
+  <p>A <b>SEP</b> is a Stellar Ecosystem Proposal — a shared standard. The SEP path is a normal, <b>programmatic HTTP API</b>, exactly like a custom API. The difference is that its shape is defined by the standard, so it is the <b>same on every anchor</b>. That is what makes an integration portable.</p>
+  <table>
+    <thead><tr><th>SEP</th><th>Role</th><th>Endpoint here</th></tr></thead>
+    <tbody>
+      <tr><td>SEP-1</td><td>Discovery: the <code>stellar.toml</code> "signboard"</td><td><code>/.well-known/stellar.toml</code></td></tr>
+      <tr><td>SEP-10</td><td>Login by signing a challenge with the user's key (no password)</td><td><code>/auth</code></td></tr>
+      <tr><td>SEP-6</td><td>Programmatic deposit &amp; withdraw</td><td><code>/sep6/*</code></td></tr>
+      <tr><td>SEP-12</td><td>KYC (here: simulated, auto-approved, no personal data)</td><td><code>/sep12/*</code></td></tr>
+      <tr><td>SEP-38</td><td>Quotes (USD/TRY rate)</td><td><code>/sep38/*</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="why">Why the SEP path is the main story: portability</h2>
+  <p>An integration built against the SEP path moves to a real anchor by changing two things: the <b>network</b> (testnet → public) and the <b>home domain</b>. Nothing else. Whatever a builder does on testnet here, their users do on mainnet later.</p>
+  <div class="warn-note big"><b>The API path is not this.</b> This anchor also has a custom partner REST API (<code>/v1/*</code>, API-key based). It is an <b>optional business / compatibility layer — not the portable path.</b> Those endpoints are specific to this mock; a real anchor will not have them. Use the API path only for a business/back-office model (many users, webhooks, server-side orchestration). For anything you want to carry to mainnet, use the SEP path. See <a href="#api">The API path</a> below.</div>
+
+  <h2 id="config">Config values (copy these)</h2>
+  <pre><code>Home domain:        tr-mock-anchor.fly.dev
+Asset code:         USDC
+Asset issuer:       GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+Network:            Stellar testnet
+Network passphrase: Test SDF Network ; September 2015
+SEP endpoints (discovered from stellar.toml):
+  WEB_AUTH_ENDPOINT   https://tr-mock-anchor.fly.dev/auth
+  TRANSFER_SERVER     https://tr-mock-anchor.fly.dev/sep6
+  KYC_SERVER          https://tr-mock-anchor.fly.dev/sep12
+  ANCHOR_QUOTE_SERVER https://tr-mock-anchor.fly.dev/sep38
+  SIGNING_KEY         GDXYO6FJCNXZEWGXD54GT76FGFYLOLSOGSOJLNQ6WGHCGEQPO7NTE73M
+Limits:  min 50 TRY per deposit · fee 0.5% spread · USD/TRY from the live rate</code></pre>
+
+  <h2 id="flow">The flow, end to end</h2>
+  <p>All of this is what a wallet or dApp does. You can watch it run live at <a href="/explorer">/explorer</a> (the SEP demo), or drive it from <a href="https://demo-wallet.stellar.org" target="_blank" rel="noopener">demo-wallet.stellar.org</a> by entering the home domain above. The raw calls:</p>
+
+  <ol class="flow">
+    <li><span class="step-h">SEP-1 — discover.</span> Read the signboard; learn every endpoint.
+      <pre><code>curl https://tr-mock-anchor.fly.dev/.well-known/stellar.toml</code></pre>
+    </li>
+    <li><span class="step-h">SEP-10 — log in.</span> Get a challenge, sign it with the user's Stellar key, post it back for a JWT. No email, no password; the key is the identity.
+      <pre><code># 1) get a challenge transaction (XDR)
+curl "https://tr-mock-anchor.fly.dev/auth?account=G...USER_PUBLIC_KEY"
+# 2) sign the returned `transaction` with the user's key, then:
+curl -X POST https://tr-mock-anchor.fly.dev/auth \
+  -H "content-type: application/json" \
+  -d '{"transaction":"&lt;signed challenge XDR&gt;"}'
+# -> { "token": "&lt;JWT&gt;" }   use it as:  Authorization: Bearer &lt;JWT&gt;</code></pre>
+    </li>
+    <li><span class="step-h">SEP-6 — capabilities.</span> Ask what the anchor supports.
+      <pre><code>curl https://tr-mock-anchor.fly.dev/sep6/info</code></pre>
+    </li>
+    <li><span class="step-h">SEP-6 — deposit (TRY &rarr; USDC).</span> Returns an order id and bank instructions (IBAN + reference).
+      <pre><code>curl -H "Authorization: Bearer &lt;JWT&gt;" \
+  "https://tr-mock-anchor.fly.dev/sep6/deposit?asset_code=USDC&account=G...USER&amount=200&funding_method=bank_account"</code></pre>
+    </li>
+    <li><span class="step-h">Play the bank (sandbox only).</span> The mock has no real bank, so you trigger the incoming TRY yourself. In production the real bank transfer does this.
+      <pre><code>curl -X POST "https://tr-mock-anchor.fly.dev/sep6/tx/&lt;ID&gt;/simulate-bank-transfer" \
+  -H "content-type: application/json" -d '{"amount":"200.00"}'</code></pre>
+    </li>
+    <li><span class="step-h">Poll to completion.</span> The anchor pays real testnet USDC; the status walks to <code>completed</code>.
+      <pre><code>curl -H "Authorization: Bearer &lt;JWT&gt;" \
+  "https://tr-mock-anchor.fly.dev/sep6/transaction?id=&lt;ID&gt;"</code></pre>
+    </li>
+    <li><span class="step-h">SEP-6 — withdraw (USDC &rarr; TRY).</span> Returns the treasury address + a memo. Send USDC there with that memo; the anchor pays TRY (simulated FAST).
+      <pre><code>curl -H "Authorization: Bearer &lt;JWT&gt;" \
+  "https://tr-mock-anchor.fly.dev/sep6/withdraw?asset_code=USDC&type=bank_account&amount=4.08"</code></pre>
+    </li>
+  </ol>
+  <p class="small muted">SEP-38 quotes (<code>/sep38/*</code>) lock a rate; SEP-12 KYC (<code>/sep12/*</code>) is auto-approved and asks for no personal data. Deposit-exchange / withdraw-exchange endpoints use SEP-38 identifiers: on-chain asset code in <code>destination_asset</code>/<code>source_asset</code>, and <code>iso4217:TRY</code> for the off-chain leg.</p>
+
+  <h2 id="build">How to build with it</h2>
+  <table>
+    <thead><tr><th>You are building…</th><th>Do this</th></tr></thead>
+    <tbody>
+      <tr><td>A wallet, DEX, or dApp with connected wallets</td><td>Use <code>@stellar/typescript-wallet-sdk</code> (SEP-6/10/38 built in) and <code>@creit.tech/stellar-wallets-kit</code> (connect + sign). Point them at the home domain above.</td></tr>
+      <tr><td>Just testing the anchor</td><td>Open <a href="https://demo-wallet.stellar.org" target="_blank" rel="noopener">demo-wallet.stellar.org</a>, enter home domain <code>tr-mock-anchor.fly.dev</code>, add USDC, run a SEP-6 deposit. Or use <a href="/explorer">/explorer</a> here.</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="requirements">Requirements &amp; caveats</h2>
+  <ul>
+    <li><b>A user key.</b> Each user needs a Stellar keypair to sign SEP-10. Non-custodial by design.</li>
+    <li><b>A trustline.</b> To receive USDC directly, the account needs a funded XLM balance and a USDC trustline. Without one, the anchor holds the deposit in <code>pending_trust</code> (or, if the wallet opts in, sends a claimable balance).</li>
+    <li><b>The bank leg is simulated.</b> You "play the bank" via the transaction's <code>more_info_url</code> or the <code>simulate-bank-transfer</code> endpoint. On a real anchor the actual bank transfer does this.</li>
+    <li><b>This anchor speaks SEP-6 (programmatic), not SEP-24 (anchor-hosted UI).</b> With SEP-6 you build the deposit/withdraw UI in your app. If you need the anchor to host its own popup, that is SEP-24 and is not implemented here.</li>
+  </ul>
+
+  <h2 id="mainnet">Going to mainnet</h2>
+  <p>The SEP path is designed to carry over. What changes: the <b>network passphrase</b> (public), the <b>home domain</b> (the real anchor's), and the legs that were simulated become real (bank transfer, KYC, live assets). The endpoint shapes and your integration code do not change. One dependency: the target mainnet anchor must implement SEP-6/24. Full detail: <a href="/mainnet">/mainnet</a>.</p>
+
+  <h2 id="api">The API path (optional, not portable)</h2>
+  <p>This anchor also exposes a custom partner REST API at <code>/v1/*</code>, authenticated with an API key. Try it at <a href="/demo">/demo</a> (the API demo) and read it at <a href="/docs">/docs</a>.</p>
+  <div class="warn-note">
+    <p style="margin:0 0 6px"><b>Use it only when the SEP path does not fit.</b> It is a business / compatibility layer, not the portable path:</p>
+    <ul style="margin:0">
+      <li>Its endpoints are specific to this mock; a real anchor will not have them, so this code <b>does not move to mainnet</b>.</li>
+      <li>It fits a <b>business</b> model: many users under one credential, webhooks and an event feed, server-side orchestration, back-office views — things the per-user SEP path does not cover.</li>
+      <li>It is the shape closest to a real exchange/partner API (for example BiLira's own Trade API is a business, OAuth2 API, not SEP).</li>
+    </ul>
+  </div>
+
+  <footer>Testnet only. See the SEP flow run live at <a href="/explorer">/explorer</a>, the broader <a href="/guide">guide</a>, or the <a href="/docs">API reference</a>. Machine-readable: <a href="/llms-full.txt">/llms-full.txt</a>, <a href="/sitemap.md">/sitemap.md</a>.</footer>
+</div>
+<script src="/static/site.js"></script>
+</body>
+</html>

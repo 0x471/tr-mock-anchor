@@ -15,6 +15,7 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
   const openapi = buildOpenApi(cfg, stellar);
 
   app.get('/', (c) => c.html(page('index.html')));
+  app.get('/sep', (c) => c.html(page('sep.html')));
   app.get('/dashboard', (c) => c.html(page('dashboard.html')));
   app.get('/docs', (c) => c.html(page('docs.html')));
   app.get('/demo', (c) => c.html(page('demo.html')));
@@ -32,8 +33,9 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
 
   const PAGES: Array<[string, string, string]> = [
     ['/', 'Home & sign up', 'Create an account with your email, get your single API key.'],
-    ['/demo', 'API demo (interactive)', 'The partner API-key door: runs the full partner-API round trip live in the browser with real testnet transactions.'],
+    ['/sep', 'The SEP path (start here)', 'The main, portable way to use this anchor: standard SEP-1/10/6/12/38 over one home domain + asset. Full guide with copyable requests. Integrate once on testnet, ship to any real SEP anchor by changing the home domain. Also explains why the /v1 API is an optional, non-portable business layer.'],
     ['/explorer', 'SEP demo (interactive)', 'The SEP door: run SEP-1/10/6 live in your browser — discovery, key-signature login, deposit and withdraw against this anchor, with real testnet transactions and no API key. The regional counterpart to the SDF test-anchor explorer.'],
+    ['/demo', 'API demo (interactive)', 'The optional partner API-key layer (business/back-office model, NOT the portable path): runs the full custom-API round trip live in the browser with real testnet transactions.'],
     ['/guide', 'Guide', 'Concepts, Turkish rails, on/off-ramp flows, SEP-6 door, statuses, errors, webhooks, glossary (TR/EN).'],
     ['/mainnet', 'Mainnet: what to expect', 'What changes moving from this sandbox to a production anchor, plus a readiness checklist.'],
     ['/docs', 'API reference', 'Interactive OpenAPI 3.1 reference.'],
@@ -109,7 +111,8 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
         '7. Off-ramp: POST /v1/offramps {customer_id, amount_usdc} -> {deposit:{address,memo_type:"id",memo}}. Send USDC on-chain with that memo; TRY is credited and paid out to the IBAN. Poll GET /v1/offramps/{id}.',
         '8. Notifications: POST /v1/webhooks {url,events} (HMAC-signed) or poll GET /v1/events.',
         '',
-        '## SEP door quickstart (wallets)',
+        '## SEP path (the main, portable way) — full guide at /sep',
+        'This is the recommended integration. The whole handoff is a home domain + an asset (USDC); everything else is discovered from stellar.toml. Integrate once here, then move to any real SEP anchor by changing only the network and home domain. The /v1 API below is an optional, non-portable business layer.',
         'SEP-1 stellar.toml at /.well-known/stellar.toml. SEP-10 auth: GET/POST /auth -> JWT (Bearer). SEP-6: /sep6/{info,deposit,withdraw,deposit-exchange,withdraw-exchange,transactions,transaction}.',
         'SEP-12 simulated KYC (no personal data required). SEP-38 quotes: iso4217:TRY <-> stellar:USDC:<issuer>. Deposits wait until the simulated bank transfer is triggered at the transaction more_info_url (/sep6/tx/{id}).',
         'An interactive, run-it-yourself version of the SEP door (in the browser, no wallet app, real testnet transactions) is at /explorer.',
@@ -172,15 +175,18 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
       [
         '# TR Mock Anchor (Stellar testnet sandbox)',
         '',
-        '> Mock Turkish TRY <-> USDC on/off-ramp for Stellar testnet builders. API-key based, modelled on how Turkish exchanges ramp: bank transfer with a reference code -> TRY balance -> convert to USDC at USD/TRY -> USDC paid to the wallet. Off-ramp is the reverse. Nothing here is a real financial service.',
+        '> Mock Turkish TRY <-> USDC on/off-ramp for Stellar testnet builders. Models how Turkish exchanges ramp: bank transfer with a reference code -> TRY balance -> convert to USDC at USD/TRY -> USDC paid to the wallet. Off-ramp is the reverse. Nothing here is a real financial service.',
+        '',
+        '> Two ways in. The MAIN, portable way is the SEP path (standard SEP-1/10/6/12/38): integrate once against this testnet mock, then move to any real SEP anchor by changing only the network and home domain. The /v1 API is an OPTIONAL, non-portable business/compatibility layer (API-key, webhooks, back-office); its endpoints are specific to this mock. Start at /sep.',
         '',
         `- Base URL: ${cfg.publicUrl}`,
+        `- THE SEP PATH (start here — the portable way, full guide): ${cfg.publicUrl}/sep`,
         `- Full reference in one document: ${cfg.publicUrl}/llms-full.txt`,
         `- Sitemap (Markdown): ${cfg.publicUrl}/sitemap.md`,
         `- Guide (concepts, flows, errors, webhooks, glossary): ${cfg.publicUrl}/guide`,
         `- Mainnet expectations (what changes in production, readiness checklist): ${cfg.publicUrl}/mainnet`,
-        `- Interactive end-to-end demo: ${cfg.publicUrl}/demo`,
-        `- SEP Explorer (run the SEP-6 door live in your browser, no wallet app): ${cfg.publicUrl}/explorer`,
+        `- SEP demo (run the SEP path live in your browser, no wallet app, no API key): ${cfg.publicUrl}/explorer`,
+        `- API demo (the OPTIONAL, non-portable /v1 business layer, interactive): ${cfg.publicUrl}/demo`,
         `- OpenAPI: ${cfg.publicUrl}/openapi.json`,
         `- Health & treasury: ${cfg.publicUrl}/health`,
         `- Dashboard (sign up with email, get your single API key): ${cfg.publicUrl}/`,
