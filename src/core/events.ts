@@ -1,6 +1,6 @@
 /**
- * Events are written to the `events` table (pollable via GET /v1/events) and fanned out
- * to every active webhook of the partner that subscribes to the event type.
+ * Events are written to the `events` table as an internal audit trail (visible in the read-only
+ * /admin viewer). They record every state change in the ramp lifecycle.
  */
 import type { DB } from '../db.js';
 import { nowIso } from '../db.js';

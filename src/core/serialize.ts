@@ -41,7 +41,7 @@ export const depositInstructionsOut = (cfg: Config, c: CustomerRow) => ({
     en: `Send TRY to the IBAN above and write "${c.deposit_reference}" in the transfer description. Funds are credited to your TRY balance when the transfer is matched.`,
     tr: `Yukarıdaki IBAN'a TL gönderin ve açıklama kısmına "${c.deposit_reference}" yazın. Transfer eşleştiğinde TL bakiyenize yansır.`,
   },
-  sandbox_hint: `This is a sandbox: no real bank exists. Simulate the incoming transfer with POST /v1/sandbox/bank-transfers {"reference":"${c.deposit_reference}","amount_try":"1000.00"}.`,
+  sandbox_hint: `This is a sandbox: no real bank exists. Start a SEP-6 deposit, then simulate the incoming TRY transfer at the transaction more_info_url (POST /sep6/tx/{id}/simulate-bank-transfer).`,
 });
 
 export const bankTransferOut = (b: BankTransferRow) => ({

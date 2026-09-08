@@ -91,7 +91,7 @@ export function adminRoutes(deps: Deps) {
 <div class="wrap" style="max-width:1200px">
   <header class="top">
     <div class="brand"><a href="/" style="color:inherit"><span class="dot"></span> TR Mock Anchor</a> <span class="tag">admin · read-only</span></div>
-    <nav aria-label="Primary" class="primary-nav"><a href="/dashboard">Dashboard</a><a href="/">Home</a></nav>
+    <nav aria-label="Primary" class="primary-nav"><a href="/">Home</a><a href="/sep">SEP path</a></nav>
   </header>
   <h1 style="font-size:22px;margin:0 0 4px">Backend data <span class="muted" style="font-size:14px">(SQLite on the Fly volume, read-only)</span></h1>
   <p class="small muted">Secrets are masked; the kv table (signing / JWT / session secrets) is not shown. Showing newest ${limit} rows.</p>

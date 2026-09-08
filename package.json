@@ -12,7 +12,6 @@
     "setup:treasury": "tsx scripts/setup-treasury.ts",
     "mock:usdc": "tsx scripts/issue-mock-usdc.ts",
     "sweep": "tsx scripts/sweep.ts",
-    "e2e": "tsx scripts/e2e.ts",
     "sep:conformance": "stellar-anchor-tests --home-domain ${HOME_DOMAIN:-https://tr-mock-anchor.fly.dev} --seps 1 10 12 6 38 --asset-code USDC --sep-config anchor-tests.config.json",
     "e2e:sep6": "tsx scripts/e2e-sep6.ts"
   },
