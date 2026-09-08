@@ -30,7 +30,7 @@
 <div class="wrap">
   <header class="top">
     <div class="brand"><a href="/" style="color:inherit"><span class="dot"></span> TR Mock Anchor</a> <span class="tag">guide</span></div>
-    <nav aria-label="Primary" class="primary-nav"><a href="/">Home</a><a href="/sep">SEP path</a><a href="/explorer">SEP demo</a><a href="/api">API</a><a href="/guide">Guide</a><a href="/mainnet">Mainnet</a></nav>
+    <nav aria-label="Primary" class="primary-nav"><a href="/">Home</a><a href="/sep">SEP path</a><a href="/explorer">SEP demo</a><a href="/guide">Guide</a><a href="/mainnet">Mainnet</a></nav>
   </header>
 
   <div class="layout">
@@ -38,9 +38,8 @@
       <a class="h" href="#overview">Overview</a>
       <a href="#tr-summary">Türkçe özet</a>
       <a href="#what-is-real">What is real, what is mocked</a>
-      <a href="#which-door">Which door should I choose?</a>
+      <a href="#which-door">One door: SEP</a>
       <a class="h" href="#concepts">Concepts</a>
-      <a href="#accounts">Accounts &amp; API keys</a>
       <a href="#customers">Customers &amp; KYC</a>
       <a href="#turkish-rails">Turkish rails: IBAN, FAST, açıklama</a>
       <a href="#balances">Balances &amp; ledger</a>
@@ -48,7 +47,6 @@
       <a class="h" href="#flows">Flows</a>
       <a href="#onramp">On-ramp (TRY → USDC)</a>
       <a href="#offramp">Off-ramp (USDC → TRY)</a>
-      <a href="#payouts">Payouts</a>
       <a href="#settlement">Settlement details</a>
       <a class="h" href="#sep6">SEP-6 door (wallets)</a>
       <a href="#sep-discovery">Discovery &amp; SEP-10</a>
@@ -57,12 +55,6 @@
       <a href="#sep-quotes">SEP-38 quotes</a>
       <a href="#sep-statuses">Statuses &amp; callbacks</a>
       <a href="#sep-testing">Testing with wallets &amp; anchor-tests</a>
-      <a class="h" href="#integration">Integration</a>
-      <a href="#statuses">Statuses &amp; errors</a>
-      <a href="#webhooks">Webhooks</a>
-      <a href="#events">Event log (polling)</a>
-      <a href="#sandbox">Sandbox controls &amp; test hooks</a>
-      <a href="#examples">Code examples</a>
       <a href="#wallets">Wallet-side notes</a>
       <a class="h" href="#reference">Reference</a>
       <a href="#stellar">Stellar details</a>
@@ -77,78 +69,51 @@
       <p class="lead">Everything you need to integrate a Turkish TRY ⇄ USDC ramp against this sandbox — and to understand what a production anchor in Türkiye actually does behind the same API shape.</p>
 
       <h2 id="overview">Overview</h2>
-      <p>TR Mock Anchor is a <b>sandbox anchor</b>: a service that moves value between Turkish lira in the banking system and USDC on Stellar. It has two doors onto one ledger. The <b>partner API</b> is API-key based, because that is how Turkish exchanges and payment institutions expose ramps to partners: your backend holds a key and drives the customer journey from your own UI. The <b>SEP door</b> implements SEP-1, SEP-10, SEP-6, SEP-12 and SEP-38 so any Stellar wallet can discover the anchor from its <code>stellar.toml</code> and ramp without knowing anything about the partner API.</p>
-      <p>The model mirrors a Turkish exchange:</p>
+      <p>TR Mock Anchor is a <b>sandbox anchor</b>: a service that moves value between Turkish lira in the banking system and USDC on Stellar. It has <b>one door: the SEP path</b>. It implements SEP-1, SEP-10, SEP-6, SEP-12 and SEP-38, so any Stellar wallet or SDK can discover the anchor from its <code>stellar.toml</code> and ramp without any custom code. Integrate it once here and the same code works against any real SEP anchor by changing only the network and the home domain.</p>
+      <p>The model mirrors a Turkish ramp:</p>
       <ol class="steps">
-        <li>Your user is registered as a <b>customer</b> (KYC: name, T.C. Kimlik No, IBAN).</li>
-        <li>The customer sends TRY by bank transfer to the anchor's IBAN and writes a personal <b>reference code</b> in the description.</li>
-        <li>The anchor matches the transfer → the customer has a <b>TRY balance</b>.</li>
-        <li>The customer buys USDC at the USD/TRY rate and it is <b>paid on Stellar</b> to their wallet.</li>
-        <li>Off-ramp is the reverse: send USDC with a memo → TRY balance → payout to the IBAN.</li>
+        <li>Your user logs in with their Stellar key (SEP-10). KYC is simulated (SEP-12) and needs no personal data.</li>
+        <li>The user starts a deposit and gets bank details: the anchor's IBAN and a personal <b>reference code</b> to write in the description.</li>
+        <li>The TRY transfer arrives with that reference → the user has a <b>TRY balance</b>.</li>
+        <li>It converts at the USD/TRY rate and <b>real testnet USDC</b> is paid on Stellar to their wallet.</li>
+        <li>Off-ramp is the reverse: send USDC with a memo → TRY → payout to the IBAN.</li>
       </ol>
-      <div class="callout">Try it live: <a href="/api">API demo</a> runs the full round trip from your browser with real testnet transactions. The <a href="/api">API reference</a> documents every field.</div>
+      <div class="callout">Try it live: the <a href="/explorer">SEP demo</a> runs the full round trip from your browser with real testnet transactions. The <a href="/sep">SEP path</a> page documents the raw calls.</div>
 
       <h3 id="tr-summary">Türkçe özet</h3>
-      <p>Bu servis, Türkiye'deki borsaların çalıştığı şekilde bir <b>TL ⇄ USDC ramp'ini</b> Stellar testnet üzerinde taklit eder. Kullanıcı e-postasıyla kaydolur ve tek bir API anahtarı alır. Uygulamanız müşteriyi oluşturur; müşteriye özel bir <b>referans kodu</b> verilir. Gerçek hayatta müşteri bu kodu banka transferinin açıklamasına yazar; sandbox'ta bu transferi <code>POST /v1/sandbox/bank-transfers</code> ile siz simüle edersiniz. TL bakiyesi oluşur, kur (Reflector USD/TRY oracle + spread) kilitlenir ve <b>gerçek testnet USDC</b> müşterinin Stellar adresine gönderilir (trustline yoksa claimable balance). Offramp'te müşteri memo ile USDC gönderir; anchor ödemeyi tespit eder, TL'ye çevirir ve IBAN'a ödemeyi simüle eder. Banka, KYC ve ödeme tarafı sahte; Stellar tarafı gerçektir.</p>
+      <p>Bu servis, Türkiye'deki borsaların çalıştığı şekilde bir <b>TL ⇄ USDC ramp'ini</b> Stellar testnet üzerinde taklit eder. Tek kapı standart <b>SEP yoludur</b> (SEP-1/10/6/12/38). Kullanıcı kendi Stellar anahtarıyla giriş yapar (SEP-10); KYC simüledir ve kişisel veri istemez (SEP-12). Kullanıcı bir yatırma başlatır ve kendisine özel bir <b>referans kodu</b> ile anchor'ın IBAN'ını alır. Gerçek hayatta kullanıcı bu kodu banka transferinin açıklamasına yazar; sandbox'ta transferi <code>POST /sep6/tx/{id}/simulate-bank-transfer</code> ile siz tetiklersiniz. TL bakiyesi oluşur, kur (Reflector USD/TRY oracle + spread) bir SEP-38 quote ile kilitlenir ve <b>gerçek testnet USDC</b> kullanıcının Stellar adresine gönderilir (trustline yoksa claimable balance). Offramp'te kullanıcı memo ile USDC gönderir; anchor ödemeyi tespit eder, TL'ye çevirir ve IBAN'a ödemeyi simüle eder. Banka, KYC ve ödeme tarafı sahte; Stellar tarafı gerçektir.</p>
 
       <h3 id="what-is-real">What is real, what is mocked</h3>
       <table><thead><tr><th>Piece</th><th>Real?</th><th>Notes</th></tr></thead><tbody>
         <tr><td>Stellar payments to wallets (on-ramp)</td><td class="ok">Real</td><td>Testnet USDC from the treasury; payment or claimable balance</td></tr>
         <tr><td>Detecting USDC deposits (off-ramp)</td><td class="ok">Real</td><td>Horizon payments stream, matched by memo id / muxed id</td></tr>
         <tr><td>Rates</td><td class="ok">Real (indicative)</td><td>Reflector USD/TRY oracle on Stellar mainnet, plus a flat spread</td></tr>
-        <tr><td>Balances, ledger, quotes, events, webhooks</td><td class="ok">Real logic</td><td>Same behaviour a production system would have</td></tr>
+        <tr><td>Balances, ledger, quotes</td><td class="ok">Real logic</td><td>Same behaviour a production system would have</td></tr>
         <tr><td>Incoming TRY bank transfers</td><td class="warn">Simulated</td><td>You call the sandbox endpoint that a bank integration would call</td></tr>
         <tr><td>TRY payouts to IBANs</td><td class="warn">Simulated</td><td>Instant record with a FAST-style reference</td></tr>
-        <tr><td>KYC / compliance</td><td class="warn">Simulated</td><td>Partner API: instant approval, checksum validation of TCKN and IBAN only. SEP-12: NEEDS_INFO until any PUT, then ACCEPTED; no personal data required, identity numbers never stored</td></tr>
+        <tr><td>KYC / compliance</td><td class="warn">Simulated</td><td>SEP-12: NEEDS_INFO until any PUT, then ACCEPTED; no personal data required, identity numbers never stored</td></tr>
         <tr><td>SEP-10 auth, SEP-6/38 protocol surface</td><td class="ok">Real</td><td>Verified with SDF's anchor-tests; usable from the Stellar demo wallet</td></tr>
       </tbody></table>
 
-      <h2 id="which-door">Which door should I choose?</h2>
-      <p>This anchor exposes two doors to the same engine. The <b>SEP path</b> is the standard, portable one and the default choice. The <b>API path</b> (custom <code>/v1</code>, API-key) is an optional business/compatibility layer that does not port to a real anchor.</p>
-      <div class="callout"><b>Rule of thumb:</b> if a real Stellar wallet or the user's own key is involved, use the <b>SEP path</b>. Reach for the <b>API path</b> only when a business backend must orchestrate many users server-side (webhooks, back-office, one machine credential).</div>
-      <table>
-        <thead><tr><th>You are building…</th><th>Use</th><th>Why</th></tr></thead>
-        <tbody>
-          <tr><td>A wallet with in-app on/off ramp</td><td class="ok">SEP path</td><td>Each user signs SEP-10 with their key; standard and portable.</td></tr>
-          <tr><td>A DEX / dApp with a connected wallet</td><td class="ok">SEP path</td><td>The connected wallet signs SEP-10; no API key, non-custodial.</td></tr>
-          <tr><td>Anything you want to move to a real anchor later</td><td class="ok">SEP path</td><td>Change only network + home domain; the code stays the same.</td></tr>
-          <tr><td>Just testing / a live demo</td><td class="ok">SEP path</td><td>Use <a href="/explorer">/explorer</a> or demo-wallet.stellar.org with home domain <code>tr-mock-anchor.fly.dev</code>.</td></tr>
-          <tr><td>A business that manages many users server-side</td><td class="warn">API path</td><td>One API key, webhooks, an event feed, back-office views — not covered by the per-user SEP path.</td></tr>
-          <tr><td>Custodial flows / server-side orchestration</td><td class="warn">API path</td><td>Direct control over destinations and payouts without a per-user SEP-10 signature.</td></tr>
-        </tbody>
-      </table>
-      <p class="small muted">Full SEP walkthrough: <a href="/sep">the SEP path</a>. API demo + reference: <a href="/api">/api</a>. Note the API path's endpoints are specific to this mock and will not exist on a production anchor.</p>
+      <h2 id="which-door">One door: SEP</h2>
+      <p>This anchor has one door: the standard, portable <b>SEP path</b>. Any Stellar wallet or SDK discovers it from <code>stellar.toml</code> and ramps with no custom code, because SEP-1/10/6/12/38 are the same on every anchor. Code you write against this mock moves to any real SEP anchor by changing only the network and the home domain.</p>
+      <div class="callout">Full SEP walkthrough: <a href="/sep">the SEP path</a>. Run it live: <a href="/explorer">the SEP demo</a>, or <a href="https://demo-wallet.stellar.org" target="_blank" rel="noopener">demo-wallet.stellar.org</a> with home domain <code>tr-mock-anchor.fly.dev</code>.</div>
 
       <h2 id="concepts">Concepts</h2>
 
-      <h3 id="accounts">Accounts &amp; API keys</h3>
-      <p>An <b>account</b> is you, the integrator. Sign up with an email and password on the <a href="/">home page</a> (or <code>POST /v1/partners</code>). Each account has exactly <b>one API key</b> (<code>trma_test_…</code>), visible in the dashboard and rotatable at any time. Send it on every request:</p>
-      <pre><code>X-API-Key: trma_test_…          # or
-Authorization: Bearer trma_test_…</code></pre>
-      <p>Everything you create — customers, orders, webhooks — is scoped to your account. Other accounts cannot see it.</p>
-      <div class="callout warn">Keys are sandbox credentials and are stored in clear so the dashboard can show them again. Treat this deployment as public testnet infrastructure: never reuse these passwords or keys elsewhere.</div>
-
       <h3 id="customers">Customers &amp; KYC</h3>
-      <p>A <b>customer</b> is one of your end users. Create one with <code>POST /v1/customers</code>:</p>
-      <pre><code>{
-  "external_id": "user_42",              // your own id, unique per account (optional)
-  "first_name": "Ayşe", "last_name": "Yılmaz",
-  "tckn": "10000000146",                  // T.C. Kimlik No, checksum-validated (optional)
-  "iban": "TR330006100519786457841326",   // Turkish IBAN for payouts (optional, mod-97 validated)
-  "email": "ayse@example.com"
-}</code></pre>
-      <p>The response carries <code>kyc_status</code> and a unique <code>deposit_reference</code> such as <code>TRMA-7K2M-Q9XZ</code>. KYC is instant in the sandbox: <code>approved</code> unless <code>first_name</code> is <code>REJECT</code> or <code>PENDING</code>, which produce the other states so you can build the UI for them. <code>POST /v1/sandbox/customers/{id}/kyc</code> flips the state later. Only <code>approved</code> customers can ramp.</p>
+      <p>A user is identified by their <b>Stellar account</b>, established at SEP-10 login — there is no signup and no personal data. KYC is <b>SEP-12 simulated</b>: a new user is <code>NEEDS_INFO</code> with only <em>optional</em> fields, and any <code>PUT /sep12/customer</code> — even an empty object — flips them to <code>ACCEPTED</code>. If the wallet sends a Turkish IBAN as <code>bank_account_number</code> it is validated (mod-97) and used for payouts; otherwise a deterministic sandbox IBAN stands in. Identity numbers, birth dates and documents are discarded on receipt, never stored. SEP-6 deposit and withdraw do not require the SEP-12 step — authenticating is enough. Full detail in <a href="#sep-kyc">SEP-12 below</a>.</p>
 
       <h3 id="turkish-rails">Turkish rails: IBAN, FAST/EFT/Havale, açıklama</h3>
       <p>Retail money in Türkiye moves between bank accounts identified by a 26-character <b>IBAN</b> (<code>TR</code> + 2 check digits + 5-digit bank code + 1 reserved digit + 16-digit account). Transfers run on three rails: <b>FAST</b> (instant, 24/7, the default for retail amounts), <b>EFT</b> (interbank, business hours) and <b>Havale</b> (same bank). Every transfer carries a free-text description — the <b>açıklama</b>.</p>
-      <p>Exchanges credit deposits by matching that description: each customer gets a personal reference code and is told to write it in the açıklama when sending money to the exchange's IBAN. Transfers without a recognisable reference are held and matched manually by support. This sandbox reproduces both paths:</p>
+      <p>Exchanges credit deposits by matching that description: each user gets a personal reference code and is told to write it in the açıklama when sending money to the exchange's IBAN. Transfers without a recognisable reference are held and matched manually by support. This sandbox reproduces the path through SEP-6:</p>
       <ul>
-        <li><code>GET /v1/customers/{id}/deposit-instructions</code> returns the bank name, IBAN, account holder, the customer's reference and bilingual instructions — show this in your app.</li>
-        <li><code>POST /v1/sandbox/bank-transfers {"reference","amount_try"}</code> is the bank telling the anchor "a transfer with this description arrived". A matching reference credits the balance (HTTP 201). An unknown one is held as <code>unmatched</code> (HTTP 202) until you <code>…/assign</code> it to a customer — the support-desk path.</li>
+        <li>A SEP-6 <code>deposit</code> returns SEP-9 <code>instructions</code>: the bank name, IBAN (<code>bank_account_number</code>), account holder and the user's reference (<code>external_transfer_memo</code>) to write in the açıklama — show this in your app.</li>
+        <li>When the TRY transfer arrives with that reference the deposit is credited. In this sandbox you trigger it with <code>POST /sep6/tx/{id}/simulate-bank-transfer {"amount":"…"}</code> (or the transaction's <code>more_info_url</code> button). In production the real bank transfer does this; unmatched transfers are the support-desk path.</li>
       </ul>
 
       <h3 id="balances">Balances &amp; ledger</h3>
-      <p>Each customer has a <b>TRY</b> balance (2 decimals) and a <b>USDC</b> balance (7 decimals, Stellar's precision). All amounts in the API are decimal <b>strings</b>; the service does fixed-point integer math internally and never rounds up in the customer's favour. Every movement is an append-only <b>ledger</b> entry (<code>GET /v1/customers/{id}/ledger</code>) with a <code>kind</code>:</p>
+      <p>Each user has a <b>TRY</b> balance (2 decimals) and a <b>USDC</b> balance (7 decimals, Stellar's precision). All amounts are decimal <b>strings</b>; the service does fixed-point integer math internally and never rounds up in the user's favour. Every movement is an append-only <b>ledger</b> entry with a <code>kind</code>:</p>
       <table><thead><tr><th>kind</th><th>currency</th><th>when</th></tr></thead><tbody>
         <tr><td><code>bank_transfer</code></td><td>TRY +</td><td>a TRY transfer was matched to the customer</td></tr>
         <tr><td><code>onramp</code></td><td>TRY −</td><td>on-ramp created (debited up front)</td></tr>
@@ -160,12 +125,8 @@ Authorization: Bearer trma_test_…</code></pre>
 
       <h3 id="pricing">Rates, quotes &amp; spread</h3>
       <p>The anchor treats USDC as 1 USD and prices <b>USDC/TRY</b> off the <b>USD/TRY mid rate</b> read from <a href="https://reflector.network" target="_blank" rel="noopener">Reflector</a>'s foreign-exchange oracle on Stellar mainnet (contract <code>CBKGPWGK…MCJZC</code>, via <code>simulateTransaction</code>, cached 60 s). If the oracle is unreachable it falls back to a static rate and reports <code>rate_source: "static_fallback"</code>.</p>
-      <p>A flat spread (default <b>50 bps</b>) is applied on each side: <code>buy_rate = mid × (1 + spread)</code> when the customer buys USDC, <code>sell_rate = mid × (1 − spread)</code> when they sell. There are no fixed fees. <code>GET /v1/rates</code> shows all three numbers.</p>
-      <p>A <b>quote</b> (<code>POST /v1/quotes</code>) locks a rate for <b>120 seconds</b> and is single-use. Fix either side of the conversion:</p>
-      <pre><code>{"side":"buy",  "amount":"1000.00",  "amount_currency":"TRY"}   // spend 1000 TRY → how much USDC?
-{"side":"buy",  "amount":"25",       "amount_currency":"USDC"}  // want 25 USDC → how much TRY? (rounded up)
-{"side":"sell", "amount":"25",       "amount_currency":"USDC"}  // sell 25 USDC → how much TRY?</code></pre>
-      <p>Quotes are optional: on-ramps accept <code>amount_try</code> and off-ramps <code>amount_usdc</code> at the live rate instead of a <code>quote_id</code>.</p>
+      <p>A flat spread (default <b>50 bps</b>) is applied on each side: <code>buy_rate = mid × (1 + spread)</code> when the user buys USDC, <code>sell_rate = mid × (1 − spread)</code> when they sell. There are no fixed fees. The three numbers are in <code>GET /health</code>.</p>
+      <p>A <b>quote</b> locks a rate and is single-use. Through SEP-38 a wallet can lock a firm rate before depositing or withdrawing (<code>POST /sep38/quote</code>), then pass its <code>quote_id</code> to the SEP-6 deposit / withdraw. A quote is optional: without one the deposit or withdraw prices at the live rate. Full detail and the SEP-38 price formulas are in <a href="#sep-quotes">SEP-38 quotes</a>.</p>
 
       <h2 id="flows">Flows</h2>
 
@@ -173,49 +134,42 @@ Authorization: Bearer trma_test_…</code></pre>
       <pre class="mermaid">
 sequenceDiagram
   autonumber
-  participant U as Customer
-  participant App as Your app
+  participant U as User
+  participant W as Wallet / app
   participant A as TR Mock Anchor
   participant B as Bank (simulated)
   participant S as Stellar testnet
-  App->>A: POST /v1/customers
-  A-->>App: customer + deposit_reference
-  App->>U: show IBAN + reference
+  W->>A: GET /auth → sign challenge → JWT (SEP-10)
+  W->>A: GET /sep6/deposit?asset_code=USDC&account=G…
+  A-->>W: instructions: IBAN + reference · transaction pending
   U->>B: TRY transfer, açıklama = reference
-  B->>A: POST /v1/sandbox/bank-transfers (you, in the sandbox)
-  A-->>App: bank_transfer.received · TRY balance credited
-  App->>A: POST /v1/quotes (buy)
-  App->>A: POST /v1/onramps {quote_id, destination_address}
-  A-->>App: status pending (TRY debited)
+  B->>A: POST /sep6/tx/{id}/simulate-bank-transfer (you, in the sandbox)
+  A-->>W: TRY credited · rate locked (SEP-38 quote or live)
   A->>S: payment or createClaimableBalance (USDC)
-  A-->>App: onramp.completed + stellar_tx_hash
+  A-->>W: transaction completed + stellar_transaction_id
       </pre>
-      <p><code>POST /v1/onramps</code> needs <code>customer_id</code>, <code>destination_address</code> (a <code>G…</code> or muxed <code>M…</code> address) and either <code>quote_id</code> or <code>amount_try</code>; <code>memo</code> (≤28 chars text) is optional. The TRY is debited immediately and the order is <code>pending</code>. A worker settles pending orders every few seconds and the order becomes <code>completed</code> with <code>settlement</code>, <code>stellar_tx_hash</code> and, for claimable balances, <code>claimable_balance_id</code>. If the send fails permanently the order is <code>failed</code> and the TRY is refunded.</p>
+      <p>A SEP-6 <code>deposit</code> (with the SEP-10 JWT) takes <code>asset_code=USDC</code> and the destination <code>account</code> (a <code>G…</code> or muxed <code>M…</code>), and returns a transaction in <code>pending_user_transfer_start</code> with SEP-9 bank <code>instructions</code>. When the TRY arrives (you simulate it here), the anchor locks the rate (a SEP-38 <code>quote_id</code> if attached and valid, else live), debits TRY and pays <b>real testnet USDC</b> — a payment, or a claimable balance when there is no trustline (<code>claimable_balance_id</code> in the transaction). The status walks to <code>completed</code> with <code>stellar_transaction_id</code>. If the send fails permanently the transaction is <code>error</code> and the TRY is refunded.</p>
       <p>Limits: <span class="lim-onramp">50 – 3000 TRY</span> per order (configurable; live values from <code>/health</code>).</p>
 
       <h3 id="offramp">Off-ramp (USDC → TRY)</h3>
       <pre class="mermaid">
 sequenceDiagram
   autonumber
-  participant U as Customer wallet
-  participant App as Your app
+  participant U as User wallet
+  participant W as Wallet / app
   participant A as TR Mock Anchor
   participant S as Stellar testnet
-  App->>A: POST /v1/offramps {customer_id, amount_usdc?}
-  A-->>App: deposit.address + deposit.memo (id), rate locked 30 min
-  App->>U: show address + memo (or a muxed address)
+  W->>A: GET /auth → JWT (SEP-10)
+  W->>A: GET /sep6/withdraw?asset_code=USDC&type=bank_account
+  A-->>W: account_id (treasury) + memo (id), rate locked
   U->>S: payment USDC → treasury, memo id
   S-->>A: watcher sees the payment
-  A-->>App: offramp.deposit_received (USDC balance +, sold for TRY)
-  A-->>App: payout.completed (TRY → IBAN, simulated)
-  A-->>App: offramp.completed
+  A-->>W: USDC received, sold for TRY
+  A-->>W: TRY paid to IBAN (simulated FAST) · completed
       </pre>
-      <p><code>POST /v1/offramps</code> returns a <code>deposit</code> object: the treasury address, <code>memo_type: "id"</code> and a 12-digit <code>memo</code>. The customer's wallet must send USDC to that address <b>with that memo</b> (or to a muxed address whose id equals the memo). <code>amount_usdc</code> is informational — the anchor converts <b>whatever amount actually arrives</b>. The rate is locked for 30 minutes; later deposits are repriced at the current sell rate and flagged <code>repriced: true</code>.</p>
-      <p>By default <code>auto_payout</code> is true: the TRY is paid to <code>payout_iban</code> (or the customer's IBAN) as soon as the deposit lands, and <code>payout_id</code> points at the payout. Set <code>auto_payout: false</code> to leave the TRY on the balance and pay out later with <code>POST /v1/payouts</code>. Off-ramps that have not received a deposit can be cancelled.</p>
-      <div class="callout warn">Payments without a usable memo, with an unknown memo, or to a cancelled/completed off-ramp cannot be attributed. They are parked under <code>GET /v1/sandbox/unmatched-deposits</code>. In production a support process would return or assign them — make your UI show the memo prominently.</div>
-
-      <h3 id="payouts">Payouts</h3>
-      <p><code>POST /v1/payouts {"customer_id","amount_try","iban"?}</code> debits the TRY balance and records an instant FAST-style transfer with a <code>bank_reference</code>. In production this is where settlement times (FAST is near-instant; EFT follows banking hours) and payout limits would appear.</p>
+      <p>A SEP-6 <code>withdraw</code> returns <code>account_id</code> (the treasury), <code>memo_type: "id"</code> and a 12-digit <code>memo</code>. The wallet must send USDC to that address <b>with that memo</b> (or to a muxed address whose id equals the memo). The anchor converts <b>whatever amount actually arrives</b>. The rate is locked for 30 minutes; later deposits are repriced at the current sell rate.</p>
+      <p>The TRY is paid to the user's IBAN (the one they sent via SEP-12, or a deterministic sandbox IBAN) as soon as the deposit lands — a simulated FAST transfer whose bank reference is recorded as <code>external_transaction_id</code>.</p>
+      <div class="callout warn">Payments without a usable memo, with an unknown memo, or to a cancelled/completed withdrawal cannot be attributed. In production a support process would return or assign them — make your UI show the memo prominently.</div>
 
       <h3 id="settlement">Settlement details</h3>
       <ul>
@@ -228,7 +182,7 @@ sequenceDiagram
 
 
       <h2 id="sep6">SEP-6 door (wallets)</h2>
-      <p>Everything in the previous sections is also reachable through the Stellar Ecosystem Proposals, so a wallet, a wallet SDK or the <a href="https://demo-wallet.stellar.org" target="_blank" rel="noopener">Stellar demo wallet</a> can use this anchor with zero custom code. The SEP transactions are <em>views</em> over the same on-ramps, off-ramps, ledger and treasury as the partner API.</p>
+      <p>This section is the endpoint-level reference for the SEP door — the same flow the Concepts and Flows sections describe. A wallet, a wallet SDK or the <a href="https://demo-wallet.stellar.org" target="_blank" rel="noopener">Stellar demo wallet</a> can use this anchor with zero custom code, discovering everything from <code>stellar.toml</code>.</p>
 
       <h3 id="sep-discovery">Discovery &amp; SEP-10</h3>
       <p><a href="/.well-known/stellar.toml">/.well-known/stellar.toml</a> publishes <code>TRANSFER_SERVER</code> (<code>/sep6</code>), <code>WEB_AUTH_ENDPOINT</code> (<code>/auth</code>), <code>KYC_SERVER</code> (<code>/sep12</code>), <code>ANCHOR_QUOTE_SERVER</code> (<code>/sep38</code>), <code>SIGNING_KEY</code> and the USDC currency (<code>anchor_asset="TRY"</code>).</p>
@@ -280,111 +234,10 @@ const ok = Keypair.fromPublicKey(SIGNING_KEY).verify(Buffer.from(`${t}.${req.hea
         <li><b>From code:</b> <code>npm run e2e:sep6</code> runs the full SEP flow from Node against any deployment and asserts the on-chain balances.</li>
       </ol>
 
-      <h2 id="integration">Integration</h2>
-
-      <h3 id="statuses">Statuses &amp; errors</h3>
-      <table><thead><tr><th>Object</th><th>Statuses</th></tr></thead><tbody>
-        <tr><td>Customer <code>kyc_status</code></td><td><code>approved</code> · <code>pending</code> · <code>rejected</code></td></tr>
-        <tr><td>Bank transfer</td><td><code>matched</code> · <code>unmatched</code></td></tr>
-        <tr><td>On-ramp</td><td><code>pending</code> → <code>completed</code> | <code>failed</code></td></tr>
-        <tr><td>Off-ramp</td><td><code>awaiting_deposit</code> → <code>completed</code> | <code>cancelled</code></td></tr>
-        <tr><td>Payout</td><td><code>completed</code></td></tr>
-        <tr><td>Webhook delivery</td><td><code>pending</code> → <code>delivered</code> | <code>failed</code> | <code>cancelled</code></td></tr>
-      </tbody></table>
-      <p>Errors are JSON: <code>{"error":{"code","message","details"?}}</code>.</p>
-      <table><thead><tr><th>HTTP</th><th>code</th><th>meaning</th></tr></thead><tbody>
-        <tr><td>400</td><td><code>validation_error</code>, <code>invalid_json</code>, <code>invalid_amount</code></td><td>Malformed request; <code>details</code> lists field issues</td></tr>
-        <tr><td>400</td><td><code>invalid_tckn</code>, <code>invalid_iban</code>, <code>invalid_destination_address</code></td><td>Checksum / format failed</td></tr>
-        <tr><td>401</td><td><code>unauthorized</code></td><td>Missing or unknown API key</td></tr>
-        <tr><td>404</td><td><code>not_found</code></td><td>Object does not exist (or belongs to another account)</td></tr>
-        <tr><td>409</td><td><code>email_taken</code>, <code>duplicate_external_id</code></td><td>Uniqueness conflict</td></tr>
-        <tr><td>422</td><td><code>insufficient_balance</code></td><td>Not enough TRY; <code>details.available</code> / <code>details.required</code></td></tr>
-        <tr><td>422</td><td><code>kyc_not_approved</code></td><td>Customer is pending/rejected</td></tr>
-        <tr><td>422</td><td><code>quote_expired</code>, <code>quote_consumed</code>, <code>quote_side_mismatch</code>, <code>quote_customer_mismatch</code></td><td>Quote unusable — request a new one</td></tr>
-        <tr><td>422</td><td><code>below_minimum</code>, <code>above_maximum</code>, <code>amount_too_small</code></td><td>Order limits</td></tr>
-        <tr><td>422</td><td><code>missing_iban</code></td><td>auto_payout / payout without an IBAN</td></tr>
-        <tr><td>422</td><td><code>not_cancellable</code>, <code>already_matched</code>, <code>live_stellar</code></td><td>State does not allow the action</td></tr>
-        <tr><td>502</td><td><code>stellar_error</code></td><td>Horizon problem while serving the request</td></tr>
-      </tbody></table>
-
-      <h3 id="webhooks">Webhooks</h3>
-      <p>Register with <code>POST /v1/webhooks {"url":"https://…","events":["*"]}</code>. The response includes a <code>secret</code> (shown once). Each event is POSTed as JSON:</p>
-      <pre><code>POST https://your-app/hook
-Content-Type: application/json
-X-TRMA-Event: onramp.completed
-X-TRMA-Delivery: whd_…
-X-TRMA-Signature: t=1724590000,v1=3f2a…   # hex HMAC-SHA256(secret, "&lt;t&gt;.&lt;raw body&gt;")
-
-{"id":"evt_…","type":"onramp.completed","created_at":"…","data":{ …the on-ramp object… }}</code></pre>
-      <p>Respond with any 2xx within 8 seconds. Failures retry after 5 s, 30 s, 2 min and 10 min, then the delivery is marked <code>failed</code> (<code>GET /v1/webhooks/{id}/deliveries</code>). Verify signatures against the <b>raw</b> body:</p>
-      <pre><code>// Node
-import { createHmac, timingSafeEqual } from 'node:crypto';
-export function verify(rawBody, header, secret) {
-  const { t, v1 } = Object.fromEntries(header.split(',').map((p) => p.split('=')));
-  const expected = createHmac('sha256', secret).update(`${t}.${rawBody}`).digest('hex');
-  return v1.length === expected.length && timingSafeEqual(Buffer.from(v1), Buffer.from(expected))
-    && Math.abs(Date.now() / 1000 - Number(t)) &lt; 300;
-}</code></pre>
-      <pre><code># Python
-import hmac, hashlib, time
-def verify(raw_body: bytes, header: str, secret: str) -> bool:
-    parts = dict(p.split('=', 1) for p in header.split(','))
-    expected = hmac.new(secret.encode(), f"{parts['t']}.".encode() + raw_body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(parts['v1'], expected) and abs(time.time() - int(parts['t'])) &lt; 300</code></pre>
-      <p>Event types: <code>customer.created</code>, <code>customer.kyc_updated</code>, <code>bank_transfer.received</code>, <code>bank_transfer.unmatched</code>, <code>onramp.created</code>, <code>onramp.completed</code>, <code>onramp.failed</code>, <code>offramp.created</code>, <code>offramp.deposit_received</code>, <code>offramp.completed</code>, <code>payout.completed</code>.</p>
-
-      <h3 id="events">Event log (polling)</h3>
-      <p>No public endpoint? Poll <code>GET /v1/events?after=&lt;last event id&gt;&amp;limit=200</code>. Events are returned oldest-first; keep <code>next_after</code> as your cursor. Filter with <code>type=</code>. The same payloads are delivered here and by webhook.</p>
-
-      <h3 id="sandbox">Sandbox controls &amp; test hooks</h3>
-      <table><thead><tr><th>Endpoint</th><th>Stands in for</th></tr></thead><tbody>
-        <tr><td><code>POST /v1/sandbox/bank-transfers</code></td><td>The bank reporting an incoming TRY transfer (by <code>reference</code> or <code>customer_id</code>)</td></tr>
-        <tr><td><code>POST /v1/sandbox/bank-transfers/{id}/assign</code></td><td>Support matching an unreferenced transfer</td></tr>
-        <tr><td><code>POST /v1/sandbox/customers/{id}/kyc</code></td><td>Compliance approving / rejecting</td></tr>
-        <tr><td><code>GET /v1/sandbox/treasury</code></td><td>Treasury balance (shared by everyone)</td></tr>
-        <tr><td><code>GET /v1/sandbox/unmatched-deposits</code></td><td>Ops queue of unattributable USDC</td></tr>
-        <tr><td><code>POST /v1/sandbox/usdc-deposits</code></td><td>The chain — only when the server runs in fake-Stellar mode</td></tr>
-      </tbody></table>
-      <p>Magic values: first name <code>REJECT</code> / <code>PENDING</code>; test TCKN <code>10000000146</code>; test IBAN <code>TR330006100519786457841326</code>.</p>
-
-      <h3 id="examples">Code examples</h3>
-      <pre><code># curl — full on-ramp
-BASE=https://tr-mock-anchor.fly.dev; KEY=trma_test_…
-C=$(curl -s -X POST $BASE/v1/customers -H "X-API-Key: $KEY" -H 'content-type: application/json' \
-  -d '{"first_name":"Ayşe","last_name":"Yılmaz","iban":"TR330006100519786457841326"}')
-CID=$(echo $C | jq -r .id); REF=$(echo $C | jq -r .deposit_reference)
-curl -s -X POST $BASE/v1/sandbox/bank-transfers -H "X-API-Key: $KEY" -H 'content-type: application/json' \
-  -d "{\"reference\":\"$REF\",\"amount_try\":\"1000.00\"}"
-Q=$(curl -s -X POST $BASE/v1/quotes -H "X-API-Key: $KEY" -H 'content-type: application/json' \
-  -d "{\"customer_id\":\"$CID\",\"side\":\"buy\",\"amount\":\"1000.00\",\"amount_currency\":\"TRY\"}" | jq -r .id)
-curl -s -X POST $BASE/v1/onramps -H "X-API-Key: $KEY" -H 'content-type: application/json' \
-  -d "{\"customer_id\":\"$CID\",\"quote_id\":\"$Q\",\"destination_address\":\"G…\"}"</code></pre>
-      <pre><code>// TypeScript — off-ramp with the wallet paying from the same process (e.g. a backend hot wallet)
-import { Asset, Horizon, Keypair, Memo, Networks, Operation, TransactionBuilder } from '@stellar/stellar-sdk';
-const anchor = (m: string, p: string, b?: unknown) => fetch(BASE + p, { method: m, headers: { 'content-type': 'application/json', 'X-API-Key': KEY }, body: b && JSON.stringify(b) }).then((r) => r.json());
-
-const off = await anchor('POST', '/v1/offramps', { customer_id, amount_usdc: '5.0000000' });
-const horizon = new Horizon.Server('https://horizon-testnet.stellar.org');
-const wallet = Keypair.fromSecret(process.env.WALLET_SECRET!);
-const acct = await horizon.loadAccount(wallet.publicKey());
-const tx = new TransactionBuilder(acct, { fee: '1000', networkPassphrase: Networks.TESTNET })
-  .addOperation(Operation.payment({ destination: off.deposit.address, asset: new Asset(off.deposit.asset_code, off.deposit.asset_issuer), amount: '5.0000000' }))
-  .addMemo(Memo.id(off.deposit.memo)).setTimeout(60).build();
-tx.sign(wallet);
-await horizon.submitTransaction(tx);
-// then poll GET /v1/offramps/{id} or wait for offramp.completed</code></pre>
-      <pre><code># Python — poll an on-ramp
-import requests, time
-H = {'X-API-Key': KEY}
-o = requests.post(f'{BASE}/v1/onramps', json={'customer_id': cid, 'amount_try': '250.00', 'destination_address': 'G…'}, headers=H).json()
-while o['status'] == 'pending':
-    time.sleep(2); o = requests.get(f"{BASE}/v1/onramps/{o['id']}", headers=H).json()
-print(o['status'], o['settlement'], o['stellar_tx_hash'])</code></pre>
-
       <h3 id="wallets">Wallet-side notes</h3>
       <ul>
         <li><b>Trustline first.</b> To receive USDC as a plain payment the wallet needs a trustline to <code>USDC:&lt;issuer from /health&gt;</code>. Freighter (testnet) and Stellar Lab can add one.</li>
-        <li><b>Claiming.</b> If <code>settlement</code> is <code>claimable_balance</code>, the wallet adds the trustline and submits <code>claimClaimableBalance({ balanceId })</code> (Freighter shows claimable balances in its UI). Both can go in one transaction — see the <a href="/api">demo</a>.</li>
+        <li><b>Claiming.</b> If a deposit settled as a <code>claimable_balance</code>, the wallet adds the trustline and submits <code>claimClaimableBalance({ balanceId })</code> (Freighter shows claimable balances in its UI). Both can go in one transaction — the <a href="/explorer">SEP demo</a> does exactly this.</li>
         <li><b>Memos on off-ramps.</b> Always <code>memo_type: id</code>. Wallets that cannot set a memo can pay a muxed <code>M…</code> address built from the treasury and the memo id (<code>new MuxedAccount(treasury, memo).accountId()</code>).</li>
         <li><b>Exact amounts.</b> The off-ramp converts what arrives, so partial or oversized payments still complete; only the memo must be right.</li>
       </ul>
@@ -397,50 +250,39 @@ print(o['status'], o['settlement'], o['stellar_tx_hash'])</code></pre>
         <tr><th>Horizon</th><td><code>https://horizon-testnet.stellar.org</code></td></tr>
         <tr><th>Endpoints</th><td>Submission + treasury sequence via <b>Stellar RPC</b> (<code>soroban-testnet.stellar.org</code>, async send + poll); incoming-payment watcher via <b>Horizon</b> (RPC has no per-account payment history). See <a href="/mainnet">Mainnet</a> for the production reasoning.</td></tr>
         <tr><th>Asset</th><td><code>USDC</code> issued by Circle's testnet issuer <code>GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5</code> (authoritative value: <code>GET /health</code>)</td></tr>
-        <tr><th>Treasury</th><td>See <code>GET /health</code> / <code>GET /v1/sandbox/treasury</code>. Off-ramp deposits go here; on-ramps are paid from here.</td></tr>
+        <tr><th>Treasury</th><td>See <code>GET /health</code>. Off-ramp deposits go here; on-ramps are paid from here.</td></tr>
         <tr><th>stellar.toml</th><td><a href="/.well-known/stellar.toml">/.well-known/stellar.toml</a> — SEP-1 with <code>TRANSFER_SERVER</code>, <code>WEB_AUTH_ENDPOINT</code>, <code>KYC_SERVER</code>, <code>ANCHOR_QUOTE_SERVER</code>, <code>SIGNING_KEY</code></td></tr>
-        <tr><th>Testnet USDC for your wallets</th><td><a href="https://faucet.circle.com" target="_blank" rel="noopener">faucet.circle.com</a> → Stellar Testnet (20 USDC / address / 2 h). The <a href="/api">demo</a> does not need it: it on-ramps first.</td></tr>
+        <tr><th>Testnet USDC for your wallets</th><td><a href="https://faucet.circle.com" target="_blank" rel="noopener">faucet.circle.com</a> → Stellar Testnet (20 USDC / address / 2 h). The <a href="/explorer">SEP demo</a> does not need it: it on-ramps first.</td></tr>
       </tbody></table>
 
       <h3 id="limits">Limits &amp; configuration</h3>
       <table><thead><tr><th>Setting</th><th>Default</th></tr></thead><tbody>
         <tr><td>Spread</td><td>50 bps each side</td></tr>
-        <tr><td>Quote validity</td><td>120 s</td></tr>
+        <tr><td>SEP-38 quote validity</td><td>15 min default (up to 1 h)</td></tr>
         <tr><td>Off-ramp rate lock</td><td>30 min, then repriced</td></tr>
         <tr><td>On-ramp per order</td><td><span class="lim-onramp">50 – 3000 TRY</span></td></tr>
-        <tr><td>Off-ramp minimum</td><td>1 USDC (when <code>amount_usdc</code> is given)</td></tr>
-        <tr><td>Settlement cadence</td><td>on-ramps every 3 s, off-ramp detection every 5 s, webhooks every 2 s</td></tr>
-        <tr><td>Pagination</td><td><code>limit</code> 1–200 (default 50), <code>offset</code></td></tr>
+        <tr><td>Off-ramp minimum</td><td>1 USDC</td></tr>
+        <tr><td>Settlement cadence</td><td>on-ramps every 3 s, off-ramp detection every 5 s</td></tr>
       </tbody></table>
 
       <h3 id="production">From sandbox to a real anchor: what will change</h3>
       <div class="callout">This topic has a dedicated page with a readiness checklist: <a href="/mainnet">Mainnet: what to expect</a>.</div>
-      <p>The API shape is deliberately close to what Turkish exchanges expose to partners, and we have studied a real production partner API to keep this list honest. Build against the sandbox, but structure your code so these six things are cheap to swap:</p>
+      <p>You built on the SEP path, so going live changes only the <b>network passphrase</b> (public) and the <b>home domain</b>. The SEP-1/10/6/12/38 endpoint shapes are the standard and do not change, so your integration code stays the same. The one dependency: the mainnet anchor must implement <b>SEP-6</b>. Behind that same surface, the anchor makes real what this sandbox simulates:</p>
       <ul>
-        <li><b>Auth will almost certainly differ.</b> This sandbox uses a static <code>X-API-Key</code>. Real Turkish partner APIs typically use <b>OAuth2 client-credentials</b>: a <code>client_id</code> + <code>client_secret</code> exchanged at a token endpoint for a <b>short-lived JWT</b> plus a refresh token, with <b>granular scopes</b> per capability (read vs create/confirm) — and often an <b>IP allowlist</b>, so your calls must originate from a static egress IP. Isolate auth in one module; assume the token can expire mid-flow.</li>
-        <li><b>The ramp may not be one call.</b> Production APIs are often exchange-style: the TL you deposit becomes a <b>TL-stablecoin balance</b>, conversion is an explicit <b>swap</b> (<code>quote</code> → <code>confirm</code>, with a TTL and a commission in the from-asset, sometimes delivered over a websocket), and the on-chain leg is a separate <b>crypto withdrawal</b>. Where this sandbox has <code>POST /v1/onramps</code>, expect to compose <i>deposit + swap + withdraw</i>. The sandbox's flat spread stands in for the swap commission.</li>
-        <li><b>Compliance fields become real.</b> Expect travel-rule originator information on deposits, <code>purpose</code> / <code>source_of_funds</code> on stablecoin withdrawals, withdrawal addresses and bank accounts that must be <b>registered before use</b>, 2FA on sensitive writes, KYC tiers with limits, and compliance-driven rejections (HTTP 451-style).</li>
-        <li><b>Fiat deposits may live outside the API.</b> The customer sends TL through the bank rail with a reference; your app may only <i>observe</i> the deposit in a transactions list rather than initiate or simulate it. The unmatched-transfer path matters — build the support flow.</li>
-        <li><b>Notifications may be a websocket.</b> Some partner APIs stream quotes and status changes over Socket.IO-style websockets instead of (or besides) webhooks. Keep your status handling transport-agnostic; polling always works.</li>
-        <li><b>Mainnet details.</b> USDC's mainnet issuer is <code>GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN</code>; trustlines, treasury addresses and rate sources change; pricing is a live book with shorter-lived quotes.</li>
+        <li><b>Real KYC and compliance (SEP-12).</b> Real identity verification, KYC tiers that set limits, travel-rule originator info on deposits, purpose / source of funds on withdrawals, and possibly pre-registered withdrawal addresses and bank accounts.</li>
+        <li><b>Real bank rails.</b> The <code>simulate-bank-transfer</code> helper disappears; a real TRY transfer to the anchor's IBAN with the reference credits the deposit. You observe it, you do not trigger it.</li>
+        <li><b>Live pricing (SEP-38).</b> Quotes come from a real order book, expire faster, and move with liquidity; fees may be line items rather than one blended spread.</li>
+        <li><b>Limits and operations.</b> Per-tier limits on every leg, rate limits (HTTP 429), maintenance windows and delayed settlement.</li>
+        <li><b>Mainnet details.</b> USDC's mainnet issuer is <code>GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN</code>; trustlines, treasury addresses and explorers change. All of it is discovered from the mainnet anchor's <code>stellar.toml</code>.</li>
       </ul>
-      <p>What carries over unchanged: the deposit-reference model, balances and ledgers, quote-then-execute thinking, address+memo routing for incoming crypto, IBAN payouts, status polling, and the discipline of treating every state in the status tables above.</p>
-      <table><thead><tr><th>Sandbox call</th><th>Production equivalent (typical Turkish partner API)</th></tr></thead><tbody>
-        <tr><td><code>POST /v1/partners</code> → API key</td><td>OAuth2 <code>client_credentials</code> → JWT (+ refresh), scopes, IP allowlist</td></tr>
-        <tr><td><code>POST /v1/sandbox/bank-transfers</code></td><td>— (customer pays TL via bank; you watch the fiat transactions list)</td></tr>
-        <tr><td><code>POST /v1/quotes</code></td><td>swap <code>quote</code> + <code>confirm</code> (TTL, commission, possibly via websocket)</td></tr>
-        <tr><td><code>POST /v1/onramps</code></td><td>swap TL-stablecoin→USDC + crypto withdrawal to a <b>pre-registered</b> address (+ purpose, source_of_funds)</td></tr>
-        <tr><td><code>POST /v1/offramps</code> deposit leg</td><td>per-asset/network crypto <b>deposit wallet</b> (+ travel-rule originator info)</td></tr>
-        <tr><td><code>POST /v1/payouts</code></td><td>fiat withdrawal to a <b>pre-registered</b> IBAN</td></tr>
-        <tr><td>Webhooks / <code>GET /v1/events</code></td><td>websocket stream and/or transaction polling</td></tr>
-      </tbody></table>
+      <p>What carries over unchanged: SEP-10 login, the deposit-reference model, balances and ledgers, quote-then-execute thinking, address+memo routing for incoming crypto, IBAN payouts, status polling, and the discipline of treating every state in the status tables above.</p>
 
       <h3 id="faq">FAQ</h3>
       <dl class="gloss">
-        <dt>Is this SEP-6 or SEP-24?</dt><dd>SEP-6 (programmatic) — plus SEP-1, SEP-10, SEP-12 and SEP-38 — alongside the partner API. SEP-24 (the anchor hosts the UI in a popup) is not implemented: Turkish exchanges expose partner APIs where the integrator owns the UI, and SEP-6 is the standard that matches that shape.</dd>
-        <dt>Can I use this from a browser app?</dt><dd>CORS is open for the sandbox, but the API key is a server credential. Keep it in a backend; use the browser only for the wallet side (signing the off-ramp payment, claiming balances).</dd>
+        <dt>Is this SEP-6 or SEP-24?</dt><dd>SEP-6 (programmatic) — plus SEP-1, SEP-10, SEP-12 and SEP-38. SEP-24 (the anchor hosts the UI in a popup) is not implemented: with SEP-6 the integrator owns the deposit / withdraw UI, which is the shape this anchor targets.</dd>
+        <dt>Can I use this from a browser app?</dt><dd>Yes. CORS is open, and the SEP path is non-custodial: the user's wallet signs the SEP-10 challenge and the off-ramp payment in the browser. There is no API key to protect.</dd>
         <dt>My on-ramp is stuck in <code>pending</code>.</dt><dd>Check <code>pending_reason</code>. <code>treasury_low</code> means the shared treasury needs USDC; <code>retrying: …</code> means Horizon hiccups. Both resolve on their own.</dd>
-        <dt>My off-ramp never completes.</dt><dd>The payment probably lacked the memo, used <code>memo_type: text</code>, or went to the wrong address. Look in <code>GET /v1/sandbox/unmatched-deposits</code>.</dd>
+        <dt>My off-ramp never completes.</dt><dd>The payment probably lacked the memo, used <code>memo_type: text</code>, or went to the wrong address. The anchor cannot attribute it — make sure the wallet sends the exact <code>memo_type: id</code> memo.</dd>
         <dt>Why did I get 99.00 TRY back from 100 TRY?</dt><dd>Two crossings of a 50 bps spread ≈ 1%. That is the anchor's revenue model.</dd>
         <dt>Is the data persistent?</dt><dd>Yes, but this is a shared sandbox: assume it can be reset before events.</dd>
       </dl>

@@ -20,14 +20,14 @@
 <div class="wrap">
   <header class="top">
     <div class="brand"><a href="/" style="color:inherit"><span class="dot"></span> TR Mock Anchor</a> <span class="tag">mainnet</span></div>
-    <nav aria-label="Primary" class="primary-nav"><a href="/">Home</a><a href="/sep">SEP path</a><a href="/explorer">SEP demo</a><a href="/api">API</a><a href="/guide">Guide</a><a href="/mainnet">Mainnet</a></nav>
+    <nav aria-label="Primary" class="primary-nav"><a href="/">Home</a><a href="/sep">SEP path</a><a href="/explorer">SEP demo</a><a href="/guide">Guide</a><a href="/mainnet">Mainnet</a></nav>
   </header>
 
   <h1>Mainnet: what to expect</h1>
   <p class="lead">This sandbox teaches you the <em>model</em> of a Turkish TRY ⇄ USDC ramp. A production anchor keeps the concepts and changes the mechanics — in predictable ways. This page lists what carries over, what will likely change, and the seams to build into your code <b>now</b> so the switch is a config change, not a rewrite.</p>
-  <p class="small muted">Everything here is generalized from how production Turkish exchanges and payment institutions expose partner APIs. Every anchor differs in detail — when yours publishes docs, those win.</p>
+  <p class="small muted">Everything here is generalized from how production Turkish anchors and exchanges run a TRY ⇄ USDC ramp. Every anchor differs in detail — when yours publishes its <code>stellar.toml</code> and docs, those win.</p>
 
-  <div class="note"><b>Two paths, two migration stories.</b> If you built on the <a href="/sep">SEP path</a> (the portable one), going live is mostly a config change: switch the network passphrase to public and point at the real anchor's home domain — the endpoint shapes are the standard and do not change. The one dependency: the mainnet anchor must implement SEP-6/24. <b>Most of this page is the other case</b> — what changes if you built on the custom <code>/v1</code> API, whose shape is specific to this mock and does <b>not</b> port. That is the business/partner-integration model.</div>
+  <div class="note"><b>SEP → production: mostly a config change.</b> You built on the <a href="/sep">SEP path</a>, so going live changes only two things: the <b>network passphrase</b> (public) and the <b>home domain</b> (the real anchor's). The SEP-1/10/6/12/38 endpoint shapes are the standard and do not change, so your integration code stays the same. The one dependency: the mainnet anchor must implement <b>SEP-6</b>. Everything below is what the anchor changes behind that same standard surface — real KYC, real bank rails, live pricing — not changes to your code.</div>
 
   <section class="panel keeps" style="margin-top:8px">
     <h2>What carries over unchanged</h2>
@@ -41,79 +41,70 @@
   </section>
 
   <h2>What will likely change</h2>
+  <p>Your SEP integration code does not change; the anchor makes what was simulated real, behind the same SEP surface.</p>
 
   <section class="panel delta">
-    <h3>1 · Authentication: from a static key to OAuth2</h3>
-    <p>The sandbox's <code>X-API-Key</code> is the training-wheels version. Production Turkish partner APIs typically use <b>OAuth2 client-credentials</b>: you hold a <code>client_id</code> + <code>client_secret</code>, exchange them at a token endpoint for a <b>short-lived JWT</b> plus a refresh token, and send the JWT as <code>Authorization: Bearer</code>. Expect:</p>
+    <h3>1 · KYC and compliance become real (SEP-12)</h3>
+    <p>Here SEP-12 auto-approves and stores no personal data. A production anchor verifies a real identity through the same SEP-12 endpoint, and adds compliance fields the standard already carries:</p>
     <ul class="tight">
-      <li><b>Granular scopes</b> — read scopes separated from create/confirm scopes; request only what you need.</li>
-      <li><b>An IP allowlist</b> — your calls must originate from a static egress IP you register with the anchor. Home connections and default cloud egress IPs don't qualify.</li>
-      <li><b>Token expiry mid-flow</b> — refresh handling is your problem, not an edge case.</li>
-    </ul>
-  </section>
-
-  <section class="panel delta">
-    <h3>2 · The ramp may decompose into deposit + swap + withdrawal</h3>
-    <p>This sandbox gives you an atomic <code>POST /v1/onramps</code>. A production anchor is often an <em>exchange</em> underneath, and its API shows it: the TRY you deposit becomes a <b>TL-stablecoin balance</b>, conversion is an explicit <b>swap</b> (<code>quote</code> → <code>confirm</code>, with a TTL and a <b>commission in the from-asset</b> — that's what this sandbox's flat spread stands in for), and the on-chain leg is a separate <b>crypto withdrawal</b>. Budget for composing two to four calls, each with its own status machine, where the sandbox has one.</p>
-  </section>
-
-  <section class="panel delta">
-    <h3>3 · Compliance fields become real</h3>
-    <ul class="tight">
+      <li><b>Real identity data</b> collected and verified before ramping; KYC tiers that set your limits.</li>
       <li><b>Travel rule:</b> originator information on crypto deposits (name, address ownership, VASP fields).</li>
-      <li><b>Purpose &amp; source of funds</b> on stablecoin withdrawals, plus free-text descriptions with length rules.</li>
-      <li><b>Pre-registration:</b> withdrawal addresses and bank accounts often must be saved (and verified) before the API will use them — "send to any address" is a sandbox luxury.</li>
-      <li><b>2FA / verification codes</b> on sensitive writes; KYC tiers that set your limits; compliance rejections as first-class API errors.</li>
+      <li><b>Purpose &amp; source of funds</b> on withdrawals; 2FA on sensitive steps; compliance rejections as first-class states.</li>
+      <li><b>Pre-registration:</b> withdrawal addresses and bank accounts may need to be saved and verified before use.</li>
     </ul>
   </section>
 
   <section class="panel delta">
-    <h3>4 · Fiat deposits may be observe-only</h3>
-    <p>There is often <b>no API call to initiate a TRY deposit</b>: the customer pays through the bank rail and your integration <em>observes</em> the deposit appearing in a fiat-transactions list. The sandbox's simulate-endpoint disappears; the watching, matching and unmatched-handling remain.</p>
+    <h3>2 · Real bank rails replace the simulate step</h3>
+    <p>The <code>simulate-bank-transfer</code> helper disappears. A real TRY bank transfer to the anchor's IBAN, with the reference in the <i>açıklama</i>, credits the deposit — you <em>observe</em> it move the SEP-6 transaction to <code>completed</code>, you do not trigger it. The unmatched-transfer support path still matters, so keep that UI.</p>
   </section>
 
   <section class="panel delta">
-    <h3>5 · Notifications may be a websocket</h3>
-    <p>Some anchors stream quotes and status changes over Socket.IO-style websockets (authenticated with the same bearer token) instead of — or in addition to — webhooks. Keep your status handling transport-agnostic; polling the transaction endpoints always works and doubles as your reconciliation.</p>
+    <h3>3 · Live pricing (SEP-38)</h3>
+    <ul class="tight">
+      <li><b>Real quotes:</b> SEP-38 prices come from a real order book, expire faster, and move with liquidity; commissions may be tiered by volume.</li>
+      <li><b>Fees as line items:</b> network withdrawal fee, spread / commission, sometimes a fixed payout fee — not one blended spread.</li>
+    </ul>
   </section>
 
   <section class="panel delta">
-    <h3>6 · Money details</h3>
+    <h3>4 · Limits and operations</h3>
+    <ul class="tight">
+      <li><b>Limits:</b> per-transaction and per-tier minimums/maximums on every leg.</li>
+      <li><b>Rate limits</b> (HTTP 429) with backoff; idempotency discipline on writes.</li>
+      <li><b>Real incident behaviour:</b> maintenance windows (503), partial outages, delayed settlement. Your state machine, not your happy path, is the product.</li>
+    </ul>
+  </section>
+
+  <section class="panel delta">
+    <h3>5 · Money details</h3>
     <ul class="tight">
       <li><b>Mainnet USDC issuer</b> is <code>GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN</code> — trustlines, treasury addresses and explorers all change; never hardcode the testnet issuer.</li>
-      <li><b>Live pricing:</b> quotes come from a real book, expire faster, and move with liquidity; commissions may be tiered by volume.</li>
-      <li><b>Fees appear as line items:</b> network withdrawal fees, swap commission, sometimes fixed payout fees — not one blended spread.</li>
-      <li><b>Limits:</b> per-transaction and per-tier minimums/maximums on every leg.</li>
+      <li>All of this is discovered from the mainnet anchor's <code>stellar.toml</code>, exactly as on testnet.</li>
     </ul>
   </section>
 
   <section class="panel delta">
-    <h3>7 · Operations</h3>
-    <ul class="tight">
-      <li>Rate limits (HTTP 429) with backoff; idempotency discipline on writes.</li>
-      <li>Separate sandbox and production environments with separate credentials — never assume one implies the other.</li>
-      <li>Real incident behaviour: maintenance windows (503), partial outages, delayed settlements. Your state machine, not your happy path, is the product.</li>
-    </ul>
+    <h3>6 · Optional: a bespoke API (not required)</h3>
+    <p>An anchor may <em>also</em> offer a bespoke partner API for a business / back-office model (many users under one credential, server-side orchestration). Those often use <b>OAuth2</b> client-credentials with scopes and an IP allowlist. It is not required and not portable between anchors. The contractual, standard surface every Stellar anchor speaks is <b>SEP-6</b> — build on that.</p>
   </section>
 
-  <h2>Sandbox call → production equivalent</h2>
+  <h2>Sandbox step → production equivalent</h2>
   <section class="panel">
     <div class="tablewrap"><table>
-      <thead><tr><th>In this sandbox</th><th>Typical production equivalent</th></tr></thead>
+      <thead><tr><th>In this sandbox</th><th>In production</th></tr></thead>
       <tbody>
-        <tr><td><code>POST /v1/partners</code> → API key</td><td>OAuth2 <code>client_credentials</code> → JWT + refresh, scopes, IP allowlist</td></tr>
-        <tr><td><code>POST /v1/sandbox/bank-transfers</code></td><td>— (customer pays TL via the bank; you watch the fiat-transactions list)</td></tr>
-        <tr><td><code>POST /v1/quotes</code></td><td>swap <code>quote</code> + <code>confirm</code> (TTL, commission, possibly via websocket)</td></tr>
-        <tr><td><code>POST /v1/onramps</code></td><td>swap TL-stablecoin → USDC, then crypto withdrawal to a <b>pre-registered</b> address (+ purpose, source_of_funds)</td></tr>
-        <tr><td><code>POST /v1/offramps</code> (deposit leg)</td><td>per-asset/network crypto <b>deposit wallet</b> (+ travel-rule originator info)</td></tr>
-        <tr><td><code>POST /v1/payouts</code></td><td>fiat withdrawal to a <b>pre-registered</b> IBAN</td></tr>
-        <tr><td>Webhooks / <code>GET /v1/events</code></td><td>websocket stream and/or transaction polling</td></tr>
-        <tr><td>SEP-6 door (<code>/sep6</code>)</td><td>If the anchor ships SEP-6/24, your SEP integration may carry over nearly unchanged — ask them about SEP support</td></tr>
+        <tr><td>SEP-10 login with a testnet key</td><td>SEP-10 login, same shape — only the network passphrase and home domain change</td></tr>
+        <tr><td>SEP-12 KYC (auto-approved, no data stored)</td><td>Real identity verification + travel-rule originator info</td></tr>
+        <tr><td>SEP-6 deposit here (simulated bank)</td><td>Real bank transfer + real KYC before the USDC is paid</td></tr>
+        <tr><td>Play the bank: <code>POST /sep6/tx/{id}/simulate-bank-transfer</code></td><td>— (a real TRY bank transfer arrives; no simulate endpoint)</td></tr>
+        <tr><td>SEP-38 quote (indicative rate + flat spread)</td><td>Live order-book quote: shorter TTL, tiered commission, fees as line items</td></tr>
+        <tr><td>SEP-6 withdraw here (USDC → simulated FAST payout)</td><td>Real USDC received + real fiat payout with compliance checks</td></tr>
       </tbody>
     </table></div>
   </section>
 
-  <footer>Testnet sandbox. Patterns generalized from production Turkish partner APIs; your anchor's documentation is the source of truth. <a href="/guide#production">Guide section</a> · <a href="/guide">Full guide</a> · <a href="/api">API reference</a></footer>
+  <footer>Testnet sandbox. Patterns generalized from production Turkish anchors; your anchor's <code>stellar.toml</code> and documentation are the source of truth. <a href="/guide#production">Guide section</a> · <a href="/guide">Full guide</a> · <a href="/sep">SEP path</a></footer>
 </div>
 <script src="/static/site.js?v=3"></script>
 </body>
