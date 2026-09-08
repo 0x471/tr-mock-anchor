@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AppEnv, Deps } from '../context.js';
 import { fmtRate, fmtUsdc } from '../money.js';
-import { buildOpenApi } from '../openapi.js';
 import type { SepContext } from '../sepauth.js';
 
 const PUBLIC_DIR = process.env.PUBLIC_DIR ?? join(process.cwd(), 'public');
@@ -12,43 +11,26 @@ const page = (name: string) => readFileSync(join(PUBLIC_DIR, name), 'utf8');
 export function publicRoutes(deps: Deps, sep: SepContext) {
   const { cfg, stellar, rates } = deps;
   const app = new Hono<AppEnv>();
-  const openapi = buildOpenApi(cfg, stellar);
 
   app.get('/', (c) => c.html(page('index.html')));
   app.get('/sep', (c) => c.html(page('sep.html')));
-  app.get('/dashboard', (c) => c.html(page('dashboard.html')));
-  // The API demo and the API reference are now one page. Keep the old URLs working.
-  app.get('/api', (c) => c.html(page('api.html')));
-  app.get('/docs', (c) => c.redirect('/api', 301));
-  app.get('/demo', (c) => c.redirect('/api', 301));
   app.get('/explorer', (c) => c.html(page('explorer.html')));
   app.get('/guide', (c) => c.html(page('guide.html')));
   app.get('/mainnet', (c) => c.html(page('mainnet.html')));
 
-  // Endpoint list derived from the OpenAPI doc, so it never drifts from the real API.
-  const apiEndpoints = () =>
-    Object.entries(openapi.paths).flatMap(([p, ops]) =>
-      Object.entries(ops as Record<string, { summary?: string; tags?: string[] }>)
-        .filter(([m]) => ['get', 'post', 'patch', 'delete', 'put'].includes(m))
-        .map(([m, o]) => ({ method: m.toUpperCase(), path: p, summary: o.summary ?? '', tag: o.tags?.[0] ?? 'Other' })),
-    );
-
   const PAGES: Array<[string, string, string]> = [
-    ['/', 'Home & sign up', 'Create an account with your email, get your single API key.'],
-    ['/sep', 'The SEP path (start here)', 'The main, portable way to use this anchor: standard SEP-1/10/6/12/38 over one home domain + asset. Full guide with copyable requests. Integrate once on testnet, ship to any real SEP anchor by changing the home domain. Also explains why the /v1 API is an optional, non-portable business layer.'],
-    ['/explorer', 'SEP demo (interactive)', 'The SEP door: run SEP-1/10/6 live in your browser — discovery, key-signature login, deposit and withdraw against this anchor, with real testnet transactions and no API key. The regional counterpart to the SDF test-anchor explorer.'],
-    ['/api', 'API (optional layer)', 'The custom /v1 partner API on one page: interactive demo + full OpenAPI reference. An optional business/compatibility layer, NOT the portable path (these endpoints are specific to this mock). For the portable way, see /sep.'],
-    ['/guide', 'Guide', 'Concepts, Turkish rails, on/off-ramp flows, SEP-6 door, statuses, errors, webhooks, glossary (TR/EN).'],
-    ['/mainnet', 'Mainnet: what to expect', 'What changes moving from this sandbox to a production anchor, plus a readiness checklist.'],
-    ['/dashboard', 'Dashboard (part of the API path)', 'Your API key, a playground, and live tables of customers / orders / events (login required). Only relevant to the optional /v1 API path.'],
+    ['/', 'Home', 'What this is: a SEP-6 mock anchor for a Turkish TRY <-> USDC ramp on Stellar testnet. Two values to integrate: a home domain and the USDC asset.'],
+    ['/sep', 'The SEP path (start here)', 'The full integration guide: standard SEP-1/10/6/12/38 over one home domain + asset, with copyable requests. Integrate once on testnet, ship to any real SEP anchor by changing only the network and home domain.'],
+    ['/explorer', 'SEP demo (interactive)', 'Run the SEP door live in your browser — SEP-1 discovery, SEP-10 key-signature login, SEP-6 deposit and withdraw against this anchor, with real testnet transactions and no API key.'],
+    ['/guide', 'Guide', 'Concepts, Turkish rails (IBAN, FAST, açıklama), the SEP-6 flow, simulated KYC, statuses, testing with wallets, glossary (TR/EN).'],
+    ['/mainnet', 'Mainnet: what to expect', 'What carries over and what changes moving from this sandbox to a production SEP anchor.'],
   ];
   const MACHINE: Array<[string, string]> = [
-    ['/openapi.json', 'OpenAPI 3.1 specification (JSON).'],
     ['/llms.txt', 'Concise machine index of this anchor (this file).'],
-    ['/llms-full.txt', 'Full text: quickstart, every endpoint, statuses, pricing, mainnet notes — one document.'],
+    ['/llms-full.txt', 'Full text: the SEP flow, statuses, pricing, mainnet notes — one document.'],
     ['/sitemap.md', 'Human- and AI-readable Markdown sitemap.'],
     ['/sitemap.xml', 'XML sitemap for crawlers.'],
-    ['/health', 'Service, treasury balance, live rates, SEP endpoints (JSON).'],
+    ['/health', 'Service, treasury balance, live rates, SEP endpoints, limits (JSON).'],
     ['/.well-known/stellar.toml', 'SEP-1 metadata (SIGNING_KEY, TRANSFER_SERVER, WEB_AUTH_ENDPOINT, KYC_SERVER, ANCHOR_QUOTE_SERVER).'],
   ];
 
@@ -57,18 +39,15 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
       [
         '# TR Mock Anchor — Sitemap',
         '',
-        `> Mock Turkish TRY <-> USDC on/off-ramp on Stellar testnet. Two doors on one ledger: an API-key partner REST API and a SEP-6 wallet door. Base URL: ${cfg.publicUrl}`,
+        `> A SEP-6 mock anchor for a Turkish TRY <-> USDC ramp on Stellar testnet. One standard door: SEP-1 / SEP-10 / SEP-6 / SEP-12 / SEP-38. Base URL: ${cfg.publicUrl}`,
         '',
-        'If you are an AI reading this: fetch `/llms-full.txt` for the complete reference in one request, or `/openapi.json` for the machine-readable API spec.',
+        'If you are an AI reading this: fetch `/llms-full.txt` for the complete reference in one request, and `/.well-known/stellar.toml` for the SEP-1 metadata.',
         '',
         '## Pages',
         ...PAGES.map(([p, t, d]) => `- [${t}](${cfg.publicUrl}${p}) — ${d}`),
         '',
         '## Machine-readable',
         ...MACHINE.map(([p, d]) => `- [${cfg.publicUrl}${p}](${cfg.publicUrl}${p}) — ${d}`),
-        '',
-        '## API endpoints',
-        ...apiEndpoints().map((e) => `- \`${e.method} ${e.path}\` — ${e.summary} _(${e.tag})_`),
         '',
       ].join('\n'),
       200,
@@ -89,48 +68,39 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
 
   app.get('/llms-full.txt', async (c) => {
     const [buy, sell] = await Promise.all([rates.quote('buy'), rates.quote('sell')]);
-    const byTag = new Map<string, ReturnType<typeof apiEndpoints>>();
-    for (const e of apiEndpoints()) (byTag.get(e.tag) ?? byTag.set(e.tag, []).get(e.tag)!).push(e);
-    const endpointBlock = [...byTag.entries()].flatMap(([tag, list]) => [`### ${tag}`, ...list.map((e) => `- ${e.method} ${e.path} — ${e.summary}`), '']);
     return c.text(
       [
         '# TR Mock Anchor — full reference',
         `Base URL: ${cfg.publicUrl}`,
         '',
-        'Mock Turkish TRY <-> USDC on/off-ramp on Stellar testnet, for builders integrating a TRY ramp before a production anchor exists. Two doors on one ledger:',
-        'partner REST API (header X-API-Key) and a SEP-6 wallet door (SEP-1/10/12/38). The bank and KYC are simulated; the Stellar leg is real testnet USDC.',
+        'A SEP-6 mock anchor for a Turkish TRY <-> USDC ramp on Stellar testnet, for builders integrating a TRY ramp before a production anchor exists.',
+        'One standard door: SEP-1 discovery, SEP-10 auth, SEP-6 deposit/withdraw, SEP-12 (simulated) KYC, SEP-38 quotes (TRY <-> USDC). The bank and KYC are simulated; the Stellar leg is real testnet USDC.',
+        'The whole integration handoff is two values: a home domain and an asset. Everything else is discovered from stellar.toml. Integrate once here, then move to any real SEP anchor by changing only the network and home domain.',
         `Asset: ${stellar.assetCode}:${stellar.assetIssuer}. Treasury: ${stellar.treasuryPublicKey}.`,
         `Rates: USD/TRY from Reflector oracle + ${buy.spreadBps} bps spread (buy ${fmtRate(buy.rateMicro)}, sell ${fmtRate(sell.rateMicro)}). Amounts are decimal strings (TRY 2dp, USDC 7dp).`,
+        `Limits: ${cfg.minOnrampTry} - ${cfg.maxOnrampTry} TRY per deposit; min off-ramp ${cfg.minOfframpUsdc} USDC.`,
         '',
-        '## Partner API quickstart',
-        '1. POST /v1/partners {"email","password","name"} -> {api_key}. Send it as X-API-Key on every /v1 call.',
-        '2. POST /v1/customers {first_name,last_name,iban?,tckn?} -> {id, deposit_reference, kyc_status:"approved"}.',
-        '3. GET /v1/customers/{id}/deposit-instructions -> IBAN + reference to write in the transfer description.',
-        '4. POST /v1/sandbox/bank-transfers {reference, amount_try} -> simulates the incoming TRY transfer; credits TRY balance.',
-        '5. POST /v1/quotes {side:"buy",amount,amount_currency} -> rate locked 120s (optional).',
-        '6. POST /v1/onramps {customer_id, amount_try|quote_id, destination_address} -> real testnet USDC to the wallet (payment, or claimable balance if no trustline). Poll GET /v1/onramps/{id}.',
-        '7. Off-ramp: POST /v1/offramps {customer_id, amount_usdc} -> {deposit:{address,memo_type:"id",memo}}. Send USDC on-chain with that memo; TRY is credited and paid out to the IBAN. Poll GET /v1/offramps/{id}.',
-        '8. Notifications: POST /v1/webhooks {url,events} (HMAC-signed) or poll GET /v1/events.',
-        '',
-        '## SEP path (the main, portable way) — full guide at /sep',
-        'This is the recommended integration. The whole handoff is a home domain + an asset (USDC); everything else is discovered from stellar.toml. Integrate once here, then move to any real SEP anchor by changing only the network and home domain. The /v1 API below is an optional, non-portable business layer.',
-        'SEP-1 stellar.toml at /.well-known/stellar.toml. SEP-10 auth: GET/POST /auth -> JWT (Bearer). SEP-6: /sep6/{info,deposit,withdraw,deposit-exchange,withdraw-exchange,transactions,transaction}.',
-        'SEP-12 simulated KYC (no personal data required). SEP-38 quotes: iso4217:TRY <-> stellar:USDC:<issuer>. Deposits wait until the simulated bank transfer is triggered at the transaction more_info_url (/sep6/tx/{id}).',
-        'An interactive, run-it-yourself version of the SEP door (in the browser, no wallet app, real testnet transactions) is at /explorer.',
+        '## SEP flow (end to end)',
+        '1. SEP-1: GET /.well-known/stellar.toml -> WEB_AUTH_ENDPOINT (/auth), TRANSFER_SERVER (/sep6), KYC_SERVER (/sep12), SIGNING_KEY, the USDC currency.',
+        '2. SEP-10: GET /auth?account=G... -> a challenge transaction; sign it with the user key; POST /auth {transaction} -> { token } (JWT). Send it as Authorization: Bearer <token>.',
+        '3. SEP-6 /sep6/info -> capabilities (deposit/withdraw USDC, fee, min/max).',
+        '4. SEP-6 deposit: GET /sep6/deposit?asset_code=USDC&account=G...&amount=... -> order id + bank instructions (IBAN + reference).',
+        '5. Simulate the bank (sandbox): POST /sep6/tx/{id}/simulate-bank-transfer {"amount":"..."} (or press the button on the transaction more_info_url). The anchor then pays real testnet USDC (a payment, or a claimable balance / pending_trust if the account has no USDC trustline).',
+        '6. Poll: GET /sep6/transaction?id={id} until status=completed.',
+        '7. SEP-6 withdraw: GET /sep6/withdraw?asset_code=USDC&type=bank_account&amount=... -> treasury account_id + memo (type id). Send that USDC on-chain with the memo; the anchor detects it and pays TRY (simulated FAST).',
+        '8. History: GET /sep6/transactions?asset_code=USDC and GET /sep6/transaction?id=|stellar_transaction_id=|external_transaction_id=.',
+        'SEP-12 KYC is simulated: a wallet user is auto-approved, no personal data is required or stored. SEP-38 gives firm TRY<->USDC quotes (/sep38/{info,prices,price,quote}); SEP-6 deposit-exchange/withdraw-exchange lock a quote_id.',
         '',
         '## Statuses',
-        'On-ramp: pending -> completed | failed (TRY refunded). settlement: payment | claimable_balance.',
-        'Off-ramp: awaiting_deposit -> completed | cancelled.',
-        'SEP-6: pending_user_transfer_start -> pending_anchor -> pending_stellar -> completed | error.',
+        'SEP-6 deposit: pending_user_transfer_start -> pending_anchor -> completed. pending_trust while waiting for a USDC trustline (when the wallet did not opt into claimable balances). error on failure.',
+        'SEP-6 withdrawal: pending_user_transfer_start -> completed (once the USDC payment is detected and TRY is paid out).',
         '',
         '## Errors',
-        'JSON {"error":{"code","message","details?"}}. 400 validation/invalid_iban/invalid_tckn; 401 unauthorized; 404 not_found; 409 email_taken/duplicate_external_id; 422 insufficient_balance/kyc_not_approved/quote_expired/quote_consumed/below_minimum/missing_iban; 502 stellar_error.',
+        'JSON {"error": "..."} on the SEP endpoints. SEP-10 verification failures return 400. Common SEP-6 errors: unsupported asset_code, amount below/above the limits, missing/!bank_account funding_method.',
         '',
         '## What changes on mainnet',
-        'Auth likely becomes OAuth2 client-credentials (JWT + refresh, scopes, IP allowlist). The ramp may decompose into deposit + swap (quote->confirm, commission) + crypto withdrawal to a pre-registered address. Real compliance fields (travel-rule originator, purpose, source_of_funds), 2FA, per-tier limits. Fiat deposits may be observe-only. Notifications may be a websocket. Mainnet USDC issuer GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN. See /mainnet.',
+        'The SEP endpoints and your integration code do not change; you switch the network passphrase to public and the home domain to the real anchor. The one dependency: the mainnet anchor must implement SEP-6. Mainnet USDC issuer is GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN. Real bank transfer and real KYC replace the simulated ones. See /mainnet.',
         '',
-        '## All API endpoints',
-        ...endpointBlock,
       ].join('\n'),
       200,
       { 'content-type': 'text/plain; charset=utf-8', 'access-control-allow-origin': '*' },
@@ -174,47 +144,33 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
     });
   });
 
-  app.get('/openapi.json', (c) => c.json(openapi));
-
   app.get('/llms.txt', (c) =>
     c.text(
       [
         '# TR Mock Anchor (Stellar testnet sandbox)',
         '',
-        '> Mock Turkish TRY <-> USDC on/off-ramp for Stellar testnet builders. Models how Turkish exchanges ramp: bank transfer with a reference code -> TRY balance -> convert to USDC at USD/TRY -> USDC paid to the wallet. Off-ramp is the reverse. Nothing here is a real financial service.',
+        '> A SEP-6 mock anchor for a Turkish TRY <-> USDC ramp on Stellar testnet. It models how Turkish exchanges ramp: bank transfer with a reference code -> TRY balance -> convert to USDC at USD/TRY -> USDC paid to the wallet (off-ramp is the reverse). Nothing here is a real financial service.',
         '',
-        '> Two ways in. The MAIN, portable way is the SEP path (standard SEP-1/10/6/12/38): integrate once against this testnet mock, then move to any real SEP anchor by changing only the network and home domain. The /v1 API is an OPTIONAL, non-portable business/compatibility layer (API-key, webhooks, back-office); its endpoints are specific to this mock. Start at /sep.',
+        '> One standard door. It speaks SEP-1 / SEP-10 / SEP-6 / SEP-12 / SEP-38 — the surface a real Turkish anchor (BiLira) will expose. An integration built here moves to production by changing only the network and the home domain. There is no bespoke API: the whole handoff is a home domain + the USDC asset.',
         '',
         `- Base URL: ${cfg.publicUrl}`,
         `- THE SEP PATH (start here — the portable way, full guide): ${cfg.publicUrl}/sep`,
         `- Full reference in one document: ${cfg.publicUrl}/llms-full.txt`,
         `- Sitemap (Markdown): ${cfg.publicUrl}/sitemap.md`,
-        `- Guide (concepts, flows, errors, webhooks, glossary): ${cfg.publicUrl}/guide`,
-        `- Mainnet expectations (what changes in production, readiness checklist): ${cfg.publicUrl}/mainnet`,
-        `- SEP demo (run the SEP path live in your browser, no wallet app, no API key): ${cfg.publicUrl}/explorer`,
-        `- API (the OPTIONAL, non-portable /v1 business layer): interactive demo + full reference on one page: ${cfg.publicUrl}/api`,
-        `- OpenAPI: ${cfg.publicUrl}/openapi.json`,
-        `- Health & treasury: ${cfg.publicUrl}/health`,
-        `- Dashboard (sign up with email, get your single API key): ${cfg.publicUrl}/`,
-        `- Auth: header X-API-Key: <key>  (or Authorization: Bearer <key>)`,
-        `- Signup via API: POST ${cfg.publicUrl}/v1/partners {"email","password","name"}`,
+        `- Guide (concepts, Turkish rails, flows, statuses, glossary): ${cfg.publicUrl}/guide`,
+        `- Mainnet expectations (what carries over, what changes): ${cfg.publicUrl}/mainnet`,
+        `- SEP demo (run the SEP door live in your browser, no wallet app, no API key): ${cfg.publicUrl}/explorer`,
+        `- Health, treasury, live rates, limits: ${cfg.publicUrl}/health`,
         `- Stellar: testnet, asset ${stellar.assetCode}:${stellar.assetIssuer}, treasury ${stellar.treasuryPublicKey}`,
         '',
-        '## Flow',
-        '1. POST /v1/customers -> customer with deposit_reference',
-        '2. GET /v1/customers/{id}/deposit-instructions -> IBAN + reference (write reference in the bank transfer description)',
-        '3. POST /v1/sandbox/bank-transfers {reference, amount_try} -> simulates the incoming TRY transfer, credits TRY balance',
-        '4. POST /v1/quotes {side:"buy", amount, amount_currency} -> locked rate for 120s',
-        '5. POST /v1/onramps {customer_id, quote_id|amount_try, destination_address} -> USDC sent on Stellar testnet (payment or claimable balance)',
-        '6. POST /v1/offramps {customer_id, amount_usdc} -> deposit address + memo id; send USDC on-chain; TRY credited and paid out to IBAN',
-        '7. Webhooks: POST /v1/webhooks {url, events}. Poll alternative: GET /v1/events',
-        '',
-        '## SEP door (wallets)',
-        `- SEP-1: ${cfg.publicUrl}/.well-known/stellar.toml (TRANSFER_SERVER, WEB_AUTH_ENDPOINT, KYC_SERVER, ANCHOR_QUOTE_SERVER, SIGNING_KEY)`,
-        `- SEP-10: GET/POST ${cfg.publicUrl}/auth -> JWT`,
-        `- SEP-6: ${cfg.publicUrl}/sep6/{info,deposit,deposit-exchange,withdraw,withdraw-exchange,transactions,transaction}. Deposits: bank details + reference; simulate the TRY arrival at more_info_url. Withdrawals: treasury account + memo id; pay real testnet USDC.`,
-        `- SEP-12: ${cfg.publicUrl}/sep12/customer (simulated KYC, no personal data required, all fields optional)`,
-        `- SEP-38: ${cfg.publicUrl}/sep38/{info,prices,price,quote} (iso4217:TRY <-> stellar:USDC:<issuer>)`,
+        '## Integrate (two values + the standard)',
+        `- Home domain: ${new URL(cfg.publicUrl).host}   Asset: ${stellar.assetCode}`,
+        `- SEP-1: ${cfg.publicUrl}/.well-known/stellar.toml (TRANSFER_SERVER, WEB_AUTH_ENDPOINT, KYC_SERVER, SIGNING_KEY, USDC currency)`,
+        `- SEP-10: GET/POST ${cfg.publicUrl}/auth -> JWT (sign a challenge with the user's Stellar key)`,
+        `- SEP-6: ${cfg.publicUrl}/sep6/{info,deposit,withdraw,deposit-exchange,withdraw-exchange,transactions,transaction}. Deposit -> bank details + reference; simulate the TRY arrival at more_info_url. Withdraw -> treasury account + memo id; pay real testnet USDC.`,
+        `- SEP-12: ${cfg.publicUrl}/sep12/customer (simulated KYC, no personal data required, auto-approved)`,
+        `- SEP-38: ${cfg.publicUrl}/sep38/{info,prices,price,quote} (TRY <-> USDC quotes; SEP-6 deposit-exchange/withdraw-exchange consume quote_id)`,
+        '- Tooling: any SEP-capable wallet, demo-wallet.stellar.org (enter the home domain), or @stellar/typescript-wallet-sdk.',
       ].join('\n'),
     ),
   );
@@ -234,7 +190,7 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
         '[DOCUMENTATION]',
         'ORG_NAME="TR Mock Anchor (testnet sandbox)"',
         `ORG_URL="${cfg.publicUrl}"`,
-        'ORG_DESCRIPTION="Mock Turkish TRY <-> USDC ramp for Stellar testnet builders. Not a real financial service. No real money moves."',
+        'ORG_DESCRIPTION="Mock Turkish TRY <-> USDC SEP-6 anchor for Stellar testnet builders. Not a real financial service. No real money moves."',
         '',
         '[[CURRENCIES]]',
         `code="${stellar.assetCode}"`,
@@ -244,7 +200,7 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
         'is_asset_anchored=true',
         'anchor_asset_type="fiat"',
         'anchor_asset="TRY"',
-        'desc="USDC on Stellar testnet (Circle testnet issuer unless overridden). This anchor ramps it against TRY via SEP-6 or its partner API."',
+        'desc="USDC on Stellar testnet (Circle testnet issuer unless overridden). This anchor ramps it against TRY via SEP-6."',
         '',
       ].join('\n'),
       200,
