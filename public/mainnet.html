@@ -24,10 +24,10 @@
   </header>
 
   <h1>Mainnet: what to expect</h1>
-  <p class="lead">This sandbox teaches you the <em>model</em> of a Turkish TRY ⇄ USDC ramp. A production anchor keeps the concepts and changes the mechanics — in predictable ways. This page lists what carries over, what will likely change, and the seams to build into your code <b>now</b> so the switch is a config change, not a rewrite.</p>
+  <p class="lead">This sandbox teaches you the <em>model</em> of a Turkish TRY ⇄ USDC ramp. A production anchor keeps the concepts and changes the mechanics — in predictable ways. This page lists what carries over unchanged and what a production anchor makes real behind the same SEP surface, so you know what to expect before you ship.</p>
   <p class="small muted">Everything here is generalized from how production Turkish anchors and exchanges run a TRY ⇄ USDC ramp. Every anchor differs in detail — when yours publishes its <code>stellar.toml</code> and docs, those win.</p>
 
-  <div class="note"><b>SEP → production: mostly a config change.</b> You built on the <a href="/sep">SEP path</a>, so going live changes only two things: the <b>network passphrase</b> (public) and the <b>home domain</b> (the real anchor's). The SEP-1/10/6/12/38 endpoint shapes are the standard and do not change, so your integration code stays the same. The one dependency: the mainnet anchor must implement <b>SEP-6</b>. Everything below is what the anchor changes behind that same standard surface — real KYC, real bank rails, live pricing — not changes to your code.</div>
+  <div class="note"><b>SEP → production: mostly a config change.</b> You built on the <a href="/sep">SEP path</a>, so going live changes only two things: the <b>network passphrase</b> (public) and the <b>home domain</b> (the real anchor's). The SEP-1/10/6/12/38 endpoint shapes are the standard and do not change, so your transport and wire calls stay the same. The one dependency: the mainnet anchor must implement <b>SEP-6</b>. What you <em>do</em> build on your side: the real KYC step — collecting and submitting SEP-12 fields, handling the <code>NEEDS_INFO</code> loop — and rendering the extra statuses/rejections a production anchor returns. Everything below is what the anchor makes real behind that same standard surface.</div>
 
   <section class="panel keeps" style="margin-top:8px">
     <h2>What carries over unchanged</h2>
@@ -41,7 +41,7 @@
   </section>
 
   <h2>What will likely change</h2>
-  <p>Your SEP integration code does not change; the anchor makes what was simulated real, behind the same SEP surface.</p>
+  <p>The endpoint shapes don't change; the anchor makes what was simulated real. On your side that mainly means implementing the real SEP-12 KYC step and handling the extra statuses below — not re-plumbing the ramp.</p>
 
   <section class="panel delta">
     <h3>1 · KYC and compliance become real (SEP-12)</h3>
