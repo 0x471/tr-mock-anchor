@@ -106,12 +106,10 @@ pub fn verify_shplemini(
         return Err("shplemini: batch inversion produced zero result");
     }
 
-    // Unpack results
     let pos0 = inverted[0].clone();
     let neg0 = inverted[1].clone();
     let gemini_r_inv = inverted[2].clone();
 
-    // 2) allocate arrays
     // Deduplicated layout: shifted commitments merged into unshifted counterparts.
     // Layout:
     //   [0]                 = shplonk_Q

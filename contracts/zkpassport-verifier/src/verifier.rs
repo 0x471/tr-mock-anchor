@@ -83,10 +83,8 @@ impl UltraHonkVerifier {
         proof_bytes: &Bytes,
         public_inputs_bytes: &Bytes,
     ) -> Result<(), VerifyError> {
-        // 1) parse proof
         let proof = load_proof(env, proof_bytes).map_err(|_| VerifyError::InvalidInput)?;
 
-        // 2) sanity on public inputs (length and VK metadata if present)
         validate_public_inputs(public_inputs_bytes).map_err(|_| VerifyError::InvalidInput)?;
         let provided = (public_inputs_bytes.len() / 32) as u64;
         let expected = self
@@ -98,12 +96,10 @@ impl UltraHonkVerifier {
             return Err(VerifyError::InvalidInput);
         }
 
-        // 3) Fiat-Shamir transcript
         let pub_inputs_offset = self.vk.pub_inputs_offset;
         let mut t = generate_transcript(&self.env, &proof, public_inputs_bytes, &self.vk.hash)
             .map_err(|_| VerifyError::InvalidInput)?;
 
-        // 4) Public delta
         t.rel_params.public_inputs_delta = Self::compute_public_input_delta(
             env,
             public_inputs_bytes,
@@ -114,10 +110,8 @@ impl UltraHonkVerifier {
         )
         .map_err(|_| VerifyError::InvalidInput)?;
 
-        // 5) Sum-check
         verify_sumcheck(env, &proof, &t, &self.vk).map_err(|_| VerifyError::SumcheckFailed)?;
 
-        // 6) Shplonk
         verify_shplemini(&self.env, &proof, &self.vk, &t)
             .map_err(|_| VerifyError::ShplonkFailed)?;
 
