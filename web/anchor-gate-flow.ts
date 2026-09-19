@@ -220,6 +220,14 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
     if (!view.info) throw new Error("The Testnet gate is unavailable.");
     return view.info;
   }
+  function requireActivePolicy() {
+    const info = requireInfo();
+    if (info.config.policy_valid_until <= now())
+      throw new Error(
+        "Policy expired. Recovery only: refresh or finish an already-authorized withdrawal."
+      );
+    return info;
+  }
   function requireOrder(allowAuthorizedCompletion = false) {
     const irreversibleWithdrawal =
       allowAuthorizedCompletion &&
@@ -227,6 +235,7 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       ["payout_authorized", "paid"].includes(view.order.stage) &&
       view.order.escrowed &&
       view.order.payout_authorized_at !== null;
+    if (!irreversibleWithdrawal) requireActivePolicy();
     if (
       !view.order ||
       (!irreversibleWithdrawal &&
@@ -293,6 +302,7 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
     const order = requireOrder(allowAuthorizedCompletion);
     const session = generation;
     await sameWallet(view.wallet);
+    requireOrder(allowAuthorizedCompletion);
     const value = await (
       await request(`/anchor-gate/orders/${order.id}/${path}`, {})
     ).json();
@@ -301,6 +311,9 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
   }
   const flow = {
     view,
+    get recoveryOnly() {
+      return view.info !== null && view.info.config.policy_valid_until <= now();
+    },
     async initialize() {
       const info = infoSchema.parse(
         await (await request("/anchor-gate/info", undefined, false)).json()
@@ -313,8 +326,7 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
         new Asset(parts[1]!, parts[2]!).contractId(Networks.TESTNET) !==
           info.config.token ||
         !StrKey.isValidContract(info.config.contract) ||
-        info.config.domain !== new URL(origin).hostname ||
-        info.config.policy_valid_until <= now()
+        info.config.domain !== new URL(origin).hostname
       )
         throw new Error(
           "The published gate policy does not match this origin or asset."
@@ -330,7 +342,9 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
         throw new Error("Unsupported native proof profile.");
       view.info = info;
       change(
-        "Synthetic documents, simulated TRY, Testnet tokens only. Connect Freighter on Testnet."
+        flow.recoveryOnly
+          ? "Policy expired. Recovery only: connect Freighter to refresh or finish an already-authorized withdrawal."
+          : "Synthetic documents, simulated TRY, Testnet tokens only. Connect Freighter on Testnet."
       );
     },
     async connect() {
@@ -437,7 +451,7 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       amount: string,
       direction: "deposit" | "withdrawal" = view.direction
     ) {
-      const info = requireInfo();
+      const info = requireActivePolicy();
       const decimals = direction === "deposit" ? 2 : 7;
       const requestedUnits = units(amount, decimals);
       if (
@@ -460,6 +474,7 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
         direction === "deposit" ? info.buy_asset : info.sell_asset;
       const session = generation;
       await sameWallet(view.wallet);
+      requireActivePolicy();
       const quote = quoteSchema.parse(
         await (
           await request("/sep38/quote", {
@@ -496,6 +511,7 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       change("Review the exact quote before reserving an order.");
     },
     async createOrder(bankDestination?: string) {
+      requireActivePolicy();
       if (!view.quote || !idempotencyKey || view.order)
         throw new Error("Request and review a fresh quote first.");
       if (
@@ -517,6 +533,7 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       requestedDestination = bankDestination;
       const session = generation;
       await sameWallet(view.wallet);
+      requireActivePolicy();
       const value = await (
         await request(
           "/anchor-gate/orders",
@@ -575,6 +592,7 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
           "Wait 30 seconds after confirmed order creation before requesting a phone proof."
         );
       await sameWallet(view.wallet);
+      requireActivePolicy();
       cancelPhone();
       view.prepared = null;
       preparedInputs = undefined;
@@ -610,7 +628,9 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       const active = () =>
         session === generation &&
         phoneId === phoneGeneration &&
+        !flow.recoveryOnly &&
         now() < config.expires_at;
+      requireActivePolicy();
       let received = false;
       const created = await deps.phone.request(config, {
         event(message) {
@@ -752,9 +772,11 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       )
         throw new Error("Unexpected Testnet proof invocation.");
       await sameWallet(view.wallet);
+      requireActivePolicy();
       if (session !== generation) throw new Error("Wallet session changed.");
       const signed = await deps.wallet.sign(prepared.transaction, view.wallet);
       await sameWallet(view.wallet);
+      requireActivePolicy();
       if (
         session !== generation ||
         prepared.expires_at <= now() ||
