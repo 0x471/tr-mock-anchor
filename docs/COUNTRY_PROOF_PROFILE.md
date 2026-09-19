@@ -6,7 +6,21 @@ Checked 20 September 2026, Europe/Istanbul. This is a source and public-artifact
 
 For the existing private age predicate plus order binding, adding one private country inclusion/exclusion predicate selects `outer_evm_count_6`. Adding separate nationality and issuing-country predicates selects `outer_evm_count_7`. Both require a different pinned verification key and `LOG_N=23`; the working Outer5 profile uses `LOG_N=22`. A correct fixed-profile extension must change the decoder, transcript dimensions, input counts, and key together, not just admit extra public inputs.
 
-The user must still choose the age threshold, country attribute, inclusion versus exclusion, and country list. Nationality and document-issuing country are different document fields; neither is residence, location, bank jurisdiction, or a complete regulatory eligibility policy. [Mobile circuit selection][mobile-matcher], [document-field constants][constants]
+The demo policy selected on 20 September is age 18+, Turkish nationality and a
+Turkish-issued synthetic document: inclusion lists `["TUR"]` for both attributes.
+This uses Outer7. Nationality and document-issuing country are different document
+fields; neither is residence, location, bank jurisdiction, or a complete
+regulatory eligibility policy. [Mobile circuit selection][mobile-matcher],
+[document-field constants][constants]
+
+The pinned age circuit also calls `check_expiry` before the age comparison. Its
+expiry library checks that the proof's current date precedes the parsed MRZ
+expiry date, using its documented short-year interpretation. Thus no extra
+expiry predicate is required to prove the document was unexpired at the proof
+date. This does not disclose the expiry date or prove validity at every later
+settlement time; the gate separately limits proof age.
+[Age circuit](https://github.com/zkpassport/circuits/blob/d3a75acb8529e82c61be136a402553daec259257/src/noir/bin/compare/age/evm/src/main.nr),
+[expiry check](https://github.com/zkpassport/circuits/blob/d3a75acb8529e82c61be136a402553daec259257/src/noir/lib/data-check/expiry/src/lib.nr)
 
 ## Source and version pins
 
