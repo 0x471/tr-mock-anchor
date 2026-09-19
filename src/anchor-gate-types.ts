@@ -1,4 +1,6 @@
 export interface GateTerms {
+  direction: "deposit" | "withdrawal";
+  bank_destination_hash: string;
   recipient: string;
   quote_hash: string;
   try_minor: string;
@@ -8,6 +10,7 @@ export interface GateTerms {
 }
 
 export interface GateReceipt {
+  bank_destination_hash: string;
   event_id: string;
   quote_hash: string;
   try_minor: string;
@@ -35,13 +38,22 @@ export interface GateOrder extends GateTerms {
   id: string;
   created_at: number;
   confirmed_ledger: number;
-  stage: "created" | "eligible" | "funded" | "settled";
+  stage:
+    | "created"
+    | "eligible"
+    | "funded"
+    | "payout_authorized"
+    | "paid"
+    | "settled";
+  escrowed: boolean;
+  payout_authorized_at: number | null;
   challenge: string;
   eligibility_expires_at: number | null;
   receipt_id: string | null;
 }
 
-export type GateActionKind = "create" | "prove" | "receipt" | "settle";
+export type GateActionKind =
+  "create" | "prove" | "authorize" | "receipt" | "settle";
 export interface PreparedGateAction {
   transaction: string;
   hash: string;
@@ -64,6 +76,7 @@ export interface GateGateway {
     publicInputs: Buffer
   ): Promise<PreparedGateAction>;
   prepareReceipt(id: string, receipt: GateReceipt): Promise<PreparedGateAction>;
+  prepareAuthorization(id: string): Promise<PreparedGateAction>;
   prepareSettlement(id: string): Promise<PreparedGateAction>;
   submit(transaction: string): Promise<GateTransaction>;
   transaction(

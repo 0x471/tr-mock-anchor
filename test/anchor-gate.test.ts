@@ -112,6 +112,8 @@ class FakeGate implements GateGateway {
       created_at: Math.floor(Date.now() / 1000),
       confirmed_ledger: 123,
       stage: "created",
+      escrowed: terms.direction === "deposit",
+      payout_authorized_at: null,
       challenge: "a".repeat(64),
       eligibility_expires_at: null,
       receipt_id: null,
@@ -150,6 +152,7 @@ class FakeGate implements GateGateway {
       this.orders.set(id, {
         ...state,
         stage: "eligible",
+        escrowed: true,
         eligibility_expires_at: Math.floor(Date.now() / 1000) + 300,
       });
     });
@@ -167,7 +170,8 @@ class FakeGate implements GateGateway {
     this.prepared.set(hash, () =>
       this.orders.set(id, {
         ...this.orders.get(id)!,
-        stage: "funded",
+        stage:
+          this.orders.get(id)!.direction === "withdrawal" ? "paid" : "funded",
         receipt_id: receipt.event_id,
       })
     );
@@ -181,8 +185,27 @@ class FakeGate implements GateGateway {
     const hash = createHash("sha256").update(`settle:${id}`).digest("hex");
     this.prepared.set(hash, () => {
       if (this.orders.get(id)!.stage !== "settled") this.payouts++;
-      this.orders.set(id, { ...this.orders.get(id)!, stage: "settled" });
+      this.orders.set(id, {
+        ...this.orders.get(id)!,
+        stage: "settled",
+        escrowed: false,
+      });
     });
+    return {
+      transaction: hash,
+      hash,
+      expires_at: Math.floor(Date.now() / 1000) + 60,
+    };
+  }
+  async prepareAuthorization(id: string): Promise<PreparedGateAction> {
+    const hash = createHash("sha256").update(`authorize:${id}`).digest("hex");
+    this.prepared.set(hash, () =>
+      this.orders.set(id, {
+        ...this.orders.get(id)!,
+        stage: "payout_authorized",
+        payout_authorized_at: Math.floor(Date.now() / 1000),
+      })
+    );
     return {
       transaction: hash,
       hash,
@@ -207,7 +230,10 @@ class FakeGate implements GateGateway {
   });
 }
 
-async function checkout(gate = new FakeGate()) {
+async function checkout(
+  gate = new FakeGate(),
+  direction: "deposit" | "withdrawal" = "deposit"
+) {
   const fixtureValue = fixture(gate);
   const { app, authenticate, deps } = fixtureValue;
   const user = await authenticate();
@@ -216,9 +242,15 @@ async function checkout(gate = new FakeGate()) {
       method: "POST",
       headers: user.headers,
       body: JSON.stringify({
-        sell_asset: "iso4217:TRY",
-        buy_asset: `stellar:USDC:${deps.cfg.usdcIssuer}`,
-        sell_amount: "200.00",
+        sell_asset:
+          direction === "deposit"
+            ? "iso4217:TRY"
+            : `stellar:USDC:${deps.cfg.usdcIssuer}`,
+        buy_asset:
+          direction === "deposit"
+            ? `stellar:USDC:${deps.cfg.usdcIssuer}`
+            : "iso4217:TRY",
+        sell_amount: direction === "deposit" ? "200.00" : "5.0000000",
       }),
     })
   ).json()) as { id: string };
@@ -226,14 +258,22 @@ async function checkout(gate = new FakeGate()) {
     await app.request("/anchor-gate/orders", {
       method: "POST",
       headers: { ...user.headers, "Idempotency-Key": "checkout" },
-      body: JSON.stringify({ quote_id: quote.id }),
+      body: JSON.stringify({
+        quote_id: quote.id,
+        direction,
+        ...(direction === "withdrawal"
+          ? { bank_destination: "demo:my-account" }
+          : {}),
+      }),
     })
   ).json()) as { id: string };
   return { ...fixtureValue, user, order, gate };
 }
 
-async function eligibleCheckout() {
-  const current = await checkout();
+async function eligibleCheckout(
+  direction: "deposit" | "withdrawal" = "deposit"
+) {
+  const current = await checkout(new FakeGate(), direction);
   const { app, user, order } = current;
   const path = `/anchor-gate/orders/${order.id}`;
   const prepared = (await (
@@ -266,7 +306,143 @@ async function eligibleCheckout() {
   return current;
 }
 
-describe("gated onramp HTTP interface", () => {
+describe("gated anchor HTTP interface", () => {
+  it("waits for the local bank clock before freezing a future-ledger payout receipt", async () => {
+    const { app, user, order, gate } = await eligibleCheckout("withdrawal");
+    const path = `/anchor-gate/orders/${order.id}`;
+    const post = (action: string) =>
+      app.request(`${path}/${action}`, {
+        method: "POST",
+        headers: user.headers,
+        body: "{}",
+      });
+    expect((await post("authorize-payout")).status).toBe(200);
+    gate.orders.get(order.id)!.payout_authorized_at =
+      Math.floor(Date.now() / 1000) + 10;
+    const early = await post("simulate-bank");
+    expect(early.status).toBe(409);
+    expect(await early.json()).toMatchObject({
+      error: { code: "bank_clock_pending" },
+    });
+    expect(
+      await (await app.request(path, { headers: user.headers })).json()
+    ).toMatchObject({ mock_bank_credit: null, stage: "payout_authorized" });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 11000);
+    expect(await (await post("simulate-bank")).json()).toMatchObject({
+      stage: "paid",
+      mock_bank_credit: { amount_try: "199.00" },
+    });
+  });
+  it("completes an authorized withdrawal after proof, policy and order expiry without crediting twice", async () => {
+    const { app, user, order, gate } = await eligibleCheckout("withdrawal");
+    const path = `/anchor-gate/orders/${order.id}`;
+    const post = (action: string) =>
+      app.request(`${path}/${action}`, {
+        method: "POST",
+        headers: user.headers,
+        body: "{}",
+      });
+    expect((await post("authorize-payout")).status).toBe(200);
+    expect(
+      (await app.request(`${path}/proof-request`, { headers: user.headers }))
+        .status
+    ).toBe(409);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 4000000);
+    const submit = gate.submit;
+    gate.submit = async () => {
+      throw new Error("receipt response lost");
+    };
+    const delayed = await post("simulate-bank");
+    expect(delayed.status).toBe(200);
+    const pending = (await delayed.json()) as { mock_bank_credit: unknown };
+    expect(pending).toMatchObject({
+      stage: "payout_authorized",
+      completed: false,
+      mock_bank_credit: {
+        destination: "demo:my-account",
+        amount_try: "199.00",
+      },
+    });
+    gate.submit = submit;
+    const paid = (await (await post("simulate-bank")).json()) as {
+      mock_bank_credit: unknown;
+    };
+    expect(paid.mock_bank_credit).toEqual(pending.mock_bank_credit);
+    expect(paid).toMatchObject({ stage: "paid", expired: true });
+    expect(await (await post("settle")).json()).toMatchObject({
+      completed: true,
+      expired: true,
+    });
+    expect(gate.payouts).toBe(1);
+  });
+  it("rejects real-bank destination text and locks the synthetic beneficiary under the creation key", async () => {
+    const { app, user, order } = await checkout(new FakeGate(), "withdrawal");
+    const existing = (await (
+      await app.request(`/anchor-gate/orders/${order.id}`, {
+        headers: user.headers,
+      })
+    ).json()) as { quote_id: string };
+    const request = (bank_destination: string) =>
+      app.request("/anchor-gate/orders", {
+        method: "POST",
+        headers: { ...user.headers, "Idempotency-Key": "checkout" },
+        body: JSON.stringify({
+          quote_id: existing.quote_id,
+          direction: "withdrawal",
+          bank_destination,
+        }),
+      });
+    expect((await request("TR120006200001234567890123")).status).toBe(400);
+    expect((await request("demo:other-account")).status).toBe(409);
+    expect(await (await request("demo:my-account")).json()).toMatchObject({
+      id: order.id,
+      bank_destination: "demo:my-account",
+    });
+  });
+  it("escrows a withdrawal before authorizing and recording exactly one simulated bank credit", async () => {
+    const { app, user, order, gate } = await eligibleCheckout("withdrawal");
+    const path = `/anchor-gate/orders/${order.id}`;
+    const post = (action: string) =>
+      app.request(`${path}/${action}`, {
+        method: "POST",
+        headers: user.headers,
+        body: "{}",
+      });
+    expect(
+      await (await app.request(path, { headers: user.headers })).json()
+    ).toMatchObject({
+      direction: "withdrawal",
+      stage: "eligible",
+      escrowed: true,
+      bank_destination: "demo:my-account",
+      amount_token: "5.0000000",
+      amount_try: "199.00",
+    });
+    expect((await post("simulate-bank")).status).toBe(409);
+    const authorized = await post("authorize-payout");
+    expect(authorized.status).toBe(200);
+    expect(await authorized.json()).toMatchObject({
+      stage: "payout_authorized",
+    });
+    expect(await (await post("simulate-bank")).json()).toMatchObject({
+      stage: "paid",
+      mock_bank_credit: {
+        amount_try: "199.00",
+        destination: "demo:my-account",
+      },
+      completed: false,
+    });
+    expect(await (await post("simulate-bank")).json()).toMatchObject({
+      stage: "paid",
+    });
+    expect(await (await post("settle")).json()).toMatchObject({
+      completed: true,
+      stage: "settled",
+    });
+    expect(gate.payouts).toBe(1);
+  });
   it("does not route an existing order into a replacement vault", async () => {
     const { app, user, order, gate } = await checkout();
     const original = await gate.configuration();

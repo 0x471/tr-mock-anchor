@@ -36,6 +36,7 @@ interface OrderRow {
   amount_token: string;
   chain_json: string | null;
   receipt_json: string | null;
+  bank_destination: string | null;
 }
 
 interface ActionRow {
@@ -81,7 +82,7 @@ function configurationIdentity(config: GateConfiguration): string {
   ]);
 }
 
-export function createGatedOnramp(deps: Deps, gate: GateGateway) {
+export function createGatedAnchor(deps: Deps, gate: GateGateway) {
   const { db, cfg } = deps;
   const now = () => Math.floor(Date.now() / 1000);
   function owned(id: string, subject: string): OrderRow {
@@ -109,6 +110,14 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
       const terms = JSON.parse(row.terms_json) as GateTerms;
       if (
         state.id !== row.id ||
+        (terms.direction === "withdrawal" &&
+          hash(
+            JSON.stringify([
+              "anchor-mock-beneficiary-v1",
+              row.subject,
+              row.bank_destination,
+            ])
+          ) !== terms.bank_destination_hash) ||
         Object.entries(terms).some(
           ([key, value]) => state[key as keyof GateTerms] !== value
         )
@@ -128,7 +137,7 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
   async function reconcile(row: OrderRow) {
     const pending = db
       .prepare(
-        "SELECT * FROM anchor_gate_actions WHERE order_id = ? AND status IN ('prepared','pending')"
+        "SELECT * FROM anchor_gate_actions_v2 WHERE order_id = ? AND status IN ('prepared','pending')"
       )
       .all(row.id) as unknown as ActionRow[];
     for (const action of pending) {
@@ -141,7 +150,7 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
           throw unavailable();
         });
       db.prepare(
-        "UPDATE anchor_gate_actions SET status = ?, ledger = ? WHERE id = ?"
+        "UPDATE anchor_gate_actions_v2 SET status = ?, ledger = ? WHERE id = ?"
       ).run(result.status, result.ledger, action.id);
     }
     return chainOrder(row);
@@ -151,7 +160,7 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
     const config = JSON.parse(row.config_json) as GateConfiguration;
     const actions = db
       .prepare(
-        "SELECT id, kind, transaction_hash, status, ledger, expires_at FROM anchor_gate_actions WHERE order_id = ? ORDER BY rowid"
+        "SELECT id, kind, transaction_hash, status, ledger, expires_at FROM anchor_gate_actions_v2 WHERE order_id = ? ORDER BY rowid"
       )
       .all(row.id);
     const stage = state?.stage ?? "registering";
@@ -162,11 +171,25 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
       !expired;
     return {
       id: row.id,
+      direction: terms.direction,
+      bank_destination_hash: terms.bank_destination_hash,
+      bank_destination: row.bank_destination,
+      escrowed: state?.escrowed ?? false,
+      payout_authorized_at: state?.payout_authorized_at ?? null,
+      mock_bank_credit:
+        db
+          .prepare(
+            "SELECT destination, amount_try, credited_at FROM anchor_gate_bank_credits WHERE order_id = ?"
+          )
+          .get(row.id) ?? null,
       quote_id: row.quote_id,
       recipient: terms.recipient,
       amount_try: row.amount_try,
       amount_token: row.amount_token,
-      source_asset: "iso4217:TRY",
+      source_asset:
+        terms.direction === "deposit"
+          ? "iso4217:TRY"
+          : `stellar:${cfg.usdcCode}:${cfg.usdcIssuer}`,
       token: config.token,
       contract: config.contract,
       stage,
@@ -178,7 +201,7 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
       eligibility_expires_at: state?.eligibility_expires_at ?? null,
       receipt_id: state?.receipt_id ?? null,
       bank_instructions:
-        stage === "eligible" && eligible
+        terms.direction === "deposit" && stage === "eligible" && eligible
           ? { simulated: true, amount_try: row.amount_try, reference: row.id }
           : null,
       completed: stage === "settled",
@@ -193,7 +216,7 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
     const id = randomBytes(16).toString("hex");
     const envelope = kind === "prove" ? null : prepared.transaction;
     db.prepare(
-      "INSERT INTO anchor_gate_actions(id, order_id, kind, transaction_hash, operator_envelope, expires_at, status, created_at) VALUES (?,?,?,?,?,?,?,?)"
+      "INSERT INTO anchor_gate_actions_v2(id, order_id, kind, transaction_hash, operator_envelope, expires_at, status, created_at) VALUES (?,?,?,?,?,?,?,?)"
     ).run(
       id,
       row.id,
@@ -223,7 +246,7 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
   ) {
     let action = db
       .prepare(
-        "SELECT * FROM anchor_gate_actions WHERE order_id = ? AND kind = ? AND status IN ('prepared','pending') ORDER BY rowid DESC LIMIT 1"
+        "SELECT * FROM anchor_gate_actions_v2 WHERE order_id = ? AND kind = ? AND status IN ('prepared','pending') ORDER BY rowid DESC LIMIT 1"
       )
       .get(row.id, kind) as unknown as ActionRow | undefined;
     if (!action)
@@ -233,7 +256,7 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
       .submit(action.operator_envelope)
       .catch(() => ({ status: "pending" as const, ledger: null }));
     db.prepare(
-      "UPDATE anchor_gate_actions SET status = ?, ledger = ? WHERE id = ?"
+      "UPDATE anchor_gate_actions_v2 SET status = ?, ledger = ? WHERE id = ?"
     ).run(result.status, result.ledger, action.id);
     return chainOrder(row);
   }
@@ -255,6 +278,15 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
         409,
         "order_expired",
         "The original order deadline has passed; its reservation remains held."
+      );
+  }
+  function canProve(state: GateOrder | null): asserts state is GateOrder {
+    live(state);
+    if (state.direction === "withdrawal" && state.payout_authorized_at !== null)
+      throw new ApiError(
+        409,
+        "payout_already_authorized",
+        "This withdrawal is irrevocably authorized for its fixed bank destination; reconcile payout instead of replacing its proof."
       );
   }
   function proofTransaction(
@@ -322,9 +354,34 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
       subject: string,
       customerId: string,
       quoteId: string,
-      key: string
+      key: string,
+      direction: "deposit" | "withdrawal" = "deposit",
+      bankDestination?: string
     ) {
-      const requestHash = hash(JSON.stringify(["gate-create-v1", quoteId]));
+      if (
+        direction === "withdrawal"
+          ? !bankDestination ||
+            !/^demo:[A-Za-z0-9_-]{1,64}$/.test(bankDestination)
+          : bankDestination !== undefined
+      )
+        throw new ApiError(
+          400,
+          "invalid_bank_destination",
+          "Withdrawals require a synthetic demo:<reference> destination; deposits must not supply one."
+        );
+      const destinationHash =
+        direction === "withdrawal"
+          ? hash(
+              JSON.stringify([
+                "anchor-mock-beneficiary-v1",
+                subject,
+                bankDestination,
+              ])
+            )
+          : "0".repeat(64);
+      const requestHash = hash(
+        JSON.stringify(["gate-create-v2", quoteId, direction, destinationHash])
+      );
       let row = db
         .prepare(
           "SELECT * FROM anchor_gate_orders WHERE subject = ? AND idempotency_key = ?"
@@ -386,8 +443,14 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
             .get(quote.id);
           if (
             !assets ||
-            assets.sell_asset !== "iso4217:TRY" ||
-            assets.buy_asset !== `stellar:${cfg.usdcCode}:${cfg.usdcIssuer}`
+            assets.sell_asset !==
+              (direction === "deposit"
+                ? "iso4217:TRY"
+                : `stellar:${cfg.usdcCode}:${cfg.usdcIssuer}`) ||
+            assets.buy_asset !==
+              (direction === "deposit"
+                ? `stellar:${cfg.usdcCode}:${cfg.usdcIssuer}`
+                : "iso4217:TRY")
           )
             throw new ApiError(
               422,
@@ -410,17 +473,27 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
               "A fresh quote is required."
             );
           if (
-            quote.side !== "buy" ||
-            quote.source_currency !== "TRY" ||
-            quote.destination_currency !== cfg.usdcCode
+            quote.side !== (direction === "deposit" ? "buy" : "sell") ||
+            quote.source_currency !==
+              (direction === "deposit" ? "TRY" : cfg.usdcCode) ||
+            quote.destination_currency !==
+              (direction === "deposit" ? cfg.usdcCode : "TRY")
           )
             throw new ApiError(
               422,
               "quote_pair",
-              "The gate only supports the exact TRY-to-token quote."
+              "The quote must match the exact direction and configured token."
             );
-          const tryMinor = parseTry(quote.source_amount);
-          const amount = parseUsdc(quote.destination_amount);
+          const tryMinor = parseTry(
+            direction === "deposit"
+              ? quote.source_amount
+              : quote.destination_amount
+          );
+          const amount = parseUsdc(
+            direction === "deposit"
+              ? quote.destination_amount
+              : quote.source_amount
+          );
           if (
             tryMinor <= 0n ||
             amount <= 0n ||
@@ -435,7 +508,9 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
           const id = randomBytes(32).toString("hex");
           const quoteHash = hash(
             JSON.stringify([
-              "anchor-quote-v1",
+              "anchor-quote-v2",
+              direction,
+              destinationHash,
               Networks.TESTNET,
               contract.contract,
               contract.token,
@@ -455,6 +530,8 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
             ])
           );
           const terms: GateTerms = {
+            direction,
+            bank_destination_hash: destinationHash,
             recipient: subject,
             quote_hash: quoteHash,
             try_minor: tryMinor.toString(),
@@ -474,7 +551,7 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
               "Quote already reserved."
             );
           db.prepare(
-            "INSERT INTO anchor_gate_orders(id, customer_id, subject, quote_id, idempotency_key, request_hash, terms_json, config_json, amount_try, amount_token, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+            "INSERT INTO anchor_gate_orders(id, customer_id, subject, quote_id, idempotency_key, request_hash, terms_json, config_json, amount_try, amount_token, bank_destination, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
           ).run(
             id,
             customerId,
@@ -486,6 +563,7 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
             JSON.stringify(contract),
             fmtTry(tryMinor),
             fmtUsdc(amount),
+            bankDestination ?? null,
             nowIso(),
             nowIso()
           );
@@ -506,7 +584,7 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
     async proofRequest(id: string, subject: string) {
       const row = owned(id, subject);
       const state = await reconcile(row);
-      live(state);
+      canProve(state);
       const config = JSON.parse(row.config_json) as GateConfiguration;
       return {
         domain: config.domain,
@@ -529,7 +607,7 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
       publicInputs: Buffer
     ) {
       const row = owned(id, subject);
-      live(await reconcile(row));
+      canProve(await reconcile(row));
       const config = JSON.parse(row.config_json) as GateConfiguration;
       if (
         proof.length !== config.proof_bytes ||
@@ -543,7 +621,7 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
       if (
         db
           .prepare(
-            "SELECT id FROM anchor_gate_actions WHERE order_id = ? AND kind = 'prove' AND status IN ('prepared','pending')"
+            "SELECT id FROM anchor_gate_actions_v2 WHERE order_id = ? AND kind = 'prove' AND status IN ('prepared','pending')"
           )
           .get(id)
       )
@@ -578,7 +656,7 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
       const row = owned(id, subject);
       let action = db
         .prepare(
-          "SELECT * FROM anchor_gate_actions WHERE id = ? AND order_id = ? AND kind = 'prove'"
+          "SELECT * FROM anchor_gate_actions_v2 WHERE id = ? AND order_id = ? AND kind = 'prove'"
         )
         .get(actionId, id) as unknown as ActionRow | undefined;
       if (!action)
@@ -589,11 +667,11 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
         );
       const state = await reconcile(row);
       action = db
-        .prepare("SELECT * FROM anchor_gate_actions WHERE id = ?")
+        .prepare("SELECT * FROM anchor_gate_actions_v2 WHERE id = ?")
         .get(action.id) as unknown as ActionRow;
       if (state?.stage === "settled" || action.status === "success")
         return view(row, state);
-      live(state);
+      canProve(state);
       proofTransaction(
         row,
         envelope,
@@ -605,7 +683,7 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
         .submit(envelope)
         .catch(() => ({ status: "pending" as const, ledger: null }));
       db.prepare(
-        "UPDATE anchor_gate_actions SET status = ?, ledger = ? WHERE id = ?"
+        "UPDATE anchor_gate_actions_v2 SET status = ?, ledger = ? WHERE id = ?"
       ).run(result.status, result.ledger, action.id);
       return view(row, await chainOrder(row));
     },
@@ -615,31 +693,69 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
       if (state?.receipt_id || state?.stage === "settled")
         return view(row, state);
       if (!row.receipt_json) {
-        live(state);
-        if (
-          !state.eligibility_expires_at ||
-          state.eligibility_expires_at <= now()
-        )
+        if (!state)
           throw new ApiError(
             409,
-            "eligibility_required",
-            "The contract must confirm current eligibility before a mock deposit."
+            "order_pending",
+            "Wait for confirmed order creation."
+          );
+        if (state.direction === "deposit") {
+          live(state);
+          if (
+            !state.eligibility_expires_at ||
+            state.eligibility_expires_at <= now()
+          )
+            throw new ApiError(
+              409,
+              "eligibility_required",
+              "The contract must confirm current eligibility before a mock deposit."
+            );
+        } else if (state.payout_authorized_at === null || !state.escrowed)
+          throw new ApiError(
+            409,
+            "payout_authorization_required",
+            "The contract must authorize this exact escrowed withdrawal before simulated bank credit."
+          );
+        const earliestReceipt =
+          state.direction === "withdrawal"
+            ? state.payout_authorized_at!
+            : state.created_at;
+        if (now() < earliestReceipt)
+          throw new ApiError(
+            409,
+            "bank_clock_pending",
+            "The confirmed ledger is ahead of the mock bank clock. Retry shortly; no credit or receipt has been recorded."
           );
         const receipt: GateReceipt = {
           event_id: hash(
             JSON.stringify([
-              "anchor-mock-bank-v1",
+              "anchor-mock-bank-v2",
               (JSON.parse(row.config_json) as GateConfiguration).contract,
               id,
             ])
           ),
           quote_hash: state.quote_hash,
+          bank_destination_hash: state.bank_destination_hash,
           try_minor: state.try_minor,
           received_at: now(),
         };
-        db.prepare(
-          "UPDATE anchor_gate_orders SET receipt_json = ?, updated_at = ? WHERE id = ? AND receipt_json IS NULL"
-        ).run(JSON.stringify(receipt), nowIso(), id);
+        const confirmed = state;
+        tx(db, () => {
+          if (confirmed.direction === "withdrawal")
+            db.prepare(
+              "INSERT INTO anchor_gate_bank_credits(order_id, event_id, destination, destination_hash, amount_try, credited_at) VALUES (?,?,?,?,?,?) ON CONFLICT(order_id) DO NOTHING"
+            ).run(
+              id,
+              receipt.event_id,
+              row.bank_destination!,
+              confirmed.bank_destination_hash,
+              row.amount_try,
+              nowIso()
+            );
+          db.prepare(
+            "UPDATE anchor_gate_orders SET receipt_json = ?, updated_at = ? WHERE id = ? AND receipt_json IS NULL"
+          ).run(JSON.stringify(receipt), nowIso(), id);
+        });
         row.receipt_json = owned(id, subject).receipt_json;
       }
       const receipt = JSON.parse(row.receipt_json!) as GateReceipt;
@@ -648,11 +764,50 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
       );
       return view(row, state);
     },
+    async authorizePayout(id: string, subject: string) {
+      const row = owned(id, subject);
+      let state = await reconcile(row);
+      if (!state || state.direction !== "withdrawal")
+        throw new ApiError(
+          409,
+          "withdrawal_required",
+          "Payout authorization applies only to an onchain withdrawal."
+        );
+      if (state.payout_authorized_at !== null || state.stage === "settled")
+        return view(row, state);
+      live(state);
+      if (
+        !state.escrowed ||
+        !state.eligibility_expires_at ||
+        state.eligibility_expires_at <= now()
+      )
+        throw new ApiError(
+          409,
+          "eligibility_required",
+          "The withdrawal must have current eligibility and exact escrow before payout authorization."
+        );
+      state = await operatorAction(row, "authorize", () =>
+        gate.prepareAuthorization(id)
+      );
+      return view(row, state);
+    },
     async settle(id: string, subject: string) {
       const row = owned(id, subject);
       let state = await reconcile(row);
       if (state?.stage === "settled") return view(row, state);
-      live(state);
+      if (!state)
+        throw new ApiError(
+          409,
+          "order_pending",
+          "Wait for confirmed order creation."
+        );
+      if (state.direction === "deposit") live(state);
+      else if (state.payout_authorized_at === null || !state.escrowed)
+        throw new ApiError(
+          409,
+          "payout_authorization_required",
+          "An authorized escrowed withdrawal is required."
+        );
       if (!state.receipt_id)
         throw new ApiError(
           409,
@@ -660,8 +815,8 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
           "The contract must confirm the exact mock-bank receipt before settlement."
         );
       if (
-        !state.eligibility_expires_at ||
-        state.eligibility_expires_at <= now()
+        state.direction === "deposit" &&
+        (!state.eligibility_expires_at || state.eligibility_expires_at <= now())
       )
         throw new ApiError(
           409,

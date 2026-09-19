@@ -246,6 +246,26 @@ export function createAnchorGateGateway(
     const terms = record(value.terms);
     const eligibility = optional(value.eligibility);
     const receipt = optional(value.receipt);
+    if (
+      !Array.isArray(terms.direction) ||
+      terms.direction.length !== 1 ||
+      !["Deposit", "Withdrawal"].includes(String(terms.direction[0]))
+    )
+      throw new Error("Unexpected order direction");
+    const direction =
+      terms.direction[0] === "Deposit" ? "deposit" : "withdrawal";
+    const bankDestinationHash = hex(terms.bank_destination_hash);
+    if (
+      !Array.isArray(value.payout) ||
+      !(
+        (value.payout.length === 1 && value.payout[0] === "None") ||
+        (value.payout.length === 2 && value.payout[0] === "Authorized")
+      ) ||
+      typeof value.escrowed !== "boolean"
+    )
+      throw new Error("Unexpected payout state");
+    const payoutTime =
+      value.payout[0] === "Authorized" ? integer(value.payout[1]) : null;
     if (typeof value.settled !== "boolean")
       throw new Error("Unexpected settlement state");
     const quoteHash = hex(terms.quote_hash);
@@ -253,11 +273,16 @@ export function createAnchorGateGateway(
     if (
       receipt &&
       (hex(receipt.quote_hash) !== quoteHash ||
-        decimal(receipt.try_minor) !== tryMinor)
+        decimal(receipt.try_minor) !== tryMinor ||
+        hex(receipt.bank_destination_hash) !== bankDestinationHash)
     )
       throw new Error("Receipt terms differ from order");
     return {
       id,
+      direction,
+      bank_destination_hash: bankDestinationHash,
+      escrowed: value.escrowed,
+      payout_authorized_at: payoutTime,
       recipient: text(terms.recipient),
       quote_hash: quoteHash,
       try_minor: tryMinor,
@@ -269,10 +294,14 @@ export function createAnchorGateGateway(
       stage: value.settled
         ? "settled"
         : receipt
-          ? "funded"
-          : eligibility
-            ? "eligible"
-            : "created",
+          ? direction === "withdrawal"
+            ? "paid"
+            : "funded"
+          : payoutTime !== null
+            ? "payout_authorized"
+            : eligibility
+              ? "eligible"
+              : "created",
       challenge: hex((await read("get_challenge", [bytes(id)])).value),
       eligibility_expires_at: eligibility
         ? integer(eligibility.valid_until)
@@ -361,6 +390,12 @@ export function createAnchorGateGateway(
         [
           bytes(id),
           struct({
+            direction: nativeToScVal([
+              xdr.ScVal.scvSymbol(
+                terms.direction === "deposit" ? "Deposit" : "Withdrawal"
+              ),
+            ]),
+            bank_destination_hash: bytes(terms.bank_destination_hash),
             recipient: Address.fromString(terms.recipient).toScVal(),
             quote_hash: bytes(terms.quote_hash),
             try_minor: unsigned(terms.try_minor),
@@ -417,6 +452,7 @@ export function createAnchorGateGateway(
         [
           bytes(id),
           struct({
+            bank_destination_hash: bytes(receipt.bank_destination_hash),
             event_id: bytes(receipt.event_id),
             quote_hash: bytes(receipt.quote_hash),
             try_minor: unsigned(receipt.try_minor),
@@ -434,6 +470,15 @@ export function createAnchorGateGateway(
         [bytes(id)],
         config.provider,
         Keypair.fromSecret(cfg.anchorGateProviderSecret)
+      );
+    },
+    async prepareAuthorization(id) {
+      const config = await configuration();
+      return prepare(
+        "authorize_payout",
+        [bytes(id)],
+        config.bank_notary,
+        Keypair.fromSecret(cfg.anchorGateBankNotarySecret)
       );
     },
     async submit(envelope) {
