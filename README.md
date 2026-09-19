@@ -10,15 +10,15 @@ This is a Testnet-only development project. It is not an audited verifier, a pro
 - A committed [Testnet verification transaction](https://stellar.expert/explorer/testnet/tx/1565ddf72714fc9dcc37e97030bbc5ac850244a1580266090b978222f9967494) returned `true` at ledger 4766089.
 - Authenticated proof diagnostics execute the deployed contract through read-only RPC simulation.
 - Default `ANCHOR_MODE=zkpassport` holds new orders, bank simulation, queued settlement and gateway payments. SEP-12 does not approve identity.
-- An opt-in SDK diagnostic requests a fresh synthetic phone proof for compatibility testing.
+- A fresh browser-origin synthetic phone request completed and its supported proof returned `math_valid` in native Testnet simulation at ledger 4766664.
 
-The positive fixture is an official historical synthetic-document proof from July 2026. It is not proof of the current user's identity, age or payment eligibility. Current phone-app compatibility still requires a fresh proof.
+The committed transaction above uses an official historical synthetic-document fixture from July 2026. The fresh phone result is separate: it used read-only RPC simulation, not a newly committed verification transaction. Neither result proves real identity or payment eligibility, and one successful phone run does not establish compatibility with every app build.
 
 ## Trust boundary
 
-The deployed verifier checks mathematics. The backend diagnostic records the RPC result, not a committed verification receipt. It stores proof/public-input hashes and the authenticated SEP-10 subject, not raw proof bytes.
+The deployed verifier checks mathematics. The `/zkpassport/proofs` API records the RPC result, not a committed verification receipt. It stores proof/public-input hashes and the authenticated SEP-10 subject, not raw proof bytes. The separate loopback browser helper is a compatibility test, not this SEP-10 submission path or an identity decision.
 
-`math_valid` is deliberately separate from authorization:
+`math_valid` is deliberately separate from authorization. The proof API path is:
 
 ```text
 Phone proof -> SEP-10 authenticated submission -> native Soroban simulation
@@ -78,17 +78,19 @@ This diagnostic API is not a production public ingress: rate limiting, retention
 
 ## Fresh phone compatibility test
 
-Use the installed ZKPassport app's developer mode and synthetic documents only:
+Use the installed ZKPassport app's developer mode and synthetic documents only. Start the browser-origin helper:
 
 ```sh
-npx --no-install tsx scripts/request-zkpassport.ts --help
-npx --no-install tsx scripts/request-zkpassport.ts \
-  --domain localhost --dev-mode --timeout-seconds 600
+npm run zkpassport:browser -- --dev-mode
 ```
 
-The command prints a request URL. Open it on the phone within ten minutes. It requests age >=18 and a nonce-bound diagnostic digest using `compressed-evm` and a non-salted identifier. The SDK cannot pin the phone's circuit version.
+Open the printed `http://localhost:8792` URL in the computer's browser, not `127.0.0.1` and not the phone's browser. Click **Create synthetic request**. Copy the generated request link to the phone, or use the browser's QR-sharing feature if available; the diagnostic page has no built-in QR renderer. Keep the browser tab and server running. The default session expires ten minutes after server startup, not ten minutes after clicking the button; restart the helper for a new session.
 
-By default only a compatibility summary is retained in terminal output. `--out /absolute/scratch/proof-export.json` explicitly saves the captured proof and public inputs to a new, owner-only file; never commit it. Use `--recipient G...` to include a public Stellar account in the diagnostic digest. This digest is not a payout order.
+Read the milestones and compatibility summary in the browser, not the terminal. The request asks for age >=18 and a nonce-bound diagnostic digest using `compressed-evm` and a non-salted identifier. The SDK cannot pin the phone's circuit version. Default mode does not save a proof export. Optional `--out /absolute/scratch/proof-export.json` explicitly writes sensitive proof/public inputs to a new owner-only file; never commit or share it. The diagnostic digest is not a payout order.
+
+Do not use direct Node-created SDK sessions for this phone flow. The production relay reported their origin as `nodejs`, which the reviewed mobile origin check rejected for `localhost`, even with developer mode enabled. A genuine browser-origin request fixed the observed pre-Verify failure; origin checks were not weakened or spoofed. See [phone diagnostics](docs/PHONE_DIAGNOSTICS.md) for the diagnosis and successful run.
+
+The fresh run received a 9888-byte proof and 320-byte public inputs. Its summary reported `profile: "supported"`, `math_status: "math_valid"`, and all four request checks true: scopes, commitments, recent timestamp, and non-salted test profile. It still reported `eligibility_status: "not_evaluated"` and `payout_authorized: false`.
 
 Only the exact supported version, key and encoding are sent to the deployed Testnet verifier for simulation. Unsupported output is reported honestly rather than converted into approval. SDK callbacks do not establish proof validity. Local scope/commitment checks are diagnostics, not an on-chain eligibility gate.
 
