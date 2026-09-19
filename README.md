@@ -16,6 +16,11 @@ synthetic ZKPassport developer-mode documents. Both country attributes are
 required; residence is not inferred. This profile uses OuterCount7, not the
 age-only diagnostic profile described below.
 
+The stock app's synthetic fixtures use ZKR nationality and issuer, not TUR.
+The first country request was rejected with a nonmatching document; no positive
+country proof has been accepted. See [the fixture compatibility findings](docs/SYNTHETIC_DOCUMENT_SETUP.md).
+A separate ZKR demo policy requires explicit approval; the TUR vault is unchanged.
+
 - Deposit: provider tokens are reserved in the vault; native proof acceptance
   and a separate simulated TRY receipt are required before token payout.
 - Withdrawal: the first accepted, wallet-authorized proof escrows exact tokens.
