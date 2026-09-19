@@ -1,19 +1,33 @@
 //! Fixed ZKPassport 0.20.0 BB5 UltraKeccak outer-verifier types.
 //!
-//! Layout follows the official OuterCount5.sol at d3a75acb8529e82c61be136a402553daec259257.
+//! Layout follows the official OuterCount5/6/7.sol at d3a75acb8529e82c61be136a402553daec259257.
 //! This is deliberately not a generic or cross-version UltraHonk decoder.
 
 use crate::field::Fr;
 use soroban_sdk::crypto::bn254::Bn254G1Affine;
 use soroban_sdk::Env;
 
-pub const PROOF_BYTES: usize = 9888;
+pub const PROOF_BYTES: usize = if cfg!(any(feature = "count6", feature = "count7")) {
+    10240
+} else {
+    9888
+};
 pub const VK_BYTES: usize = 1888;
-pub const EXTERNAL_PUBLIC_INPUTS: usize = 10;
-pub const TOTAL_PUBLIC_INPUTS: usize = 18;
+pub const EXTERNAL_PUBLIC_INPUTS: usize = if cfg!(feature = "count6") {
+    11
+} else if cfg!(feature = "count7") {
+    12
+} else {
+    10
+};
+pub const TOTAL_PUBLIC_INPUTS: usize = EXTERNAL_PUBLIC_INPUTS + 8;
 pub const PUBLIC_INPUTS_OFFSET: u64 = 5;
 
-pub const CONST_PROOF_SIZE_LOG_N: usize = 22;
+pub const CONST_PROOF_SIZE_LOG_N: usize = if cfg!(any(feature = "count6", feature = "count7")) {
+    23
+} else {
+    22
+};
 pub const NUMBER_OF_SUBRELATIONS: usize = 29;
 pub const BATCHED_RELATION_PARTIAL_LENGTH: usize = 8;
 pub const NUMBER_OF_ENTITIES: usize = 41;
@@ -124,7 +138,7 @@ impl G1Point {
 
 /// Verification key for UltraHonk circuits.
 ///
-/// Header: three canonical 32-byte words (log_n=22, total_inputs=18, offset=5),
+/// Header: three canonical words pinned by the selected build profile,
 /// then 28 raw G1 commitments in Wire order. Hash is Keccak(raw VK) mod Fr.
 #[derive(Clone, Debug)]
 pub struct VerificationKey {
@@ -169,13 +183,13 @@ pub struct VerificationKey {
 
 /// UltraHonk proof structure.
 ///
-/// Fixed-size layout (9,888 bytes = `PROOF_BYTES`):
+/// Fixed-size layout (`PROOF_BYTES`), with L = `CONST_PROOF_SIZE_LOG_N`:
 /// - 8 Fr limbs (two recursive pairing points, low136/high120 coordinates)
 /// - 8 G1 commitments (wire + lookup)
-/// - 22 * 8 Fr elements (sumcheck univariates)
+/// - L * 8 Fr elements (sumcheck univariates)
 /// - 41 Fr elements (sumcheck evaluations)
-/// - 21 G1 commitments (Gemini fold)
-/// - 22 Fr elements (Gemini fold evaluations)
+/// - (L - 1) G1 commitments (Gemini fold)
+/// - L Fr elements (Gemini fold evaluations)
 /// - 2 G1 commitments (Shplonk Q + KZG quotient)
 /// All ordinary G1 points are raw 64-byte x||y, not split limbs.
 #[derive(Clone, Debug)]

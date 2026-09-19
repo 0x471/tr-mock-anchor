@@ -2,6 +2,9 @@
 
 extern crate alloc;
 
+#[cfg(all(feature = "count6", feature = "count7"))]
+compile_error!("Select exactly one immutable outer proof profile per contract build.");
+
 pub mod debug;
 pub mod ec;
 pub mod field;
@@ -17,7 +20,23 @@ pub mod verifier;
 pub use verifier::{UltraHonkVerifier, VkLoadError};
 pub const PROOF_BYTES: usize = types::PROOF_BYTES;
 
-use soroban_sdk::{contract, contracterror, contractimpl, Bytes, Env};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Bytes, BytesN, Env};
+
+#[cfg(feature = "count6")]
+const PINNED_KEY: &[u8] = include_bytes!("../fixtures/vkey-0.20.0-outer-count-6.bin");
+#[cfg(feature = "count7")]
+const PINNED_KEY: &[u8] = include_bytes!("../fixtures/vkey-0.20.0-outer-count-7.bin");
+#[cfg(not(any(feature = "count6", feature = "count7")))]
+const PINNED_KEY: &[u8] = include_bytes!("../fixtures/vkey.bin");
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerificationProfile {
+    pub vk_hash: BytesN<32>,
+    pub external_inputs: u32,
+    pub proof_bytes: u32,
+    pub log_n: u32,
+}
 
 /// Mathematical proof verification only. This does not authorize an anchor payout.
 #[contract]
@@ -33,9 +52,21 @@ pub enum VerificationError {
 
 #[contractimpl]
 impl PassportVerifier {
-    /// Pinned official ZKPassport 0.20.0 OuterCount5 key; no caller-supplied key.
+    pub fn profile(env: Env) -> Result<VerificationProfile, VerificationError> {
+        let key = Bytes::from_slice(&env, PINNED_KEY);
+        let verifier =
+            UltraHonkVerifier::new(&env, &key).map_err(|_| VerificationError::InvalidKey)?;
+        Ok(VerificationProfile {
+            vk_hash: BytesN::from_array(&env, &verifier.get_vk().hash.to_bytes()),
+            external_inputs: types::EXTERNAL_PUBLIC_INPUTS as u32,
+            proof_bytes: types::PROOF_BYTES as u32,
+            log_n: types::CONST_PROOF_SIZE_LOG_N as u32,
+        })
+    }
+
+    /// One pinned official ZKPassport 0.20.0 key per build; no caller-supplied key.
     pub fn verify(env: Env, proof: Bytes, public_inputs: Bytes) -> Result<bool, VerificationError> {
-        let key = Bytes::from_slice(&env, include_bytes!("../fixtures/vkey.bin"));
+        let key = Bytes::from_slice(&env, PINNED_KEY);
         let verifier =
             UltraHonkVerifier::new(&env, &key).map_err(|_| VerificationError::InvalidKey)?;
         verifier

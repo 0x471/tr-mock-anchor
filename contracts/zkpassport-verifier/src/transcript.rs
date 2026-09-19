@@ -1,6 +1,6 @@
 //! Keccak Fiat-Shamir transcript for the pinned BB5 ZKPassport outer format.
 //!
-//! Source: official OuterCount5.sol, d3a75acb8529e82c61be136a402553daec259257.
+//! Source: official OuterCount5/6/7.sol, d3a75acb8529e82c61be136a402553daec259257.
 //! Each digest is reduced modulo Fr BEFORE splitting into two 127-bit challenges.
 //! Ordinary points use raw x||y. Only recursive pairing points use scalar limbs.
 
@@ -61,7 +61,7 @@ pub fn generate_transcript(
 ) -> Result<Transcript, &'static str> {
     validate_public_inputs(public_inputs)?;
 
-    // eta preamble: VK_HASH, 10 external inputs, 8 accumulator limbs, W1,W2,W3.
+    // eta preamble: VK_HASH, external inputs, 8 accumulator limbs, W1,W2,W3.
     let mut preamble = Bytes::from_array(env, &vk_hash.to_bytes());
     preamble.append(public_inputs);
     for limb in &proof.pairing_point_object {
@@ -114,7 +114,7 @@ pub fn generate_transcript(
         gate = &gate * &gate;
     }
 
-    // Exactly 22 unpadded sumcheck rounds.
+    // Exactly the selected profile's unpadded sumcheck rounds.
     let mut sumcheck_u_challenges = Fr::zero_array::<CONST_PROOF_SIZE_LOG_N>(env);
     for (round, value) in sumcheck_u_challenges.iter_mut().enumerate() {
         let mut data = with_previous(env, &previous);
@@ -164,7 +164,9 @@ pub fn generate_transcript(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(any(feature = "count6", feature = "count7")))]
     use crate::utils::{load_proof, load_vk_from_bytes};
+    #[cfg(not(any(feature = "count6", feature = "count7")))]
     use soroban_sdk::testutils::Ledger;
 
     fn scalar128(value: u128) -> [u8; 32] {
@@ -185,6 +187,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(any(feature = "count6", feature = "count7")))]
     fn published_fixture_transcript_matches_independent_rust_reference() {
         let env = Env::default();
         env.ledger().set_protocol_version(26);

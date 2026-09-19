@@ -1,4 +1,4 @@
-//! Strict decoder for the pinned ZKPassport 0.20.0 BB5 OuterCount5 format.
+//! Strict decoder for one build-pinned ZKPassport 0.20.0 BB5 outer format.
 //! Scalars are canonical Fr; ordinary G1 points are canonical raw x||y.
 //! Recursive accumulator coordinates use low136/high120 limbs.
 

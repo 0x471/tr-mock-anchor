@@ -4,8 +4,8 @@
 //! polynomial identity derived from all 29 BB5 subrelations. Uses barycentric
 //! evaluation with precomputed Lagrange denominators and batch inversion.
 //!
-//! Pinned target: official ZKPassport 0.20.0 `OuterCount5.sol`, non-ZK final
-//! outer proof, 22 unpadded rounds and eight evaluations per round. The inner
+//! Pinned target: official ZKPassport 0.20.0 non-ZK final outer proofs,
+//! with profile-selected unpadded rounds and eight evaluations per round. The inner
 //! document proofs are ZK; this module does not implement the Libra/ZK flavor.
 
 use core::array;
