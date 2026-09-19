@@ -256,12 +256,31 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
               "quote_consumed",
               "Quote already reserved."
             );
+          const assets = db
+            .prepare(
+              "SELECT sell_asset, buy_asset FROM quote_assets WHERE quote_id = ?"
+            )
+            .get(quote.id);
+          if (
+            !assets ||
+            assets.sell_asset !== "iso4217:TRY" ||
+            assets.buy_asset !== `stellar:${cfg.usdcCode}:${cfg.usdcIssuer}`
+          )
+            throw new ApiError(
+              422,
+              "quote_asset_mismatch",
+              "A new quote with the exact vault asset is required."
+            );
           const deadline = Math.min(
-            Math.floor(Date.parse(quote.expires_at) / 1000),
             now() + contract.max_order_lifetime,
             contract.policy_valid_until
           );
-          if (!Number.isSafeInteger(deadline) || deadline <= now())
+          if (
+            !Number.isSafeInteger(deadline) ||
+            deadline <= now() ||
+            !Number.isFinite(Date.parse(quote.expires_at)) ||
+            Date.parse(quote.expires_at) <= Date.now()
+          )
             throw new ApiError(
               409,
               "quote_expired",

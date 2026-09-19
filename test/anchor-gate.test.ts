@@ -121,6 +121,39 @@ class FakeGate implements GateGateway {
 }
 
 describe("gated onramp HTTP interface", () => {
+  it("does not reinterpret an existing quote when the configured issuer changes", async () => {
+    const gate = new FakeGate();
+    const { app, authenticate, deps } = fixture(gate);
+    const user = await authenticate();
+    const quote = (await (
+      await app.request("/sep38/quote", {
+        method: "POST",
+        headers: user.headers,
+        body: JSON.stringify({
+          sell_asset: "iso4217:TRY",
+          buy_asset: `stellar:USDC:${deps.cfg.usdcIssuer}`,
+          sell_amount: "200.00",
+        }),
+      })
+    ).json()) as { id: string };
+    deps.cfg.usdcIssuer = Keypair.random().publicKey();
+    const previous = await gate.configuration();
+    gate.configuration = async () => ({
+      ...previous,
+      token: new Asset("USDC", deps.cfg.usdcIssuer).contractId(
+        Networks.TESTNET
+      ),
+    });
+    const response = await app.request("/anchor-gate/orders", {
+      method: "POST",
+      headers: { ...user.headers, "Idempotency-Key": "issuer-change" },
+      body: JSON.stringify({ quote_id: quote.id }),
+    });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({
+      error: { code: "quote_asset_mismatch" },
+    });
+  });
   it("keeps the gate inactive until explicitly configured", async () => {
     const { app } = fixture();
     const info = await app.request("/anchor-gate/info");
@@ -160,13 +193,16 @@ describe("gated onramp HTTP interface", () => {
       });
     const response = await request();
     expect(response.status).toBe(201);
-    const created = (await response.json()) as { id: string };
+    const created = (await response.json()) as { id: string; deadline: number };
     expect(created).toMatchObject({
       recipient: user.wallet.publicKey(),
       amount_try: "200.00",
       amount_token: "4.9751243",
       stage: "created",
     });
+    expect(created.deadline).toBeGreaterThan(
+      Math.floor(Date.now() / 1000) + 1700
+    );
     expect(await (await request()).json()).toMatchObject({ id: created.id });
     const other = await authenticate();
     expect(

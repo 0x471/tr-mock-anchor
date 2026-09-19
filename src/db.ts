@@ -73,6 +73,11 @@ CREATE TABLE IF NOT EXISTS quotes (
   consumed_by TEXT,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS quote_assets (
+  quote_id TEXT PRIMARY KEY REFERENCES quotes(id),
+  sell_asset TEXT NOT NULL,
+  buy_asset TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS onramps (
   id TEXT PRIMARY KEY,
   partner_id TEXT NOT NULL,
