@@ -96,7 +96,10 @@ export function createApp(
     } catch {
       return c.text("Invalid path", 400);
     }
-    if (!economicActionsEnabled(deps.cfg) && /\.html?$/i.test(path)) {
+    if (
+      !economicActionsEnabled(deps.cfg) &&
+      (path.endsWith("/") || /\.html?$/i.test(path))
+    ) {
       return c.text(POLICY_PENDING_MESSAGE, 403);
     }
     await next();
