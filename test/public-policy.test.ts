@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Networks } from "@stellar/stellar-sdk";
 import { config } from "../src/config.js";
 import { createApp } from "../src/app.js";
 import { createLogger, type Deps } from "../src/context.js";
@@ -9,6 +10,23 @@ import { createRateService } from "../src/rates.js";
 import { createFakeGateway } from "../src/stellar.js";
 import { createSepContext } from "../src/sepauth.js";
 import { POLICY_PENDING_MESSAGE } from "../src/anchor-policy.js";
+import type { GateGateway } from "../src/anchor-gate-types.js";
+
+async function unusedGatewayCall(): Promise<never> {
+  throw new Error("Public presentation must not invoke the contract gateway.");
+}
+
+const configuredGate: GateGateway = {
+  configuration: unusedGatewayCall,
+  order: unusedGatewayCall,
+  prepareCreate: unusedGatewayCall,
+  prepareProof: unusedGatewayCall,
+  prepareReceipt: unusedGatewayCall,
+  prepareAuthorization: unusedGatewayCall,
+  prepareSettlement: unusedGatewayCall,
+  submit: unusedGatewayCall,
+  transaction: unusedGatewayCall,
+};
 
 const databases: DB[] = [];
 afterEach(() => {
@@ -16,7 +34,7 @@ afterEach(() => {
   for (const db of databases.splice(0)) db.close();
 });
 
-function fixture() {
+function fixture(anchorGate?: GateGateway) {
   const cfg = {
     ...config,
     anchorMode: "zkpassport" as const,
@@ -26,6 +44,7 @@ function fixture() {
     rateSource: "static" as const,
     staticUsdTry: "40.00",
     dbPath: ":memory:",
+    networkPassphrase: Networks.TESTNET,
   };
   const db = openDb(":memory:");
   databases.push(db);
@@ -35,6 +54,7 @@ function fixture() {
     stellar: createFakeGateway(cfg),
     rates: createRateService(cfg),
     log: createLogger(true),
+    anchorGate,
   };
   const sep = createSepContext(deps);
   return {
@@ -115,6 +135,72 @@ describe("public diagnostic-mode presentation", () => {
       policy_message:
         "Legacy sandbox payout processing is enabled, subject to normal per-order checks. No ZKPassport eligibility policy is enforced.",
     });
+  });
+
+  it("reports a configured Testnet gate without granting global payout authorization", async () => {
+    const { strict, deps } = fixture(configuredGate);
+    const response = await strict.request("/health");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      anchor_mode: "zkpassport",
+      diagnostic_only: false,
+      native_gate_configured: true,
+      payout_authorized: false,
+      native_gate: {
+        app_url: "http://localhost:8787/anchor-gate",
+        info_url: "http://localhost:8787/anchor-gate/info",
+      },
+    });
+    const wrongNetworkDeps = {
+      ...deps,
+      cfg: { ...deps.cfg, networkPassphrase: Networks.PUBLIC },
+    };
+    const wrongNetwork = createApp(
+      wrongNetworkDeps,
+      createSepContext(wrongNetworkDeps)
+    );
+    expect(await (await wrongNetwork.request("/health")).json()).toMatchObject({
+      diagnostic_only: true,
+      native_gate_configured: false,
+      payout_authorized: false,
+      native_gate: null,
+    });
+  });
+
+  it("links configured native deposit and withdrawal flows without reopening legacy routes", async () => {
+    const { strict } = fixture(configuredGate);
+    for (const path of ["/", "/sep", "/explorer", "/guide", "/mainnet"]) {
+      const response = await strict.request(path);
+      expect(response.status).toBe(200);
+      const text = await response.text();
+      expect(text).toContain('href="/anchor-gate"');
+      expect(text).toContain('href="/anchor-gate/info"');
+      expect(text).toContain("Legacy economic routes remain disabled");
+      expect(text).toContain("each order still requires its own proof");
+      expect(text).toContain("Use test assets only");
+      expect(text).not.toContain(
+        "Deposits, withdrawals, bank simulation, and payout processing are disabled"
+      );
+      expect(text).not.toMatch(/auto-approved|<form|<script/i);
+      expect(text).toMatch(/^[\x00-\x7f]*$/);
+    }
+    for (const path of ["/llms.txt", "/llms-full.txt", "/sitemap.md"]) {
+      const text = await (await strict.request(path)).text();
+      expect(text).toContain("http://localhost:8787/anchor-gate");
+      expect(text).toContain("http://localhost:8787/anchor-gate/info");
+      expect(text).toContain("Legacy economic routes remain disabled");
+      expect(text).toContain("Use test assets only");
+      expect(text).not.toContain(
+        "Deposits, withdrawals, bank simulation, and payout processing are disabled"
+      );
+      expect(text).toMatch(/^[\x00-\x7f]*$/);
+    }
+    const capabilities = await (await strict.request("/sep6/info")).json();
+    expect(capabilities).toMatchObject({
+      deposit: { USDC: { enabled: false } },
+      withdraw: { USDC: { enabled: false } },
+    });
+    expect((await strict.request("/static/index.html")).status).toBe(403);
   });
 
   it("blocks direct legacy HTML assets in strict mode but preserves ordinary assets", async () => {
