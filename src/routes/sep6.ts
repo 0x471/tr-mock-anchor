@@ -33,14 +33,15 @@ export function sep6Routes(deps: Deps, sep: SepContext) {
   const feePercent = cfg.spreadBps / 100;
 
   app.get('/sep6/info', (c) => {
-    const asset = {
+    const asset: Record<string, unknown> = {
       enabled: true,
       authentication_required: true,
-      min_amount: Number(cfg.minOnrampTry) / 100, // rough USDC-denominated floor for wallets that display it
-      max_amount: Number(cfg.maxOnrampTry) / 10,
       fee_percent: feePercent,
       funding_methods: [FUNDING_METHOD],
     };
+    // Advertise limits only when configured. Omitted means no limit (hackathon default).
+    if (Number(cfg.minOnrampTry) > 0) asset.min_amount = Number(cfg.minOnrampTry);
+    if (Number(cfg.maxOnrampTry) > 0) asset.max_amount = Number(cfg.maxOnrampTry);
     // Some wallets (e.g. the Stellar demo wallet) assume a `type` field with choices exists on the
     // deposit info and read `fields.type.choices` directly. Provide it so those wallets can render
     // the deposit form. Our handler treats `type` as an alias of `funding_method`.
@@ -159,8 +160,8 @@ export function sep6Routes(deps: Deps, sep: SepContext) {
     if (q('amount')) {
       try {
         const kurus = parseTry(q('amount')!, 'amount');
-        if (kurus < parseTry(cfg.minOnrampTry)) return sepError(c, 400, `amount below minimum (${cfg.minOnrampTry} TRY)`);
-        if (kurus > parseTry(cfg.maxOnrampTry)) return sepError(c, 400, `amount above maximum (${cfg.maxOnrampTry} TRY)`);
+        if (Number(cfg.minOnrampTry) > 0 && kurus < parseTry(cfg.minOnrampTry)) return sepError(c, 400, `amount below minimum (${cfg.minOnrampTry} TRY)`);
+        if (Number(cfg.maxOnrampTry) > 0 && kurus > parseTry(cfg.maxOnrampTry)) return sepError(c, 400, `amount above maximum (${cfg.maxOnrampTry} TRY)`);
         amount = fmtTry(kurus);
       } catch (e) {
         return sepError(c, 400, (e as Error).message);
@@ -198,8 +199,8 @@ export function sep6Routes(deps: Deps, sep: SepContext) {
       how: `Send TRY to IBAN ${cfg.anchorIban} (${cfg.bankName}) with "${reference}" in the transfer description. Sandbox: simulate the transfer at ${moreInfo}`,
       instructions: depositInstructions(cfg, reference),
       eta: 5,
-      min_amount: Number(cfg.minOnrampTry),
-      max_amount: Number(cfg.maxOnrampTry),
+      ...(Number(cfg.minOnrampTry) > 0 ? { min_amount: Number(cfg.minOnrampTry) } : {}),
+      ...(Number(cfg.maxOnrampTry) > 0 ? { max_amount: Number(cfg.maxOnrampTry) } : {}),
       fee_percent: feePercent,
       extra_info: {
         message: `This is a sandbox: no real bank exists. Simulate the incoming TRY transfer at ${moreInfo} (or POST ${moreInfo}/simulate-bank-transfer). Real testnet ${stellar.assetCode} is then paid to ${account}.`,
@@ -327,7 +328,7 @@ export function sep6Routes(deps: Deps, sep: SepContext) {
         memo: offramp.memo_id,
         id,
         eta: 10,
-        min_amount: Number(cfg.minOfframpUsdc),
+        ...(Number(cfg.minOfframpUsdc) > 0 ? { min_amount: Number(cfg.minOfframpUsdc) } : {}),
         fee_percent: feePercent,
         extra_info: {
           message: `Send ${offramp.expected_usdc ?? 'any amount of'} ${stellar.assetCode} to ${offramp.deposit_address} with memo (type id) ${offramp.memo_id}. Rate ${offramp.rate} TRY/USDC locked until ${offramp.rate_locked_until}. TRY is paid (simulated) to ${customer.iban}.`,

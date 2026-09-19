@@ -112,7 +112,14 @@
     if (!disc || !st.wallet) throw new Error('Run the discovery and wallet steps first.');
     if (!tokenValid()) await reauth(rec);
   }
-  async function friendbot(pub) { const r = await fetch(`https://friendbot.stellar.org?addr=${pub}`); if (!r.ok) throw new Error(`friendbot failed (${r.status})`); }
+  async function friendbot(pub) {
+    const r = await fetch(`https://friendbot.stellar.org?addr=${pub}`);
+    if (r.ok) return;
+    // "already funded" (Friendbot 400) is fine when re-running with a saved wallet: confirm it exists.
+    const acc = await fetch(`${HORIZON}/accounts/${pub}`);
+    if (acc.ok) return;
+    throw new Error(`friendbot failed (${r.status})`);
+  }
   async function submit(secret, build) {
     const kp = SDK.Keypair.fromSecret(secret);
     const acct = await horizon.loadAccount(kp.publicKey());
@@ -136,7 +143,7 @@
   }
 
   /* ---------- steps ---------- */
-  const AMT = '200.00'; // TRY, above the 50 TRY minimum
+  const AMT = '200.00'; // TRY amount for the demo deposit
   const steps = [
     {
       id: 'toml', title: 'SEP-1: read the signboard (stellar.toml)',

@@ -78,7 +78,9 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
         'The whole integration handoff is two values: a home domain and an asset. Everything else is discovered from stellar.toml. Integrate once here, then move to any real SEP anchor by changing only the network and home domain.',
         `Asset: ${stellar.assetCode}:${stellar.assetIssuer}. Treasury: ${stellar.treasuryPublicKey}.`,
         `Rates: USD/TRY from Reflector oracle + ${buy.spreadBps} bps spread (buy ${fmtRate(buy.rateMicro)}, sell ${fmtRate(sell.rateMicro)}). Amounts are decimal strings (TRY 2dp, USDC 7dp).`,
-        `Limits: ${cfg.minOnrampTry} - ${cfg.maxOnrampTry} TRY per deposit; min off-ramp ${cfg.minOfframpUsdc} USDC.`,
+        Number(cfg.maxOnrampTry) > 0 || Number(cfg.minOnrampTry) > 0
+          ? `Limits: ${cfg.minOnrampTry || '0'} - ${cfg.maxOnrampTry || 'no max'} TRY per deposit; min off-ramp ${Number(cfg.minOfframpUsdc) > 0 ? cfg.minOfframpUsdc + ' USDC' : 'none'}.`
+          : 'Limits: no per-transaction limits (testnet sandbox).',
         '',
         '## SEP flow (end to end)',
         '1. SEP-1: GET /.well-known/stellar.toml -> WEB_AUTH_ENDPOINT (/auth), TRANSFER_SERVER (/sep6), KYC_SERVER (/sep12), SIGNING_KEY, the USDC currency.',
@@ -136,9 +138,9 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
         source: buy.mid.source,
       },
       limits: {
-        min_onramp_try: cfg.minOnrampTry,
-        max_onramp_try: cfg.maxOnrampTry,
-        min_offramp_usdc: cfg.minOfframpUsdc,
+        min_onramp_try: Number(cfg.minOnrampTry) > 0 ? cfg.minOnrampTry : null,
+        max_onramp_try: Number(cfg.maxOnrampTry) > 0 ? cfg.maxOnrampTry : null,
+        min_offramp_usdc: Number(cfg.minOfframpUsdc) > 0 ? cfg.minOfframpUsdc : null,
       },
       time: new Date().toISOString(),
     });

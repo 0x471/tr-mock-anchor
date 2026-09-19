@@ -35,10 +35,11 @@ export const config = {
   ).split(',').map((s) => s.trim()).filter(Boolean),
   rateCacheSeconds: num(env.RATE_CACHE_SECONDS, 60),
 
-  // Limits (decimal strings)
-  minOnrampTry: str(env.MIN_ONRAMP_TRY, '50.00'),
-  maxOnrampTry: str(env.MAX_ONRAMP_TRY, '3000.00'),
-  minOfframpUsdc: str(env.MIN_OFFRAMP_USDC, '1.0000000'),
+  // Limits (decimal strings). Empty or '0' means no limit. Default: no per-transaction limits
+  // (hackathon). Set MIN_ONRAMP_TRY / MAX_ONRAMP_TRY / MIN_OFFRAMP_USDC to re-impose caps.
+  minOnrampTry: str(env.MIN_ONRAMP_TRY, '0'),
+  maxOnrampTry: str(env.MAX_ONRAMP_TRY, ''),
+  minOfframpUsdc: str(env.MIN_OFFRAMP_USDC, '0'),
 
   // Mock bank identity shown in deposit instructions.
   bankName: str(env.BANK_NAME, 'TR Mock Bank A.Ş.'),

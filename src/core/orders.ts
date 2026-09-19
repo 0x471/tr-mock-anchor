@@ -39,8 +39,8 @@ export function createOnramp(
   const { db, cfg } = deps;
   if (customer.kyc_status !== 'approved') throw unprocessable('kyc_not_approved', `Customer KYC status is ${customer.kyc_status}`);
   if (!isStellarAddress(args.destination)) throw badRequest('invalid_destination_address', 'destination must be a Stellar account (G...) or muxed (M...) address. Contract addresses (C...) are not supported: USDC is a classic asset paid via a classic payment, which cannot target a contract.');
-  if (args.kurus < parseTry(cfg.minOnrampTry)) throw unprocessable('below_minimum', `Minimum on-ramp is ${cfg.minOnrampTry} TRY`);
-  if (args.kurus > parseTry(cfg.maxOnrampTry)) throw unprocessable('above_maximum', `Maximum on-ramp is ${cfg.maxOnrampTry} TRY`);
+  if (Number(cfg.minOnrampTry) > 0 && args.kurus < parseTry(cfg.minOnrampTry)) throw unprocessable('below_minimum', `Minimum on-ramp is ${cfg.minOnrampTry} TRY`);
+  if (Number(cfg.maxOnrampTry) > 0 && args.kurus > parseTry(cfg.maxOnrampTry)) throw unprocessable('above_maximum', `Maximum on-ramp is ${cfg.maxOnrampTry} TRY`);
   const stroops = tryToUsdc(args.kurus, args.rate.rateMicro);
   if (stroops <= 0n) throw unprocessable('amount_too_small', 'Amount rounds to zero USDC');
 
@@ -88,7 +88,7 @@ export function createOfframp(
 ): OfframpRow {
   const { db, cfg, stellar } = deps;
   if (customer.kyc_status !== 'approved') throw unprocessable('kyc_not_approved', `Customer KYC status is ${customer.kyc_status}`);
-  if (args.expected !== null && args.expected < parseUsdc(cfg.minOfframpUsdc)) {
+  if (Number(cfg.minOfframpUsdc) > 0 && args.expected !== null && args.expected < parseUsdc(cfg.minOfframpUsdc)) {
     throw unprocessable('below_minimum', `Minimum off-ramp is ${cfg.minOfframpUsdc} USDC`);
   }
   let payoutIban: string | null = args.payoutIban ? normalizeIban(args.payoutIban) : customer.iban;
