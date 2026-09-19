@@ -96,6 +96,22 @@
     return j;
   }
   const bearer = () => ({ Authorization: `Bearer ${st.token}` });
+  // SEP-10 tokens expire (24h). A returning visitor keeps a stale token in localStorage, and the
+  // "auth" step is marked done so it is skipped. Refresh the token before any authenticated call,
+  // otherwise the server returns 403 "missing or invalid SEP-10 token".
+  const tokenExp = () => { try { return JSON.parse(atob(st.token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).exp || 0; } catch { return 0; } };
+  const tokenValid = () => !!st.token && tokenExp() > Math.floor(Date.now() / 1000) + 30;
+  async function reauth(rec) {
+    const ch = await http('GET', `${disc.webauth}?account=${st.wallet.pub}`, {}, rec);
+    const tx = parseTx(ch.transaction);
+    tx.sign(SDK.Keypair.fromSecret(st.wallet.sec));
+    const res = await http('POST', disc.webauth, { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ transaction: toXdr(tx) }) }, rec);
+    st.token = res.token; save();
+  }
+  async function ensureAuth(rec) {
+    if (!disc || !st.wallet) throw new Error('Run the discovery and wallet steps first.');
+    if (!tokenValid()) await reauth(rec);
+  }
   async function friendbot(pub) { const r = await fetch(`https://friendbot.stellar.org?addr=${pub}`); if (!r.ok) throw new Error(`friendbot failed (${r.status})`); }
   async function submit(secret, build) {
     const kp = SDK.Keypair.fromSecret(secret);
@@ -177,6 +193,7 @@
       desc: 'The wallet asks to deposit and receives bank instructions: an IBAN and a reference to write in the transfer description.',
       tr: 'Cüzdan deposit başlatır; IBAN ve açıklamaya yazılacak referansı alır.',
       async run(rec) {
+        await ensureAuth(rec);
         const dep = await http('GET', `${disc.transfer}/deposit?asset_code=${disc.code}&account=${st.wallet.pub}&amount=${AMT}&funding_method=bank_account`, { headers: bearer() }, rec);
         st.depositId = dep.id; save();
         const ref = dep.instructions?.external_transfer_memo?.value || '';
@@ -197,6 +214,7 @@
       desc: 'The wallet polls the transaction until it settles, then reads the on-chain payment.',
       tr: 'Cüzdan işlemi tamamlanana kadar sorgular; USDC zincirde gelir.',
       async run(rec, chain) {
+        await ensureAuth(rec);
         chain('Waiting for the anchor to settle…');
         const t = await pollTx(st.depositId, ['pending_user_transfer_start', 'pending_anchor', 'pending_stellar', 'pending_trust'], 120000, rec);
         if (t.status !== 'completed') throw new Error(`deposit ${t.status}: ${t.message || ''}`);
@@ -212,6 +230,7 @@
       desc: 'The reverse: the wallet asks to cash out, gets the treasury address and a memo, sends the USDC back on-chain, and the anchor pays TRY (simulated FAST).',
       tr: 'Tersi: cüzdan USDC\'yi memo ile geri gönderir, anchor TL öder (simüle FAST).',
       async run(rec, chain) {
+        await ensureAuth(rec);
         const amt = st.received || '1.0000000';
         const w = await http('GET', `${disc.transfer}/withdraw?asset_code=${disc.code}&type=bank_account&amount=${amt}`, { headers: bearer() }, rec);
         chain(`Send ${amt} ${disc.code} to ${acctLink(w.account_id)} with memo (id) <b class="mono">${w.memo}</b>`);
