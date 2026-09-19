@@ -197,6 +197,8 @@ impl Fixture {
     }
     fn terms(&self) -> OrderTerms {
         OrderTerms {
+            direction: Direction::Deposit,
+            bank_destination_hash: self.id(0),
             recipient: self.recipient.clone(),
             quote_hash: self.id(4),
             try_minor: 1000,
@@ -271,6 +273,7 @@ impl Fixture {
     }
     fn receipt(&self) -> BankReceipt {
         BankReceipt {
+            bank_destination_hash: self.id(0),
             event_id: self.id(11),
             quote_hash: self.terms().quote_hash,
             try_minor: 1000,
@@ -279,6 +282,18 @@ impl Fixture {
     }
     fn eligible(&self, id: &BytesN<32>) {
         self.client().create_order(id, &self.terms());
+        self.client()
+            .prove_order(id, &self.proof(true), &self.inputs(id));
+    }
+    fn withdrawal_terms(&self) -> OrderTerms {
+        let mut terms = self.terms();
+        terms.direction = Direction::Withdrawal;
+        terms.bank_destination_hash = self.id(20);
+        terms
+    }
+    fn withdrawal_eligible(&self, id: &BytesN<32>) {
+        trustline_fixture(&self.env, &self.recipient_id, &self.asset, 1000);
+        self.client().create_order(id, &self.withdrawal_terms());
         self.client()
             .prove_order(id, &self.proof(true), &self.inputs(id));
     }
@@ -343,6 +358,7 @@ fn exact_receipt_allows_one_permissionless_settlement_to_the_bound_recipient() {
     c.create_order(&id, &f.terms());
     c.prove_order(&id, &f.proof(true), &f.inputs(&id));
     let receipt = BankReceipt {
+        bank_destination_hash: f.id(0),
         event_id: f.id(11),
         quote_hash: f.terms().quote_hash,
         try_minor: 1000,
@@ -584,7 +600,7 @@ fn public_intent_fixture_for_independent_xdr_vector() {
         Bytes::from(f.client().get_challenge(&id)),
         hex_bytes(
             &f.env,
-            "d7244c3764e3b8ce8b2299f1d8f133c8577a7f406d74e5b0933db97fce876285"
+            "a18bc4983f3f46812a8de431ce9bc46c8b4ef83edb79b3371ea533cfe3ac5899"
         )
     );
     let config: xdr::ScVal = f.config.clone().try_into().unwrap();
@@ -682,4 +698,268 @@ fn constructor_rejects_wrong_network_profile_and_ambiguous_country_rules() {
         }))
         .is_err());
     }
+}
+
+#[test]
+fn withdrawal_quote_creation_does_not_take_provider_or_customer_tokens() {
+    let f = Fixture::new();
+    let id = f.id(10);
+    let c = f.client();
+    let mut terms = f.terms();
+    terms.direction = Direction::Withdrawal;
+    terms.bank_destination_hash = f.id(20);
+    let order = c.create_order(&id, &terms);
+    assert!(!order.escrowed);
+    assert_eq!(order.payout, PayoutState::None);
+    assert_eq!(c.get_total_reserved(), 0);
+    let token = token::TokenClient::new(&f.env, &f.config.token);
+    assert_eq!(token.balance(&f.config.provider), 1_000_000);
+    assert_eq!(token.balance(&f.gate), 0);
+    assert_eq!(
+        Bytes::from(c.get_challenge(&id)),
+        hex_bytes(
+            &f.env,
+            "20e9374b7276ac469656c708e61f0bcbc70e6e2edca4c59bfa26e1295b202554"
+        )
+    );
+}
+
+#[test]
+fn withdrawal_proof_escrows_once_and_failed_proof_never_debits_the_customer() {
+    let f = Fixture::new();
+    let id = f.id(10);
+    let c = f.client();
+    trustline_fixture(&f.env, &f.recipient_id, &f.asset, 1000);
+    let mut terms = f.terms();
+    terms.direction = Direction::Withdrawal;
+    terms.bank_destination_hash = f.id(20);
+    c.create_order(&id, &terms);
+    let token = token::TokenClient::new(&f.env, &f.config.token);
+    assert_eq!(
+        c.try_prove_order(&id, &f.proof(false), &f.inputs(&id)),
+        Err(Ok(GateError::InvalidProof))
+    );
+    assert_eq!(token.balance(&f.recipient), 1000);
+    assert_eq!(c.get_total_reserved(), 0);
+    let eligible = c.prove_order(&id, &f.proof(true), &f.inputs(&id));
+    assert!(eligible.escrowed);
+    assert_eq!(token.balance(&f.recipient), 500);
+    assert_eq!(c.get_total_reserved(), 500);
+    c.prove_order(&id, &f.proof(true), &f.inputs(&id));
+    assert_eq!(token.balance(&f.recipient), 500);
+    assert_eq!(c.get_total_reserved(), 500);
+}
+
+#[test]
+fn only_notary_can_authorize_one_eligible_escrowed_withdrawal_obligation() {
+    let f = Fixture::new();
+    let id = f.id(10);
+    let c = f.client();
+    c.create_order(&id, &f.withdrawal_terms());
+    assert_eq!(
+        c.try_authorize_payout(&id),
+        Err(Ok(GateError::InvalidState))
+    );
+    trustline_fixture(&f.env, &f.recipient_id, &f.asset, 1000);
+    c.prove_order(&id, &f.proof(true), &f.inputs(&id));
+    f.env.set_auths(&[]);
+    assert!(c.try_authorize_payout(&id).is_err());
+    f.env.mock_all_auths();
+    let authorized = c.authorize_payout(&id);
+    assert_eq!(authorized.payout, PayoutState::Authorized(1000));
+    assert_eq!(c.authorize_payout(&id), authorized);
+    assert_eq!(c.get_total_reserved(), 500);
+    assert_eq!(
+        c.try_prove_order(&id, &f.proof(true), &f.inputs(&id)),
+        Err(Ok(GateError::InvalidState))
+    );
+}
+
+#[test]
+fn withdrawal_receipt_requires_authorization_and_destination_then_finalizes_even_if_late() {
+    let f = Fixture::new();
+    let id = f.id(10);
+    let c = f.client();
+    f.withdrawal_eligible(&id);
+    let mut receipt = f.receipt();
+    receipt.bank_destination_hash = f.id(20);
+    assert_eq!(
+        c.try_record_receipt(&id, &receipt),
+        Err(Ok(GateError::InvalidState))
+    );
+    c.authorize_payout(&id);
+    assert_eq!(
+        c.try_record_receipt(&id, &f.receipt()),
+        Err(Ok(GateError::InvalidReceipt))
+    );
+    assert_eq!(c.try_settle(&id), Err(Ok(GateError::InvalidState)));
+    f.env.ledger().with_mut(|l| l.timestamp = 2500);
+    receipt.received_at = 2400;
+    c.record_receipt(&id, &receipt);
+    f.env.set_auths(&[]);
+    let settled = c.settle(&id);
+    assert!(settled.settled);
+    assert!(!settled.escrowed);
+    assert_eq!(c.settle(&id), settled);
+    assert_eq!(c.get_total_reserved(), 0);
+    let token = token::TokenClient::new(&f.env, &f.config.token);
+    assert_eq!(token.balance(&f.recipient), 500);
+    assert_eq!(token.balance(&f.config.provider), 1_000_500);
+    assert_eq!(token.balance(&f.gate), 0);
+}
+
+#[test]
+fn withdrawal_escrow_needs_the_recipients_nested_exact_token_transfer_authorization() {
+    use soroban_sdk::testutils::MockAuthInvoke;
+    let f = Fixture::new();
+    let id = f.id(10);
+    let c = f.client();
+    trustline_fixture(&f.env, &f.recipient_id, &f.asset, 1000);
+    c.create_order(&id, &f.withdrawal_terms());
+    let proof = f.proof(true);
+    let inputs = f.inputs(&id);
+    let args: Vec<Val> = (id.clone(), proof.clone(), inputs.clone()).into_val(&f.env);
+    f.env
+        .host()
+        .set_source_account(f.recipient_id.clone())
+        .unwrap();
+    f.env.set_auths(&[xdr::SorobanAuthorizationEntry {
+        credentials: xdr::SorobanCredentials::SourceAccount,
+        root_invocation: (&MockAuthInvoke {
+            contract: &f.gate,
+            fn_name: "prove_order",
+            args: args.clone(),
+            sub_invokes: &[],
+        })
+            .into(),
+    }]);
+    assert!(c.try_prove_order(&id, &proof, &inputs).is_err());
+    assert_eq!(c.get_total_reserved(), 0);
+    f.env.set_auths(&[xdr::SorobanAuthorizationEntry {
+        credentials: xdr::SorobanCredentials::SourceAccount,
+        root_invocation: (&MockAuthInvoke {
+            contract: &f.gate,
+            fn_name: "prove_order",
+            args,
+            sub_invokes: &[MockAuthInvoke {
+                contract: &f.config.token,
+                fn_name: "transfer",
+                args: (f.recipient.clone(), f.gate.clone(), 500i128).into_val(&f.env),
+                sub_invokes: &[],
+            }],
+        })
+            .into(),
+    }]);
+    assert!(c.prove_order(&id, &proof, &inputs).escrowed);
+}
+
+#[test]
+fn insufficient_customer_tokens_cannot_create_eligibility_or_bank_payout_authority() {
+    let f = Fixture::new();
+    let id = f.id(10);
+    let c = f.client();
+    c.create_order(&id, &f.withdrawal_terms());
+    assert!(c
+        .try_prove_order(&id, &f.proof(true), &f.inputs(&id))
+        .is_err());
+    let state = c.get_order(&id).unwrap();
+    assert_eq!(state.eligibility, EligibilityState::None);
+    assert!(!state.escrowed);
+    assert_eq!(c.get_total_reserved(), 0);
+    assert_eq!(
+        c.try_authorize_payout(&id),
+        Err(Ok(GateError::InvalidState))
+    );
+}
+
+#[test]
+fn stale_eligibility_cannot_authorize_a_new_withdrawal_obligation() {
+    let f = Fixture::new();
+    let id = f.id(10);
+    let c = f.client();
+    f.withdrawal_eligible(&id);
+    for time in [1300, 1800, 2500] {
+        f.env.ledger().with_mut(|l| l.timestamp = time);
+        assert_eq!(c.try_authorize_payout(&id), Err(Ok(GateError::Expired)));
+        assert_eq!(c.get_order(&id).unwrap().payout, PayoutState::None);
+        assert_eq!(c.get_total_reserved(), 500);
+    }
+}
+
+#[test]
+fn authorized_payout_timestamp_is_stable_and_cannot_cover_earlier_bank_events() {
+    let f = Fixture::new();
+    let id = f.id(10);
+    let c = f.client();
+    f.withdrawal_eligible(&id);
+    f.env.ledger().with_mut(|l| l.timestamp = 1100);
+    let authorized = c.authorize_payout(&id);
+    let mut receipt = f.receipt();
+    receipt.bank_destination_hash = f.id(20);
+    assert_eq!(
+        c.try_record_receipt(&id, &receipt),
+        Err(Ok(GateError::InvalidReceipt))
+    );
+    receipt.received_at = 1101;
+    assert_eq!(
+        c.try_record_receipt(&id, &receipt),
+        Err(Ok(GateError::InvalidReceipt))
+    );
+    f.env.ledger().with_mut(|l| l.timestamp = 2500);
+    assert_eq!(c.authorize_payout(&id), authorized);
+    assert_eq!(c.get_total_reserved(), 500);
+}
+
+#[test]
+fn direction_and_bank_destination_are_immutable_and_deposit_cannot_authorize_bank_payout() {
+    let f = Fixture::new();
+    let id = f.id(10);
+    let c = f.client();
+    let mut bad_deposit = f.terms();
+    bad_deposit.bank_destination_hash = f.id(20);
+    assert_eq!(
+        c.try_create_order(&id, &bad_deposit),
+        Err(Ok(GateError::InvalidTerms))
+    );
+    let mut bad_withdrawal = f.withdrawal_terms();
+    bad_withdrawal.bank_destination_hash = f.id(0);
+    assert_eq!(
+        c.try_create_order(&id, &bad_withdrawal),
+        Err(Ok(GateError::InvalidTerms))
+    );
+    f.eligible(&id);
+    assert_eq!(
+        c.try_authorize_payout(&id),
+        Err(Ok(GateError::InvalidState))
+    );
+    assert_eq!(
+        c.try_create_order(&id, &f.withdrawal_terms()),
+        Err(Ok(GateError::OrderConflict))
+    );
+    let mut receipt = f.receipt();
+    receipt.bank_destination_hash = f.id(20);
+    assert_eq!(
+        c.try_record_receipt(&id, &receipt),
+        Err(Ok(GateError::InvalidReceipt))
+    );
+    assert_eq!(c.get_total_reserved(), 500);
+}
+
+#[test]
+fn bank_receipt_ids_cannot_be_reused_across_deposit_and_withdrawal() {
+    let f = Fixture::new();
+    let deposit = f.id(10);
+    let withdrawal = f.id(12);
+    let c = f.client();
+    f.eligible(&deposit);
+    c.record_receipt(&deposit, &f.receipt());
+    f.withdrawal_eligible(&withdrawal);
+    c.authorize_payout(&withdrawal);
+    let mut reused = f.receipt();
+    reused.bank_destination_hash = f.id(20);
+    assert_eq!(
+        c.try_record_receipt(&withdrawal, &reused),
+        Err(Ok(GateError::ReceiptUsed))
+    );
+    assert_eq!(c.get_total_reserved(), 1000);
 }

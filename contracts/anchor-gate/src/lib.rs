@@ -43,7 +43,16 @@ pub struct VerificationProfile {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Direction {
+    Deposit,
+    Withdrawal,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OrderTerms {
+    pub direction: Direction,
+    pub bank_destination_hash: BytesN<32>,
     pub recipient: Address,
     pub quote_hash: BytesN<32>,
     pub try_minor: u64,
@@ -66,6 +75,7 @@ pub struct BankReceipt {
     pub quote_hash: BytesN<32>,
     pub try_minor: u64,
     pub received_at: u64,
+    pub bank_destination_hash: BytesN<32>,
 }
 
 #[contracttype]
@@ -84,11 +94,20 @@ pub enum ReceiptState {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PayoutState {
+    None,
+    Authorized(u64),
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Order {
     pub terms: OrderTerms,
     pub created_at: u64,
     pub eligibility: EligibilityState,
     pub receipt: ReceiptState,
+    pub escrowed: bool,
+    pub payout: PayoutState,
     pub settled: bool,
 }
 
@@ -171,26 +190,25 @@ impl AnchorGate {
             || terms.deadline <= now
             || terms.deadline > c.policy_valid_until
             || terms.deadline - now > c.max_order_lifetime
+            || (terms.direction == Direction::Deposit && terms.bank_destination_hash != zero)
+            || (terms.direction == Direction::Withdrawal && terms.bank_destination_hash == zero)
         {
             return Err(GateError::InvalidTerms);
         }
-        let total = reserved(&env)?
-            .checked_add(terms.amount)
-            .ok_or(GateError::Arithmetic)?;
-        let token = token::TokenClient::new(&env, &c.token);
-        token.transfer(&c.provider, &env.current_contract_address(), &terms.amount);
-        if token.balance(&env.current_contract_address()) < total {
-            return Err(GateError::InsufficientReserve);
+        let escrowed = terms.direction == Direction::Deposit;
+        if escrowed {
+            reserve_from(&env, &c, &c.provider, terms.amount)?;
         }
         let order = Order {
             terms,
             created_at: now,
             eligibility: EligibilityState::None,
             receipt: ReceiptState::None,
+            escrowed,
+            payout: PayoutState::None,
             settled: false,
         };
         env.storage().persistent().set(&key, &order);
-        env.storage().persistent().set(&Key::TotalReserved, &total);
         touch(&env, &key);
         Ok(order)
     }
@@ -205,7 +223,7 @@ impl AnchorGate {
         current(&env, &c)?;
         let mut order = load_order(&env, &id)?;
         order.terms.recipient.require_auth();
-        if order.settled {
+        if order.settled || order.payout != PayoutState::None {
             return Err(GateError::InvalidState);
         }
         let now = env.ledger().timestamp();
@@ -224,6 +242,10 @@ impl AnchorGate {
         );
         if !verified {
             return Err(GateError::InvalidProof);
+        }
+        if order.terms.direction == Direction::Withdrawal && !order.escrowed {
+            reserve_from(&env, &c, &order.terms.recipient, order.terms.amount)?;
+            order.escrowed = true;
         }
         order.eligibility = EligibilityState::Some(eligibility);
         save_order(&env, &id, &order);
@@ -246,13 +268,21 @@ impl AnchorGate {
             }
             return Err(GateError::InvalidReceipt);
         }
-        if order.settled || matches!(order.eligibility, EligibilityState::None) {
+        if order.settled || !order.escrowed || matches!(order.eligibility, EligibilityState::None) {
             return Err(GateError::InvalidState);
         }
+        let earliest_receipt = match order.terms.direction {
+            Direction::Deposit => order.created_at,
+            Direction::Withdrawal => match order.payout {
+                PayoutState::Authorized(at) => at,
+                PayoutState::None => return Err(GateError::InvalidState),
+            },
+        };
         if receipt.event_id == BytesN::from_array(&env, &[0; 32])
             || receipt.quote_hash != order.terms.quote_hash
             || receipt.try_minor != order.terms.try_minor
-            || receipt.received_at < order.created_at
+            || receipt.bank_destination_hash != order.terms.bank_destination_hash
+            || receipt.received_at < earliest_receipt
             || receipt.received_at > env.ledger().timestamp()
         {
             return Err(GateError::InvalidReceipt);
@@ -260,10 +290,45 @@ impl AnchorGate {
         if env.storage().persistent().has(&receipt_key) {
             return Err(GateError::ReceiptUsed);
         }
-        // Late bank evidence is retained; it cannot refresh eligibility or release funds.
+        // Late evidence never creates eligibility or a new withdrawal obligation.
         env.storage().persistent().set(&receipt_key, &id);
         touch(&env, &receipt_key);
         order.receipt = ReceiptState::Some(receipt);
+        save_order(&env, &id, &order);
+        Ok(order)
+    }
+
+    pub fn authorize_payout(env: Env, id: BytesN<32>) -> Result<Order, GateError> {
+        let c = config(&env)?;
+        c.bank_notary.require_auth();
+        let mut order = load_order(&env, &id)?;
+        if order.terms.direction != Direction::Withdrawal {
+            return Err(GateError::InvalidState);
+        }
+        if let PayoutState::Authorized(_) = order.payout {
+            return Ok(order);
+        }
+        if order.settled || !order.escrowed || order.receipt != ReceiptState::None {
+            return Err(GateError::InvalidState);
+        }
+        let EligibilityState::Some(eligibility) = &order.eligibility else {
+            return Err(GateError::InvalidState);
+        };
+        current(&env, &c)?;
+        verifier_identity(&env, &c)?;
+        let now = env.ledger().timestamp();
+        if now >= order.terms.deadline || now >= eligibility.valid_until {
+            return Err(GateError::Expired);
+        }
+        let total = reserved(&env)?;
+        if total < order.terms.amount
+            || token::TokenClient::new(&env, &c.token).balance(&env.current_contract_address())
+                < total
+        {
+            return Err(GateError::InsufficientReserve);
+        }
+        // This records one durable bank obligation, not an asset transfer or bank receipt.
+        order.payout = PayoutState::Authorized(now);
         save_order(&env, &id, &order);
         Ok(order)
     }
@@ -274,19 +339,34 @@ impl AnchorGate {
         if order.settled {
             return Ok(order);
         }
-        current(&env, &c)?;
-        verifier_identity(&env, &c)?;
         let EligibilityState::Some(eligibility) = &order.eligibility else {
             return Err(GateError::InvalidState);
         };
         let ReceiptState::Some(receipt) = &order.receipt else {
             return Err(GateError::InvalidState);
         };
-        if env.ledger().timestamp() >= eligibility.valid_until
-            || env.ledger().timestamp() >= order.terms.deadline
-        {
-            return Err(GateError::Expired);
+        if !order.escrowed {
+            return Err(GateError::InvalidState);
         }
+        let destination = match order.terms.direction {
+            Direction::Deposit => {
+                current(&env, &c)?;
+                verifier_identity(&env, &c)?;
+                if env.ledger().timestamp() >= eligibility.valid_until
+                    || env.ledger().timestamp() >= order.terms.deadline
+                {
+                    return Err(GateError::Expired);
+                }
+                order.terms.recipient.clone()
+            }
+            Direction::Withdrawal => {
+                if !matches!(order.payout, PayoutState::Authorized(_)) {
+                    return Err(GateError::InvalidState);
+                }
+                // Previously authorized bank obligations survive later policy expiry.
+                c.provider.clone()
+            }
+        };
         let receipt_key = Key::Receipt(receipt.event_id.clone());
         if env
             .storage()
@@ -306,6 +386,7 @@ impl AnchorGate {
             .checked_sub(order.terms.amount)
             .ok_or(GateError::Arithmetic)?;
         order.settled = true;
+        order.escrowed = false;
         save_order(&env, &id, &order);
         env.storage()
             .persistent()
@@ -313,7 +394,7 @@ impl AnchorGate {
         // The pinned SAC call is atomic with the terminal state and reserve update.
         token.transfer(
             &env.current_contract_address(),
-            &order.terms.recipient,
+            &destination,
             &order.terms.amount,
         );
         Ok(order)
@@ -362,6 +443,19 @@ fn load_order(env: &Env, id: &BytesN<32>) -> Result<Order, GateError> {
     Ok(order)
 }
 
+fn reserve_from(env: &Env, c: &Config, source: &Address, amount: i128) -> Result<(), GateError> {
+    let total = reserved(env)?
+        .checked_add(amount)
+        .ok_or(GateError::Arithmetic)?;
+    let token = token::TokenClient::new(env, &c.token);
+    token.transfer(source, &env.current_contract_address(), &amount);
+    if token.balance(&env.current_contract_address()) < total {
+        return Err(GateError::InsufficientReserve);
+    }
+    env.storage().persistent().set(&Key::TotalReserved, &total);
+    Ok(())
+}
+
 fn save_order(env: &Env, id: &BytesN<32>, order: &Order) {
     let key = Key::Order(id.clone());
     env.storage().persistent().set(&key, order);
@@ -381,13 +475,15 @@ fn challenge(
         .ok_or(GateError::ConfigMissing)?;
     let values: Vec<Val> = vec![
         env,
-        String::from_str(env, "stellar-anchor-intent-v1").into_val(env),
+        String::from_str(env, "stellar-anchor-intent-v2").into_val(env),
         c.network_id.clone().into_val(env),
         env.current_contract_address().into_val(env),
         order.terms.recipient.clone().into_val(env),
         id.clone().into_val(env),
         order.terms.quote_hash.clone().into_val(env),
         c.token.clone().into_val(env),
+        order.terms.direction.clone().into_val(env),
+        order.terms.bank_destination_hash.clone().into_val(env),
         order.terms.try_minor.into_val(env),
         (order.terms.amount as u128).into_val(env),
         order.created_at.into_val(env),
