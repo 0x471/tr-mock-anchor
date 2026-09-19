@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { createApp } from "../src/app.js";
 import { config } from "../src/config.js";
@@ -27,6 +27,7 @@ import type {
 
 const databases: DB[] = [];
 afterEach(() => {
+  vi.useRealTimers();
   for (const db of databases.splice(0)) db.close();
 });
 
@@ -77,6 +78,7 @@ function fixture(anchorGate?: GateGateway) {
 }
 
 class FakeGate implements GateGateway {
+  policyExpiry = Math.floor(Date.now() / 1000) + 3600;
   payouts = 0;
   orders = new Map<string, GateOrder>();
   prepared = new Map<string, () => void>();
@@ -91,12 +93,13 @@ class FakeGate implements GateGateway {
     domain: "localhost",
     scope: "test-policy",
     policy: {},
-    proof_bytes: 9888,
+    proof_bytes: 10240,
     external_inputs: 11,
     max_order_lifetime: 1800,
-    policy_valid_until: Math.floor(Date.now() / 1000) + 3600,
+    policy_valid_until: this.policyExpiry,
     max_amount: "1000000000",
     max_try_minor: "1000000",
+    ledger_time: Math.floor(Date.now() / 1000),
   });
   order = async (id: string) => this.orders.get(id) ?? null;
   async prepareCreate(
@@ -238,7 +241,7 @@ async function eligibleCheckout() {
       method: "POST",
       headers: user.headers,
       body: JSON.stringify({
-        proof: "00".repeat(9888),
+        proof: "00".repeat(10240),
         public_inputs: "00".repeat(352),
       }),
     })
@@ -264,6 +267,53 @@ async function eligibleCheckout() {
 }
 
 describe("gated onramp HTTP interface", () => {
+  it("does not route an existing order into a replacement vault", async () => {
+    const { app, user, order, gate } = await checkout();
+    const original = await gate.configuration();
+    gate.configuration = async () => ({
+      ...original,
+      contract: StrKey.encodeContract(Buffer.alloc(32, 9)),
+    });
+    const response = await app.request(`/anchor-gate/orders/${order.id}`, {
+      headers: user.headers,
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: { code: "gate_deployment_changed" },
+    });
+  });
+  it("recognizes a proof confirmed after a lost response even when its envelope is now expired", async () => {
+    const { app, user, order, gate } = await checkout();
+    const path = `/anchor-gate/orders/${order.id}`;
+    const prepared = (await (
+      await app.request(`${path}/prepare-proof`, {
+        method: "POST",
+        headers: user.headers,
+        body: JSON.stringify({
+          proof: "00".repeat(10240),
+          public_inputs: "00".repeat(352),
+        }),
+      })
+    ).json()) as { action_id: string; transaction: string };
+    const signed = TransactionBuilder.fromXdr(
+      prepared.transaction,
+      Networks.TESTNET
+    );
+    signed.sign(user.wallet);
+    await gate.submit(signed.toXdr());
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 180000);
+    const response = await app.request(`${path}/submit`, {
+      method: "POST",
+      headers: user.headers,
+      body: JSON.stringify({
+        action_id: prepared.action_id,
+        signed_transaction: signed.toXdr(),
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ stage: "eligible" });
+  });
   it("rejects concurrent duplicate proof preparation without losing the first action", async () => {
     const { app, user, order } = await checkout();
     const request = () =>
@@ -271,7 +321,7 @@ describe("gated onramp HTTP interface", () => {
         method: "POST",
         headers: user.headers,
         body: JSON.stringify({
-          proof: "00".repeat(9888),
+          proof: "00".repeat(10240),
           public_inputs: "00".repeat(352),
         }),
       });
@@ -375,7 +425,7 @@ describe("gated onramp HTTP interface", () => {
         method: "POST",
         headers: user.headers,
         body: JSON.stringify({
-          proof: "00".repeat(9888),
+          proof: "00".repeat(10240),
           public_inputs: "00".repeat(352),
         }),
       });
@@ -428,7 +478,7 @@ describe("gated onramp HTTP interface", () => {
       method: "POST",
       headers: user.headers,
       body: JSON.stringify({
-        proof: "00".repeat(9888),
+        proof: "00".repeat(10240),
         public_inputs: "00".repeat(352),
       }),
     });
@@ -476,7 +526,7 @@ describe("gated onramp HTTP interface", () => {
         method: "POST",
         headers: user.headers,
         body: JSON.stringify({
-          proof: "00".repeat(9888),
+          proof: "00".repeat(10240),
           public_inputs: "00".repeat(320),
         }),
       }
@@ -503,7 +553,7 @@ describe("gated onramp HTTP interface", () => {
       method: "POST",
       headers: user.headers,
       body: JSON.stringify({
-        proof: "00".repeat(9888),
+        proof: "00".repeat(10240),
         public_inputs: "00".repeat(352),
       }),
     });

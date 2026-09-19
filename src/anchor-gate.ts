@@ -58,6 +58,28 @@ const unavailable = () =>
     "gate_unavailable",
     "The contract could not be confirmed. Retry reconciliation before another action."
   );
+const gateFailure = (error: unknown): never => {
+  throw error instanceof ApiError ? error : unavailable();
+};
+function configurationIdentity(config: GateConfiguration): string {
+  return JSON.stringify([
+    config.contract,
+    config.token,
+    config.provider,
+    config.bank_notary,
+    config.domain,
+    config.scope,
+    config.proof_bytes,
+    config.external_inputs,
+    config.max_order_lifetime,
+    config.policy_valid_until,
+    config.max_amount,
+    config.max_try_minor,
+    Object.entries(config.policy).sort(([a], [b]) =>
+      a < b ? -1 : a > b ? 1 : 0
+    ),
+  ]);
+}
 
 export function createGatedOnramp(deps: Deps, gate: GateGateway) {
   const { db, cfg } = deps;
@@ -70,6 +92,16 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
     return row;
   }
   async function chainOrder(row: OrderRow): Promise<GateOrder | null> {
+    const current = await gate.configuration().catch(gateFailure);
+    if (
+      configurationIdentity(current) !==
+      configurationIdentity(JSON.parse(row.config_json) as GateConfiguration)
+    )
+      throw new ApiError(
+        409,
+        "gate_deployment_changed",
+        "This order belongs to a different immutable vault configuration. Reconnect its original deployment; do not recreate it."
+      );
     const state = await gate.order(row.id).catch(() => {
       throw unavailable();
     });
@@ -195,13 +227,7 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
       )
       .get(row.id, kind) as unknown as ActionRow | undefined;
     if (!action)
-      action = saveAction(
-        row,
-        kind,
-        await prepare().catch(() => {
-          throw unavailable();
-        })
-      );
+      action = saveAction(row, kind, await prepare().catch(gateFailure));
     if (!action.operator_envelope) throw unavailable();
     const result = await gate
       .submit(action.operator_envelope)
@@ -369,7 +395,7 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
               "A new quote with the exact vault asset is required."
             );
           const deadline = Math.min(
-            now() + contract.max_order_lifetime,
+            Math.min(now(), contract.ledger_time) + contract.max_order_lifetime,
             contract.policy_valid_until
           );
           if (
@@ -528,9 +554,7 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
         );
       const prepared = await gate
         .prepareProof(id, subject, proof, publicInputs)
-        .catch(() => {
-          throw unavailable();
-        });
+        .catch(gateFailure);
       proofTransaction(
         row,
         prepared.transaction,
@@ -552,7 +576,7 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
       envelope: string
     ) {
       const row = owned(id, subject);
-      const action = db
+      let action = db
         .prepare(
           "SELECT * FROM anchor_gate_actions WHERE id = ? AND order_id = ? AND kind = 'prove'"
         )
@@ -564,6 +588,9 @@ export function createGatedOnramp(deps: Deps, gate: GateGateway) {
           "Prepared proof action not found."
         );
       const state = await reconcile(row);
+      action = db
+        .prepare("SELECT * FROM anchor_gate_actions WHERE id = ?")
+        .get(action.id) as unknown as ActionRow;
       if (state?.stage === "settled" || action.status === "success")
         return view(row, state);
       live(state);

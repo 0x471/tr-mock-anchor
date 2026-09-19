@@ -81,16 +81,16 @@ function economicSnapshot(db: DB) {
 
 const rate = { rateMicro: 40_000000n, midMicro: 40_000000n, quoteId: null };
 
-describe("diagnostic-stage anchor policy", () => {
+describe("strict legacy-route anchor policy", () => {
   it("fails closed by default and requires explicit legacy mode", () => {
     expect(economicActionsEnabled({})).toBe(false);
     expect(economicActionsEnabled({ anchorMode: "zkpassport" })).toBe(false);
     expect(() => assertEconomicActionsEnabled({})).toThrowError(
-      /binding policy/
+      /Legacy economic routes are disabled/
     );
     expect(() =>
       assertEconomicActionsEnabled({ anchorMode: "zkpassport" })
-    ).toThrowError(/diagnostic/);
+    ).toThrowError(/separately configured proof-gated vault/);
     expect(economicActionsEnabled({ anchorMode: "legacy" })).toBe(true);
     expect(() =>
       assertEconomicActionsEnabled({ anchorMode: "legacy" })
@@ -254,7 +254,7 @@ describe("diagnostic-stage anchor policy", () => {
           destination: wallet.publicKey(),
         })
       )
-    ).toThrowError(/binding policy/);
+    ).toThrowError(/Legacy economic routes are disabled/);
     expect(() =>
       tx(db, () =>
         createOfframp(deps, customer, {
@@ -264,7 +264,7 @@ describe("diagnostic-stage anchor policy", () => {
           payoutIban: customer.iban,
         })
       )
-    ).toThrowError(/binding policy/);
+    ).toThrowError(/Legacy economic routes are disabled/);
     expect(economicSnapshot(db)).toEqual(before);
   });
 
