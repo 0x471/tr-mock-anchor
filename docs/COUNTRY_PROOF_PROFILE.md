@@ -6,9 +6,13 @@ Checked 20 September 2026, Europe/Istanbul. This is a source and public-artifact
 
 For the existing private age predicate plus order binding, adding one private country inclusion/exclusion predicate selects `outer_evm_count_6`. Adding separate nationality and issuing-country predicates selects `outer_evm_count_7`. Both require a different pinned verification key and `LOG_N=23`; the working Outer5 profile uses `LOG_N=22`. A correct fixed-profile extension must change the decoder, transcript dimensions, input counts, and key together, not just admit extra public inputs.
 
-The demo policy selected on 20 September is age 18+, Turkish nationality and a
-Turkish-issued synthetic document: inclusion lists `["TUR"]` for both attributes.
-This uses Outer7. Nationality and document-issuing country are different document
+The initial policy selected on 20 September was age 18+ with inclusion lists
+`["TUR"]` for both nationality and document issuer. The tester subsequently
+approved a separate `["ZKR"]`/`["ZKR"]`/18+ synthetic demo because the stock
+mock documents use the fictional Zero Knowledge Republic. The original TUR
+deployment remains unchanged. Both policies use Outer7; the new policy does not
+demonstrate Turkish eligibility. See [fixture setup](SYNTHETIC_DOCUMENT_SETUP.md).
+Nationality and document-issuing country are different document
 fields; neither is residence, location, bank jurisdiction, or a complete
 regulatory eligibility policy. [Mobile circuit selection][mobile-matcher],
 [document-field constants][constants]
