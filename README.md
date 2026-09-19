@@ -2,14 +2,46 @@
 
 Experimental fork of [Kaan's TR Mock Anchor](https://github.com/kaankacar/tr-mock-anchor), based on commit `81eef8af29fa8fdc6f6596a4472c8bedb5381668`. Work lives on `feat/zkpassport-anchor` in [0x471/tr-mock-anchor](https://github.com/0x471/tr-mock-anchor/tree/feat/zkpassport-anchor).
 
-This is a Testnet-only development project. It is not an audited verifier, a production anchor, or a completed proof-gated payout system. Upstream hosted URLs do not run this fork.
+This is a Testnet-only development project. It is not an audited verifier or a production anchor. Fresh country-proof acceptance, full settlement and public hosting are still being tested. Upstream hosted URLs do not run this fork.
+
+## Current deposit and withdrawal demo
+
+The `/anchor-gate` browser interface implements real SEP-10 wallet authentication,
+exact SEP-38 quotes and wallet-signed native proof calls. It requires Freighter
+on Testnet and a trustline to the configured mock asset. A configured hosted
+demo admits specific public wallets; never paste a wallet secret into the UI.
+
+The selected policy is age >=18, nationality TUR and document issuer TUR using
+synthetic ZKPassport developer-mode documents. Both country attributes are
+required; residence is not inferred. This profile uses OuterCount7, not the
+age-only diagnostic profile described below.
+
+- Deposit: provider tokens are reserved in the vault; native proof acceptance
+  and a separate simulated TRY receipt are required before token payout.
+- Withdrawal: the first accepted, wallet-authorized proof escrows exact tokens.
+  The notary must authorize one fixed simulated TRY payout while eligibility is
+  current. Paid-receipt reconciliation and release to the provider may finish
+  later without authorizing another payout.
+- No cancellation, refund or provider reclaim exists. Expired unresolved
+  reservations remain held. Do not send real funds or use real documents.
+
+The localhost validation vault is deployed at
+`CDGRHNKXIW4AN7T2UIFW4X33TXD7V7BY63XTNC2RX5JKKJM5ADJZXKR7`.
+Its country verifier and executable identity have been independently checked,
+and one authenticated deposit reservation is confirmed. Fresh Outer7 proof
+acceptance and completed deposits/withdrawals are not yet claimed.
+
+See [the implemented API and recovery model](docs/ANCHOR_GATE_INTEGRATION.md),
+[contract rules](docs/GATE_VAULT_DESIGN.md), and
+[deployment evidence](docs/TESTNET_GATE_DEPLOYMENT.md). A public hostname needs
+its own immutable-domain deployment, not reuse of the localhost vault.
 
 ## What works
 
 - A fixed ZKPassport 0.20.0 BB5 `OuterCount5` proof is verified natively in Soroban, including both outer and deferred recursive pairing equations.
 - A committed [Testnet verification transaction](https://stellar.expert/explorer/testnet/tx/1565ddf72714fc9dcc37e97030bbc5ac850244a1580266090b978222f9967494) returned `true` at ledger 4766089.
 - Authenticated proof diagnostics execute the deployed contract through read-only RPC simulation.
-- Default `ANCHOR_MODE=zkpassport` holds new orders, bank simulation, queued settlement and gateway payments. SEP-12 does not approve identity.
+- Default `ANCHOR_MODE=zkpassport` holds legacy orders, bank simulation, queued settlement and treasury payments. The separately configured native gate uses its own constrained path. SEP-12 does not approve identity.
 - A fresh browser-origin synthetic phone request completed and its supported proof returned `math_valid` in native Testnet simulation at ledger 4766664.
 
 The committed transaction above uses an official historical synthetic-document fixture from July 2026. The fresh phone result is separate: it used read-only RPC simulation, not a newly committed verification transaction. Neither result proves real identity or payment eligibility, and one successful phone run does not establish compatibility with every app build.
@@ -26,13 +58,17 @@ Phone proof -> SEP-10 authenticated submission -> native Soroban simulation
                                                 -> no KYC approval
                                                 -> no payout
 
-Future required path:
+Implemented gate path, awaiting full live acceptance:
 Order + wallet authorization -> on-chain policy + native verifier
                             -> single-use order authorization
 Mock bank receipt + authorized order -> contract-controlled asset transfer
 ```
 
-A proper on-chain gate still needs trusted document/circuit roots, exact policy commitments, domain/scope, freshness, network/contract/recipient/amount binding, wallet authorization and replay protection. Its vault must control settlement assets. A backend flag cannot constrain someone holding a classic treasury signing key.
+The new gate pins trusted document/circuit roots, exact policy commitments,
+domain/scope, freshness, network/contract/recipient/amount binding, wallet
+authorization and replay protection. Its vault controls reserved settlement
+assets. A backend flag cannot constrain someone holding a classic treasury
+signing key, which is why legacy treasury payouts stay disabled.
 
 Explicit `ANCHOR_MODE=legacy` restores the upstream simulated-KYC, ungated Testnet flow. It is a separate testing mode, not a ZKPassport bypass that is safe for a gated demo. Do not use real assets or customer documents.
 

@@ -23,6 +23,12 @@ metadata checks, not positive country-proof verification transactions. Direct
 contract-instance reads at ledgers 4767007 and 4767008 independently matched
 the executable Wasm hashes in the table.
 
+The deployed Count7 executable is pinned to the artifact above. Commit
+`ffbef27149a2b6afaddeec23574322901455cae0` retains the verifier source used for
+that deployment. Later comment-only cleanup in `6dd7068` produced a different
+local release artifact hash; it has not replaced the deployed executable.
+Use the exact pinned artifact when testing the live gate's Wasm behavior.
+
 ## Localhost v2 validation vault
 
 Contract: `CDGRHNKXIW4AN7T2UIFW4X33TXD7V7BY63XTNC2RX5JKKJM5ADJZXKR7`.
@@ -49,6 +55,27 @@ reconciled the submitted upload after a local hash-formatting error. The single
 upload and deployment receipts above were confirmed independently; neither
 error was treated as permission to duplicate an uncertain transaction.
 These deployment and negative checks do not establish positive proof acceptance.
+
+## Authenticated deposit reservation
+
+The dedicated automated recipient completed SEP-10 authentication and reserved
+one deposit through the anchor HTTP API:
+
+- Order `d558837fce75f4ee1ff9c1ba7269563bf7b8fd83dbf7c604ba5a130379eaca5a`.
+- Quote: 100.00 simulated TRY for 2.0947892 mock USDC.
+- [Create transaction](https://stellar.expert/explorer/testnet/tx/64d1cee6ee445dd3f474f01c93e776b59de89773e1c9340df25d988aea9ebf66), SUCCESS, ledger 4767314.
+- Provider tokens are reserved, not paid out. No accepted country proof, bank
+  receipt or settlement has been recorded for this acceptance run.
+
+The first phone request connected and was rejected before producing a proof.
+The tester confirmed that the selected synthetic document did not match the
+TUR/TUR/18+ policy. This is not evidence of onchain rejection or acceptance;
+the policy has not been weakened to make the test pass.
+
+Live authenticated HTTP negative checks rejected anonymous and foreign-origin
+requests, bank simulation before eligibility, settlement before receipt,
+withdrawal authorization on a deposit, and invalid proof lengths. The order
+remained at the created stage with its original single create action.
 
 ## Isolated demo accounts and asset
 
