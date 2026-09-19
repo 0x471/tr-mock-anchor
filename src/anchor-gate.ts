@@ -46,6 +46,7 @@ interface ActionRow {
   transaction_hash: string;
   operator_envelope: string | null;
   expires_at: number;
+  min_time: number | null;
   status: "prepared" | "pending" | "success" | "failed";
   ledger: number | null;
   created_at: string;
@@ -142,10 +143,12 @@ export function createGatedAnchor(deps: Deps, gate: GateGateway) {
       .all(row.id) as unknown as ActionRow[];
     for (const action of pending) {
       const result = await gate
-        .transaction(action.transaction_hash, {
-          created_at: Math.floor(Date.parse(action.created_at) / 1000),
-          expires_at: action.expires_at,
-        })
+        .transaction(
+          action.transaction_hash,
+          action.min_time === null
+            ? undefined
+            : { min_time: action.min_time, expires_at: action.expires_at }
+        )
         .catch(() => {
           throw unavailable();
         });
@@ -216,7 +219,7 @@ export function createGatedAnchor(deps: Deps, gate: GateGateway) {
     const id = randomBytes(16).toString("hex");
     const envelope = kind === "prove" ? null : prepared.transaction;
     db.prepare(
-      "INSERT INTO anchor_gate_actions_v2(id, order_id, kind, transaction_hash, operator_envelope, expires_at, status, created_at) VALUES (?,?,?,?,?,?,?,?)"
+      "INSERT INTO anchor_gate_actions_v2(id, order_id, kind, transaction_hash, operator_envelope, expires_at, min_time, status, created_at) VALUES (?,?,?,?,?,?,?,?,?)"
     ).run(
       id,
       row.id,
@@ -224,6 +227,7 @@ export function createGatedAnchor(deps: Deps, gate: GateGateway) {
       prepared.hash,
       envelope,
       prepared.expires_at,
+      prepared.min_time ?? null,
       "prepared",
       nowIso()
     );
@@ -234,6 +238,7 @@ export function createGatedAnchor(deps: Deps, gate: GateGateway) {
       transaction_hash: prepared.hash,
       operator_envelope: envelope,
       expires_at: prepared.expires_at,
+      min_time: prepared.min_time ?? null,
       status: "prepared",
       ledger: null,
       created_at: nowIso(),
