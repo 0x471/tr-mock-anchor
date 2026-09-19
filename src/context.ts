@@ -4,6 +4,7 @@ import type { RateService } from "./rates.js";
 import type { StellarGateway } from "./stellar.js";
 import type { PartnerRow } from "./core/types.js";
 import type { PassportVerifier } from "./zkpassport.js";
+import type { GateGateway } from "./anchor-gate-types.js";
 
 export interface Logger {
   info: (msg: string, extra?: unknown) => void;
@@ -18,6 +19,7 @@ export interface Deps {
   rates: RateService;
   log: Logger;
   passportVerifier?: PassportVerifier;
+  anchorGate?: GateGateway;
 }
 
 export type AppEnv = { Variables: { partner: PartnerRow } };
