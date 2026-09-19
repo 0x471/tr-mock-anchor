@@ -1,14 +1,87 @@
-# ZKPassport phone diagnostics: primary-source facts
+# ZKPassport phone diagnostics: origin diagnosis and successful control
 
-Checked 20 September 2026. This is a documentation/source review, not a diagnosis
-or a successful phone test. No live request URL, nonce, proof, identity data,
-report upload, or external support message is included.
+Updated 20 September 2026. The pre-Verify failure was traced to the origin of
+Node-created SDK sessions. A genuine browser-origin request then completed on
+the phone and passed native Soroban verification through Testnet RPC simulation.
+No live request URL, nonce, proof, identity data, report upload, or external
+support message is included here.
 
 The reviewed request profile is SDK 0.17.1, domain `localhost`, `devMode: true`,
 `compressed-evm`, age at least 18, a 64-character hexadecimal `custom_data`
 binding, non-salted identifier type 0, and validity 3600 seconds. This note does
 not establish compatibility with every app build. Record the actual app version
 and precise phone stage when investigating a failure.
+
+## Reproduce the supported browser flow
+
+```sh
+npm run zkpassport:browser -- --dev-mode
+```
+
+1. Open the printed `http://localhost:8792` URL in the computer's browser.
+   Use `localhost`, not `127.0.0.1`; do not open this loopback address on the phone.
+2. Click **Create synthetic request**. Copy the generated request link to the
+   phone, or use the browser's QR-sharing feature if available. There is no
+   built-in QR renderer on this diagnostic page.
+3. Select a synthetic document in the phone's developer mode and approve the
+   request. Keep the computer's browser tab and local server running.
+4. Read events and the final compatibility summary in the browser. The terminal
+   prints server startup information, not the final proof summary.
+
+The default lifetime is ten minutes from server startup, including time before
+the button is clicked. Restart the helper for a new session. Default mode does
+not save a proof export. An explicit `--out /absolute/scratch/proof-export.json`
+saves sensitive proof/public inputs to a new owner-only file; never commit it.
+Do not use direct Node-created SDK sessions for this phone flow.
+
+## Observed failure and successful control
+
+The phone repeatedly showed the generic error before Verify was tapped. The SDK
+reported a secure channel but no acceptance or proof callbacks. An age-only
+control failed at the same stage, so custom-data binding was not required to
+reproduce the error.
+
+With SDK 0.17.1 and bridge 0.12.2, the actual Node WebSocket Origin was `nodejs`.
+This was first captured on loopback, then confirmed with two synthetic peers on
+the real production relay. The joiner established a secure channel, received
+`peer.origin = "nodejs"`, and the unmodified pinned mobile `isOriginTrusted`
+function returned false for `localhost` using the live public project config.
+The relay test sent no acceptance or proof messages and closed both peers.
+Bridge's Node default and origin-on-connect handling explain why changing the
+claimed request domain does not change the actual creator origin.
+[Published bridge creator source](https://unpkg.com/@obsidion/bridge@0.12.2/src/bridge.ts),
+[relay-origin handling](https://unpkg.com/@obsidion/bridge@0.12.2/src/bridge-connection.ts).
+
+Crucially, developer mode bypasses the access screen's confirmation gate, not
+`WebSocketContext`'s subsequent origin validation. That provider rejects the
+origin, reports a local `DOMAIN_VERIFICATION_FAILED` error, and closes the
+connection without sending the SDK an error message. This explains the observed
+secure-channel-only diagnostic pattern; no origin checks were disabled or
+forged to fix it.
+[Mobile origin predicate](https://github.com/zkpassport/mobile-app/blob/c52f5ef1c4c29ce3fd7e46c6dd25d172a1f1cb0e/src/lib/trustedOrigin.ts),
+[post-handshake origin check](https://github.com/zkpassport/mobile-app/blob/c52f5ef1c4c29ce3fd7e46c6dd25d172a1f1cb0e/src/context/WebSocketContext.tsx#L236-L270).
+
+A genuine browser-created request then completed on the phone. Recorded events
+on 19 September 2026 UTC (20 September in Istanbul):
+
+| Event                        | UTC time     |
+| ---------------------------- | ------------ |
+| `request_ready`              | 22:25:48.588 |
+| `secure_channel`             | 22:27:23.844 |
+| `generating`                 | 22:27:27.320 |
+| `proof_received`             | 22:28:28.553 |
+| `native_inspection_complete` | 22:28:29.985 |
+
+The captured proof matched the supported profile: 9888 proof bytes and 320
+public-input bytes. Native Testnet simulation returned `math_valid` at ledger 4766664. All four local request diagnostics were true: `scopes_match`,
+`commitments_match`, `recent_timestamp`, and `non_salted_test_profile`.
+`eligibility_status` remained `not_evaluated`; `payout_authorized` remained false.
+
+This was a fresh phone proof checked through read-only simulation, not a freshly
+committed verification transaction. The previously committed ledger-4766089
+transaction used the separate historical July fixture. The successful control
+establishes this phone/request/profile combination worked; it is not an audit,
+proof of real identity, a universal app-version guarantee, or a payout gate.
 
 ## Source baselines
 
@@ -27,13 +100,11 @@ and precise phone stage when investigating a failure.
 
 ## Domain and development-document prerequisites
 
-The SDK normalizes a supplied domain and requires an explicit domain in Node.
-The inspected constructor does not reject `localhost`. In the public mobile
-snapshot, `AccessRequestView` skips domain verification when the request has
-`devMode` enabled, and its confirmation gate accepts a verified domain **or**
-developer mode. Consequently, these sources do not establish a prohibition on
-`localhost` for this development request. They are not an end-to-end guarantee
-for the user's installed app, and do not establish the cause of its error.
+The SDK normalizes a supplied domain; its constructor does not reject
+`localhost`. The mobile access screen's confirmation gate accepts a verified
+domain **or** developer mode, but this must not be read as a bypass of the
+separate provider origin check described above. `localhost` itself was not the
+failure: the genuine browser-origin localhost request succeeded.
 [SDK constructor and request handling](https://github.com/zkpassport/zkpassport-packages/blob/75982c88e35c62e83e6e5405cac30ad24c1648f6/packages/zkpassport-sdk/src/index.ts),
 [mobile domain gate, lines 334-352 and 1375-1388](https://github.com/zkpassport/mobile-app/blob/c52f5ef1c4c29ce3fd7e46c6dd25d172a1f1cb0e/src/components/AccessRequestView.tsx#L334).
 
@@ -58,7 +129,8 @@ Dashboard policies are a separate integration option.
 seconds and supports a non-salted identifier without requiring strict
 FaceMatch; the FaceMatch requirement applies to salted identifiers. The
 onchain example combines age predicates and custom-data binding. These facts
-confirm documented API shapes, not that this specific request completed.
+confirm documented API shapes. The successful run above separately confirms
+completion for the captured request/profile.
 [API reference](https://docs.zkpassport.id/api),
 [onchain request example](https://docs.zkpassport.id/getting-started/onchain).
 
@@ -67,7 +139,8 @@ service sends a compression request to `/prove` on the configured cloud prover,
 including the packaged circuit's Barretenberg version, verification key and
 circuit information. The default endpoint is `https://cloud-prover.zkpassport.id`.
 Thus this mode includes a cloud-compression stage; it is not wholly offline
-phone computation. No cloud-prover request was made for this review.
+phone computation. No standalone cloud-prover probe was needed to diagnose the
+pre-acceptance failure; the successful phone request used the normal proof flow.
 [Mode definitions](https://github.com/zkpassport/mobile-app/blob/c52f5ef1c4c29ce3fd7e46c6dd25d172a1f1cb0e/src/types/ProofService.ts#L103),
 [outer-proof service](https://github.com/zkpassport/mobile-app/blob/c52f5ef1c4c29ce3fd7e46c6dd25d172a1f1cb0e/src/services/ProofService/OuterProofService.ts#L190),
 [default endpoint](https://github.com/zkpassport/mobile-app/blob/c52f5ef1c4c29ce3fd7e46c6dd25d172a1f1cb0e/src/lib/constants.ts).
@@ -110,14 +183,15 @@ Do not include request links/QRs, topics, nonces, proof exports, passport fields
 or diagnostic dumps without inspecting and sanitizing them.
 [Official issue-report guidance](https://docs.zkpassport.id/faq#how-can-i-report-an-issue-im-facing-with-the-app).
 
-## Evidence still needed
+## Remaining limits and future failures
 
-- Installed app version/build and release channel, device model, and OS version.
-- Confirmation that a ZKR synthetic ID is selected and its age criterion passes.
-- Whether failure is before approval, during base proofs, during outer
-  compression, or while returning results; visible stage and elapsed time.
-- Sanitized SDK error text/code, if any, and whether generation/proof callbacks
-  occurred after request receipt.
+Record the installed app build/release channel, device model, and OS version
+for repeatability; the public source pin does not identify the installed binary.
+For a new failure, capture the stage, elapsed time, and sanitized SDK error
+category. Distinguish transport/origin errors from proof generation, unsupported
+profiles, and native verification errors. Do not infer a version mismatch from
+the generic overlay or extrapolate this successful synthetic run to real IDs.
 
-These observations can distinguish stages. None of the facts above identifies
-the cause of this particular failure or establishes a fix.
+The verifier still checks proof mathematics rather than an enforced eligibility
+and settlement policy. Request diagnostics and a valid proof do not approve
+KYC, authorize a payout, or change the default fail-closed anchor mode.
