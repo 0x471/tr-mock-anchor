@@ -1,0 +1,27 @@
+[package]
+name = "anchor-gate"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk = { version = "=26.0.1", default-features = false, features = ["alloc"] }
+
+[dev-dependencies]
+soroban-sdk = { version = "=26.0.1", features = ["testutils"] }
+
+[features]
+default = []
+std = []
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+overflow-checks = true
