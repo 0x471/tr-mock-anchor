@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import { createApp } from "../src/app.js";
 import { config } from "../src/config.js";
 import { createLogger, type Deps } from "../src/context.js";
@@ -7,13 +8,19 @@ import { createRateService } from "../src/rates.js";
 import { createFakeGateway } from "../src/stellar.js";
 import {
   Asset,
+  Account,
+  Contract,
   Keypair,
   Networks,
+  StrKey,
+  Transaction,
   TransactionBuilder,
+  xdr,
 } from "@stellar/stellar-sdk";
 import type {
   GateGateway,
   GateOrder,
+  GateReceipt,
   GateTerms,
   PreparedGateAction,
 } from "../src/anchor-gate-types.js";
@@ -70,9 +77,12 @@ function fixture(anchorGate?: GateGateway) {
 }
 
 class FakeGate implements GateGateway {
+  payouts = 0;
   orders = new Map<string, GateOrder>();
+  prepared = new Map<string, () => void>();
+  confirmed = new Set<string>();
   configuration = async () => ({
-    contract: "test-vault",
+    contract: StrKey.encodeContract(Buffer.alloc(32, 7)),
     token: new Asset(config.usdcCode, config.usdcIssuer).contractId(
       Networks.TESTNET
     ),
@@ -93,34 +103,447 @@ class FakeGate implements GateGateway {
     id: string,
     terms: GateTerms
   ): Promise<PreparedGateAction> {
-    this.orders.set(id, {
+    const state: GateOrder = {
       ...terms,
       id,
+      created_at: Math.floor(Date.now() / 1000),
+      confirmed_ledger: 123,
       stage: "created",
       challenge: "a".repeat(64),
       eligibility_expires_at: null,
       receipt_id: null,
-    });
+    };
+    const hash = id;
+    this.prepared.set(hash, () => this.orders.set(id, state));
     return {
-      transaction: "create",
-      hash: "b".repeat(64),
+      transaction: hash,
+      hash,
       expires_at: Math.floor(Date.now() / 1000) + 60,
     };
   }
-  async prepareProof(): Promise<PreparedGateAction> {
-    throw new Error("not implemented");
+  async prepareProof(
+    id: string,
+    recipient: string,
+    proof: Buffer,
+    publicInputs: Buffer
+  ): Promise<PreparedGateAction> {
+    const transaction = new TransactionBuilder(new Account(recipient, "1"), {
+      fee: "100",
+      networkPassphrase: Networks.TESTNET,
+    })
+      .addOperation(
+        new Contract((await this.configuration()).contract).call(
+          "prove_order",
+          xdr.ScVal.scvBytes(Buffer.from(id, "hex")),
+          xdr.ScVal.scvBytes(proof),
+          xdr.ScVal.scvBytes(publicInputs)
+        )
+      )
+      .setTimeout(120)
+      .build();
+    const hash = Buffer.from(transaction.hash()).toString("hex");
+    this.prepared.set(hash, () => {
+      const state = this.orders.get(id)!;
+      this.orders.set(id, {
+        ...state,
+        stage: "eligible",
+        eligibility_expires_at: Math.floor(Date.now() / 1000) + 300,
+      });
+    });
+    return {
+      transaction: transaction.toXdr(),
+      hash,
+      expires_at: Number(transaction.timeBounds!.maxTime),
+    };
   }
-  async prepareReceipt(): Promise<PreparedGateAction> {
-    throw new Error("not implemented");
+  async prepareReceipt(
+    id: string,
+    receipt: GateReceipt
+  ): Promise<PreparedGateAction> {
+    const hash = createHash("sha256").update(`receipt:${id}`).digest("hex");
+    this.prepared.set(hash, () =>
+      this.orders.set(id, {
+        ...this.orders.get(id)!,
+        stage: "funded",
+        receipt_id: receipt.event_id,
+      })
+    );
+    return {
+      transaction: hash,
+      hash,
+      expires_at: Math.floor(Date.now() / 1000) + 60,
+    };
   }
-  async prepareSettlement(): Promise<PreparedGateAction> {
-    throw new Error("not implemented");
+  async prepareSettlement(id: string): Promise<PreparedGateAction> {
+    const hash = createHash("sha256").update(`settle:${id}`).digest("hex");
+    this.prepared.set(hash, () => {
+      if (this.orders.get(id)!.stage !== "settled") this.payouts++;
+      this.orders.set(id, { ...this.orders.get(id)!, stage: "settled" });
+    });
+    return {
+      transaction: hash,
+      hash,
+      expires_at: Math.floor(Date.now() / 1000) + 60,
+    };
   }
-  submit = async () => ({ status: "success" as const, ledger: 123 });
-  transaction = async () => ({ status: "success" as const, ledger: 123 });
+  submit = async (envelope: string) => {
+    const hash = this.prepared.has(envelope)
+      ? envelope
+      : Buffer.from(
+          TransactionBuilder.fromXdr(envelope, Networks.TESTNET).hash()
+        ).toString("hex");
+    this.prepared.get(hash)?.();
+    this.confirmed.add(hash);
+    return { status: "success" as const, ledger: 123 };
+  };
+  transaction = async (hash: string) => ({
+    status: this.confirmed.has(hash)
+      ? ("success" as const)
+      : ("pending" as const),
+    ledger: this.confirmed.has(hash) ? 123 : null,
+  });
+}
+
+async function checkout(gate = new FakeGate()) {
+  const fixtureValue = fixture(gate);
+  const { app, authenticate, deps } = fixtureValue;
+  const user = await authenticate();
+  const quote = (await (
+    await app.request("/sep38/quote", {
+      method: "POST",
+      headers: user.headers,
+      body: JSON.stringify({
+        sell_asset: "iso4217:TRY",
+        buy_asset: `stellar:USDC:${deps.cfg.usdcIssuer}`,
+        sell_amount: "200.00",
+      }),
+    })
+  ).json()) as { id: string };
+  const order = (await (
+    await app.request("/anchor-gate/orders", {
+      method: "POST",
+      headers: { ...user.headers, "Idempotency-Key": "checkout" },
+      body: JSON.stringify({ quote_id: quote.id }),
+    })
+  ).json()) as { id: string };
+  return { ...fixtureValue, user, order, gate };
+}
+
+async function eligibleCheckout() {
+  const current = await checkout();
+  const { app, user, order } = current;
+  const path = `/anchor-gate/orders/${order.id}`;
+  const prepared = (await (
+    await app.request(`${path}/prepare-proof`, {
+      method: "POST",
+      headers: user.headers,
+      body: JSON.stringify({
+        proof: "00".repeat(9888),
+        public_inputs: "00".repeat(352),
+      }),
+    })
+  ).json()) as { action_id: string; transaction: string };
+  const signed = TransactionBuilder.fromXdr(
+    prepared.transaction,
+    Networks.TESTNET
+  );
+  signed.sign(user.wallet);
+  expect(
+    (
+      await app.request(`${path}/submit`, {
+        method: "POST",
+        headers: user.headers,
+        body: JSON.stringify({
+          action_id: prepared.action_id,
+          signed_transaction: signed.toXdr(),
+        }),
+      })
+    ).status
+  ).toBe(200);
+  return current;
 }
 
 describe("gated onramp HTTP interface", () => {
+  it("rejects concurrent duplicate proof preparation without losing the first action", async () => {
+    const { app, user, order } = await checkout();
+    const request = () =>
+      app.request(`/anchor-gate/orders/${order.id}/prepare-proof`, {
+        method: "POST",
+        headers: user.headers,
+        body: JSON.stringify({
+          proof: "00".repeat(9888),
+          public_inputs: "00".repeat(352),
+        }),
+      });
+    const responses = await Promise.all([request(), request()]);
+    expect(responses.map((response) => response.status).sort()).toEqual([
+      200, 409,
+    ]);
+  });
+  it("keeps early or expired bank actions and settlement blocked", async () => {
+    const initial = await checkout();
+    const path = `/anchor-gate/orders/${initial.order.id}`;
+    const post = (action: string) =>
+      initial.app.request(`${path}/${action}`, {
+        method: "POST",
+        headers: initial.user.headers,
+        body: "{}",
+      });
+    expect((await post("simulate-bank")).status).toBe(409);
+    expect((await post("settle")).status).toBe(409);
+    const other = await initial.authenticate();
+    expect(
+      (
+        await initial.app.request(`${path}/simulate-bank`, {
+          method: "POST",
+          headers: other.headers,
+          body: "{}",
+        })
+      ).status
+    ).toBe(404);
+    const current = await eligibleCheckout();
+    const fundedPath = `/anchor-gate/orders/${current.order.id}`;
+    expect(
+      (
+        await current.app.request(`${fundedPath}/simulate-bank`, {
+          method: "POST",
+          headers: current.user.headers,
+          body: "{}",
+        })
+      ).status
+    ).toBe(200);
+    current.gate.orders.get(current.order.id)!.eligibility_expires_at =
+      Math.floor(Date.now() / 1000) - 1;
+    const expired = await current.app.request(`${fundedPath}/settle`, {
+      method: "POST",
+      headers: current.user.headers,
+      body: "{}",
+    });
+    expect(expired.status).toBe(409);
+    expect(current.gate.payouts).toBe(0);
+  });
+  it("recognizes externally settled immutable contract state without local settlement receipts", async () => {
+    const { app, user, order, gate } = await eligibleCheckout();
+    const state = gate.orders.get(order.id)!;
+    gate.orders.set(order.id, {
+      ...state,
+      stage: "settled",
+      receipt_id: "c".repeat(64),
+      confirmed_ledger: 124,
+    });
+    expect(
+      await (
+        await app.request(`/anchor-gate/orders/${order.id}`, {
+          headers: user.headers,
+        })
+      ).json()
+    ).toMatchObject({
+      completed: true,
+      stage: "settled",
+      confirmed_ledger: 124,
+    });
+  });
+  it("records one owner-authorized mock receipt and completes only from settled contract state", async () => {
+    const { app, user, order, gate } = await eligibleCheckout();
+    const path = `/anchor-gate/orders/${order.id}`;
+    const send = (action: string) =>
+      app.request(`${path}/${action}`, {
+        method: "POST",
+        headers: user.headers,
+        body: "{}",
+      });
+    const receipt = await send("simulate-bank");
+    expect(receipt.status).toBe(200);
+    const funded = await receipt.json();
+    expect(funded).toMatchObject({ stage: "funded", completed: false });
+    expect(await (await send("simulate-bank")).json()).toEqual(funded);
+    expect(await (await send("settle")).json()).toMatchObject({
+      stage: "settled",
+      completed: true,
+    });
+    expect(await (await send("settle")).json()).toMatchObject({
+      stage: "settled",
+      completed: true,
+    });
+    expect(gate.payouts).toBe(1);
+  });
+  for (const alteration of ["fee", "method", "signer", "network"] as const) {
+    it(`rejects proof transaction ${alteration} substitution`, async () => {
+      const { app, user, order } = await checkout();
+      const path = `/anchor-gate/orders/${order.id}`;
+      const response = await app.request(`${path}/prepare-proof`, {
+        method: "POST",
+        headers: user.headers,
+        body: JSON.stringify({
+          proof: "00".repeat(9888),
+          public_inputs: "00".repeat(352),
+        }),
+      });
+      const prepared = (await response.json()) as {
+        action_id: string;
+        transaction: string;
+      };
+      let transaction = new Transaction(
+        prepared.transaction,
+        alteration === "network" ? Networks.PUBLIC : Networks.TESTNET
+      );
+      if (alteration === "fee")
+        transaction = TransactionBuilder.cloneFrom(transaction, {
+          fee: "200",
+        }).build();
+      if (alteration === "method")
+        transaction = TransactionBuilder.cloneFrom(transaction)
+          .clearOperations()
+          .addOperation(
+            new Contract(StrKey.encodeContract(Buffer.alloc(32, 7))).call(
+              "settle",
+              xdr.ScVal.scvBytes(Buffer.from(order.id, "hex"))
+            )
+          )
+          .build();
+      transaction.sign(
+        alteration === "signer" ? Keypair.random() : user.wallet
+      );
+      const result = await app.request(`${path}/submit`, {
+        method: "POST",
+        headers: user.headers,
+        body: JSON.stringify({
+          action_id: prepared.action_id,
+          signed_transaction: transaction.toXdr(),
+        }),
+      });
+      expect(result.status).toBe(422);
+      expect(await result.json()).toMatchObject({
+        error: { code: "invalid_signed_transaction" },
+      });
+      expect(
+        await (await app.request(path, { headers: user.headers })).json()
+      ).toMatchObject({ stage: "created", bank_instructions: null });
+    });
+  }
+  it("keeps a submitted proof pending until its contract state is confirmed", async () => {
+    const { app, user, order, gate } = await checkout();
+    const path = `/anchor-gate/orders/${order.id}`;
+    const response = await app.request(`${path}/prepare-proof`, {
+      method: "POST",
+      headers: user.headers,
+      body: JSON.stringify({
+        proof: "00".repeat(9888),
+        public_inputs: "00".repeat(352),
+      }),
+    });
+    const prepared = (await response.json()) as {
+      action_id: string;
+      transaction: string;
+    };
+    const transaction = TransactionBuilder.fromXdr(
+      prepared.transaction,
+      Networks.TESTNET
+    );
+    transaction.sign(user.wallet);
+    const submit = gate.submit;
+    gate.submit = async () => {
+      throw new Error("RPC timeout");
+    };
+    const pending = await app.request(`${path}/submit`, {
+      method: "POST",
+      headers: user.headers,
+      body: JSON.stringify({
+        action_id: prepared.action_id,
+        signed_transaction: transaction.toXdr(),
+      }),
+    });
+    expect(await pending.json()).toMatchObject({
+      stage: "created",
+      bank_instructions: null,
+    });
+    gate.submit = submit;
+    const retry = await app.request(`${path}/submit`, {
+      method: "POST",
+      headers: user.headers,
+      body: JSON.stringify({
+        action_id: prepared.action_id,
+        signed_transaction: transaction.toXdr(),
+      }),
+    });
+    expect(await retry.json()).toMatchObject({ stage: "eligible" });
+  });
+  it("rejects a proof with the wrong profile before preparing a transaction", async () => {
+    const { app, user, order } = await checkout();
+    const response = await app.request(
+      `/anchor-gate/orders/${order.id}/prepare-proof`,
+      {
+        method: "POST",
+        headers: user.headers,
+        body: JSON.stringify({
+          proof: "00".repeat(9888),
+          public_inputs: "00".repeat(320),
+        }),
+      }
+    );
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({
+      error: { code: "proof_length" },
+    });
+  });
+  it("requires the wallet to sign the exact prepared proof transaction before releasing bank instructions", async () => {
+    const { app, user, order } = await checkout();
+    const path = `/anchor-gate/orders/${order.id}`;
+    const intent = await app.request(`${path}/proof-request`, {
+      headers: user.headers,
+    });
+    expect(intent.status).toBe(200);
+    expect(await intent.json()).toMatchObject({
+      custom_data: "a".repeat(64),
+      nullifier_type: 2,
+      dev_mode: true,
+      proof_type: "compressed-evm",
+    });
+    const response = await app.request(`${path}/prepare-proof`, {
+      method: "POST",
+      headers: user.headers,
+      body: JSON.stringify({
+        proof: "00".repeat(9888),
+        public_inputs: "00".repeat(352),
+      }),
+    });
+    expect(response.status).toBe(200);
+    const prepared = (await response.json()) as {
+      action_id: string;
+      transaction: string;
+      hash: string;
+    };
+    expect(
+      await (await app.request(path, { headers: user.headers })).json()
+    ).toMatchObject({ stage: "created", bank_instructions: null });
+    const unsigned = await app.request(`${path}/submit`, {
+      method: "POST",
+      headers: user.headers,
+      body: JSON.stringify({
+        action_id: prepared.action_id,
+        signed_transaction: prepared.transaction,
+      }),
+    });
+    expect(unsigned.status).toBe(422);
+    const transaction = TransactionBuilder.fromXdr(
+      prepared.transaction,
+      Networks.TESTNET
+    );
+    transaction.sign(user.wallet);
+    const submitted = await app.request(`${path}/submit`, {
+      method: "POST",
+      headers: user.headers,
+      body: JSON.stringify({
+        action_id: prepared.action_id,
+        signed_transaction: transaction.toXdr(),
+      }),
+    });
+    expect(submitted.status).toBe(200);
+    expect(await submitted.json()).toMatchObject({
+      stage: "eligible",
+      bank_instructions: { simulated: true, reference: order.id },
+    });
+  });
   it("does not reinterpret an existing quote when the configured issuer changes", async () => {
     const gate = new FakeGate();
     const { app, authenticate, deps } = fixture(gate);

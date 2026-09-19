@@ -32,6 +32,8 @@ export interface GateConfiguration {
 
 export interface GateOrder extends GateTerms {
   id: string;
+  created_at: number;
+  confirmed_ledger: number;
   stage: "created" | "eligible" | "funded" | "settled";
   challenge: string;
   eligibility_expires_at: number | null;
@@ -63,5 +65,8 @@ export interface GateGateway {
   prepareReceipt(id: string, receipt: GateReceipt): Promise<PreparedGateAction>;
   prepareSettlement(id: string): Promise<PreparedGateAction>;
   submit(transaction: string): Promise<GateTransaction>;
-  transaction(hash: string): Promise<GateTransaction>;
+  transaction(
+    hash: string,
+    bounds?: { created_at: number; expires_at: number }
+  ): Promise<GateTransaction>;
 }

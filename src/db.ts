@@ -240,6 +240,7 @@ CREATE TABLE IF NOT EXISTS anchor_gate_orders (
   amount_try TEXT NOT NULL,
   amount_token TEXT NOT NULL,
   chain_json TEXT,
+  receipt_json TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(subject, idempotency_key)
@@ -261,6 +262,7 @@ ON anchor_gate_actions(order_id, kind) WHERE status IN ('prepared', 'pending');
 
 /** Additive migrations for databases created before a column existed. */
 const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
+  ["anchor_gate_orders", "receipt_json", "TEXT"],
   ["onramps", "mid_rate", "TEXT"],
   ["onramps", "claimable_balance_supported", "INTEGER NOT NULL DEFAULT 1"],
   ["offramps", "mid_rate", "TEXT"],
