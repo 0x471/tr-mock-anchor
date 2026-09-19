@@ -37,7 +37,7 @@ export async function main() {
       log.info(
         `stellar endpoints: submit/seq via RPC ${config.rpcUrl}; payment watcher via Horizon ${config.horizonUrl}`
       );
-    log.info(`treasury: ${stellar.treasuryPublicKey}`);
+    log.info(`legacy treasury: ${stellar.treasuryPublicKey}`);
     log.info(
       `sep: signing key ${sep.signingKeypair.publicKey()} home_domain ${sep.homeDomain}`
     );
@@ -46,15 +46,17 @@ export async function main() {
   void stellar
     .treasuryUsdcBalance()
     .then((b) => {
-      log.info(`treasury USDC balance: ${fmtUsdc(b)}`);
+      log.info(`legacy treasury USDC balance: ${fmtUsdc(b)}`);
       if (b < 100_0000000n)
         log.warn(
-          "treasury is low: fund it (Circle faucet: https://faucet.circle.com, Stellar testnet) or run npm run sweep"
+          config.anchorMode === "zkpassport"
+            ? "legacy treasury balance is low; proof-gated orders use the configured vault provider liquidity or recipient escrow, not the legacy treasury"
+            : "legacy treasury balance is low: fund it with the configured USDC issuer asset before legacy settlement"
         );
     })
     .catch((e) =>
       log.error(
-        `treasury balance check failed: ${(e as Error).message} (is the account funded with a USDC trustline? run npm run setup:treasury)`
+        `legacy treasury balance check failed: ${(e as Error).message} (check account funding and its configured issuer trustline)`
       )
     );
   void rates
@@ -67,7 +69,7 @@ export async function main() {
   if (config.workers) workers.start();
   else
     log.warn(
-      "WORKERS=false: on-ramps will not settle and off-ramps will not be detected"
+      "WORKERS=false: legacy settlement, payment-watcher, and webhook workers are disabled; the separately configured proof-gated HTTP/RPC flow does not depend on these workers"
     );
 
   const shutdown = () => {
