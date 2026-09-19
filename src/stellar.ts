@@ -10,6 +10,7 @@ import {
   Keypair,
   Memo,
   MuxedAccount,
+  Networks,
   Operation,
   rpc,
   StrKey,
@@ -94,7 +95,14 @@ export function baseAccountOf(addr: string): string {
 
 /* ---------------- live (Horizon testnet) ---------------- */
 
+function assertTestnet(cfg: Config): void {
+  if (cfg.networkPassphrase !== Networks.TESTNET) {
+    throw new Error("Only Stellar Testnet is supported");
+  }
+}
+
 export function createLiveGateway(cfg: Config): StellarGateway {
+  assertTestnet(cfg);
   if (!cfg.treasurySecret)
     throw new Error(
       "TREASURY_SECRET is required when STELLAR_MODE=live (run: npm run setup:treasury)"
@@ -405,6 +413,7 @@ export function createFakeGateway(
   cfg: Config,
   initialBalance = "1000000.0000000"
 ): FakeGateway {
+  assertTestnet(cfg);
   const treasury = cfg.treasurySecret
     ? Keypair.fromSecret(cfg.treasurySecret)
     : Keypair.random();
@@ -503,6 +512,7 @@ export function createFakeGateway(
 }
 
 export function createGateway(cfg: Config): StellarGateway {
+  assertTestnet(cfg);
   return cfg.stellarMode === "fake"
     ? createFakeGateway(cfg)
     : createLiveGateway(cfg);
