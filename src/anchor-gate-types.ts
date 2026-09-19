@@ -28,6 +28,7 @@ export interface GateConfiguration {
   policy_valid_until: number;
   max_amount: string;
   max_try_minor: string;
+  ledger_time: number;
 }
 
 export interface GateOrder extends GateTerms {

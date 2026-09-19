@@ -4,7 +4,7 @@ export type AnchorMode = "zkpassport" | "legacy";
 
 export const POLICY_PENDING_CODE = "zkpassport_policy_pending";
 export const POLICY_PENDING_MESSAGE =
-  "Native proof verification is diagnostic only. Eligibility and payout authorization are disabled until a binding policy is implemented.";
+  "Legacy economic routes are disabled in zkpassport mode. Use the separately configured proof-gated vault; it remains unavailable until explicitly configured.";
 
 export function economicActionsEnabled(cfg: {
   anchorMode?: AnchorMode;
