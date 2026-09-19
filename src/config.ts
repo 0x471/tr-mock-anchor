@@ -35,6 +35,10 @@ export const config = {
     "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
   ),
   treasurySecret: str(env.TREASURY_SECRET, ""),
+  anchorGateContract: str(env.ANCHOR_GATE_CONTRACT, ""),
+  anchorGateProviderSecret: str(env.ANCHOR_GATE_PROVIDER_SECRET, ""),
+  anchorGateBankNotarySecret: str(env.ANCHOR_GATE_BANK_NOTARY_SECRET, ""),
+  anchorGateMaxFeeStroops: str(env.ANCHOR_GATE_MAX_FEE_STROOPS, "1000000"),
 
   // Pricing
   rateSource: str(env.RATE_SOURCE, "reflector") as "reflector" | "static",

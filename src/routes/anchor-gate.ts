@@ -32,6 +32,10 @@ export function anchorGateRoutes(deps: Deps, sep: SepContext) {
     c.json({
       enabled: !!gate,
       network: "testnet",
+      network_passphrase: Networks.TESTNET,
+      sell_asset: "iso4217:TRY",
+      buy_asset: `stellar:${deps.cfg.usdcCode}:${deps.cfg.usdcIssuer}`,
+      max_fee_stroops: deps.cfg.anchorGateMaxFeeStroops,
       ...(gate ? { config: await gate.configuration() } : {}),
     })
   );
@@ -49,9 +53,10 @@ export function anchorGateRoutes(deps: Deps, sep: SepContext) {
     const claims = verifyJwt(token, sep.jwtSecret);
     let header: { alg?: string; typ?: string } = {};
     try {
-      header = JSON.parse(
+      const parsed: unknown = JSON.parse(
         Buffer.from(token.split(".")[0] ?? "", "base64url").toString()
       );
+      if (parsed && typeof parsed === "object") header = parsed;
     } catch {
       /* Invalid credentials fail closed below. */
     }
@@ -62,6 +67,8 @@ export function anchorGateRoutes(deps: Deps, sep: SepContext) {
       header.typ !== "JWT" ||
       claims.iss !== `${deps.cfg.publicUrl}/auth` ||
       !Number.isSafeInteger(claims.iat) ||
+      !Number.isSafeInteger(claims.exp) ||
+      claims.iat < 0 ||
       claims.iat > now + 30 ||
       claims.exp <= now
     )
@@ -85,6 +92,21 @@ export function anchorGateRoutes(deps: Deps, sep: SepContext) {
       onError: (c) => c.json({ error: { code: "body_too_large" } }, 413),
     })
   );
+  let pendingMutation = Promise.resolve();
+  app.use("/anchor-gate/orders*", async (c, next) => {
+    if (c.req.method !== "POST") return next();
+    const previous = pendingMutation;
+    let release!: () => void;
+    pendingMutation = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      await next();
+    } finally {
+      release();
+    }
+  });
   app.post("/anchor-gate/orders", async (c) => {
     const parsed = z
       .object({ quote_id: z.string().min(1).max(100) })
@@ -109,6 +131,62 @@ export function anchorGateRoutes(deps: Deps, sep: SepContext) {
   });
   app.get("/anchor-gate/orders/:id", async (c) =>
     c.json(await onramp!.get(c.req.param("id"), c.get("sepSub")))
+  );
+  app.get("/anchor-gate/orders/:id/proof-request", async (c) =>
+    c.json(await onramp!.proofRequest(c.req.param("id"), c.get("sepSub")))
+  );
+  app.post("/anchor-gate/orders/:id/prepare-proof", async (c) => {
+    const hex = z
+      .string()
+      .regex(/^(?:[0-9a-f]{2})+$/)
+      .max(22000);
+    const parsed = z
+      .object({ proof: hex, public_inputs: hex })
+      .strict()
+      .safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success)
+      throw new ApiError(
+        400,
+        "invalid_proof_request",
+        "Provide proof and public_inputs as lowercase hexadecimal without 0x."
+      );
+    return c.json(
+      await onramp!.prepareProof(
+        c.req.param("id"),
+        c.get("sepSub"),
+        Buffer.from(parsed.data.proof, "hex"),
+        Buffer.from(parsed.data.public_inputs, "hex")
+      )
+    );
+  });
+  app.post("/anchor-gate/orders/:id/submit", async (c) => {
+    const parsed = z
+      .object({
+        action_id: z.string().regex(/^[0-9a-f]{32}$/),
+        signed_transaction: z.string().min(1).max(100000),
+      })
+      .strict()
+      .safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success)
+      throw new ApiError(
+        400,
+        "invalid_submission",
+        "Provide action_id and signed_transaction."
+      );
+    return c.json(
+      await onramp!.submitProof(
+        c.req.param("id"),
+        c.get("sepSub"),
+        parsed.data.action_id,
+        parsed.data.signed_transaction
+      )
+    );
+  });
+  app.post("/anchor-gate/orders/:id/simulate-bank", async (c) =>
+    c.json(await onramp!.simulateBank(c.req.param("id"), c.get("sepSub")))
+  );
+  app.post("/anchor-gate/orders/:id/settle", async (c) =>
+    c.json(await onramp!.settle(c.req.param("id"), c.get("sepSub")))
   );
   return app;
 }
