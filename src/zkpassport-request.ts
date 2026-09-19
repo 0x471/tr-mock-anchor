@@ -163,6 +163,9 @@ export interface DiagnosticRequest {
   onError(callback: (error: unknown) => void): void;
   onRequestReceived(callback: () => void): void;
   onGeneratingProof(callback: () => void): void;
+  onProofGenerated?(callback: (proof: unknown) => void): void;
+  onBridgeConnect?(callback: () => void): void;
+  onBridgeConnectionLost?(callback: () => void): void;
 }
 
 export interface DiagnosticBuilder {
@@ -210,6 +213,26 @@ export function loadPassportRequestClient(
   return new sdk.ZKPassport(domain);
 }
 
+export type DiagnosticMilestone =
+  | "request_ready"
+  | "bridge_connected"
+  | "bridge_connection_lost"
+  | "secure_channel_established"
+  | "generating_proof"
+  | "proof_generated"
+  | "proof_received_verifying_math";
+
+export type SdkErrorCategory =
+  "unsupported_id" | "proof_generation_failed" | "other";
+
+export interface DiagnosticEvent {
+  event: DiagnosticMilestone | "sdk_error";
+  at: string;
+  proofs_received: number;
+  url?: string;
+  sdk_error_category?: SdkErrorCategory;
+}
+
 export interface DiagnosticSummary {
   outcome: "received" | "rejected" | "error" | "timed_out" | "interrupted";
   profile: "supported" | "unsupported" | "malformed" | "not_received";
@@ -218,6 +241,9 @@ export interface DiagnosticSummary {
   payout_authorized: false;
   eligibility_status: "not_evaluated";
   proofs: { name?: string; version?: string; vkey_hash?: string }[];
+  last_milestone: DiagnosticMilestone | null;
+  proofs_received: number;
+  sdk_error_category?: SdkErrorCategory;
   proof_bytes?: number;
   public_input_bytes?: number;
   request_checks?: {
@@ -255,6 +281,8 @@ function emptySummary(
     payout_authorized: false,
     eligibility_status: "not_evaluated",
     proofs: [],
+    last_milestone: null,
+    proofs_received: 0,
   };
 }
 
@@ -398,13 +426,25 @@ export async function runPassportRequest(
   options: RequestOptions,
   client: PassportRequestClient,
   verifier: PassportVerifier,
-  onEvent: (event: { event: string; url?: string }) => void,
+  onEvent: (event: DiagnosticEvent) => void,
   signal?: AbortSignal
 ): Promise<DiagnosticResult> {
   const intent = createDiagnosticIntent(options);
   return new Promise((resolve) => {
     let finished = false;
     let processing = false;
+    let lastMilestone: DiagnosticMilestone | null = null;
+    let proofsReceived = 0;
+    const milestone = (event: DiagnosticMilestone, url?: string) => {
+      if (finished) return;
+      lastMilestone = event;
+      onEvent({
+        event,
+        at: new Date().toISOString(),
+        proofs_received: proofsReceived,
+        ...(url === undefined ? {} : { url }),
+      });
+    };
     const cleanup = () => {
       try {
         client.clearAllRequests();
@@ -418,7 +458,14 @@ export async function runPassportRequest(
       clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
       cleanup();
-      resolve(result);
+      resolve({
+        ...result,
+        summary: {
+          ...result.summary,
+          last_milestone: lastMilestone,
+          proofs_received: proofsReceived,
+        },
+      });
     };
     const abort = () => finish({ summary: emptySummary("interrupted") });
     const timer = setTimeout(
@@ -454,23 +501,52 @@ export async function runPassportRequest(
           .bind("custom_data", intent.digest)
           .done();
         request.onRequestReceived(() => {
-          if (!finished) onEvent({ event: "request_received" });
+          // SDK 0.17.1 emits this on secure-channel establishment, not acceptance.
+          milestone("secure_channel_established");
         });
         request.onGeneratingProof(() => {
-          if (!finished) onEvent({ event: "generating_proof" });
+          milestone("generating_proof");
         });
+        request.onProofGenerated?.(() => {
+          if (finished) return;
+          proofsReceived += 1;
+          milestone("proof_generated");
+        });
+        request.onBridgeConnect?.(() => milestone("bridge_connected"));
+        request.onBridgeConnectionLost?.(() =>
+          milestone("bridge_connection_lost")
+        );
         request.onReject(() => finish({ summary: emptySummary("rejected") }));
-        request.onError(() => finish({ summary: emptySummary("error") }));
+        request.onError((error) => {
+          if (finished) return;
+          // Only these string cases have defined meaning in SDK 0.17.1.
+          const category: SdkErrorCategory =
+            error === "This ID is not supported yet"
+              ? "unsupported_id"
+              : typeof error === "string" &&
+                  error.startsWith("Cannot generate proof")
+                ? "proof_generation_failed"
+                : "other";
+          onEvent({
+            event: "sdk_error",
+            at: new Date().toISOString(),
+            proofs_received: proofsReceived,
+            sdk_error_category: category,
+          });
+          finish({
+            summary: { ...emptySummary("error"), sdk_error_category: category },
+          });
+        });
         request.onSuccess((response) => {
           if (finished || processing) return;
           processing = true;
-          onEvent({ event: "proof_received_verifying_math" });
+          milestone("proof_received_verifying_math");
           void inspectReceivedProofs(response, client, verifier, intent).then(
             finish,
             () => finish({ summary: emptySummary("error") })
           );
         });
-        onEvent({ event: "request_ready", url: request.url });
+        milestone("request_ready", request.url);
       })
       .catch(() => finish({ summary: emptySummary("error") }));
   });
