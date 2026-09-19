@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { Networks } from "@stellar/stellar-sdk";
 import type { AppEnv, Deps } from "../context.js";
 import { fmtRate, fmtUsdc } from "../money.js";
 import type { SepContext } from "../sepauth.js";
@@ -16,21 +17,41 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
   const { cfg, stellar, rates } = deps;
   const app = new Hono<AppEnv>();
   const legacy = economicActionsEnabled(cfg);
+  const nativeGateConfigured =
+    !legacy && cfg.networkPassphrase === Networks.TESTNET && !!deps.anchorGate;
+  const strictPolicyMessage = nativeGateConfigured
+    ? "Legacy economic routes remain disabled. The native Testnet gate is configured; each order still requires its own proof, wallet authorization, and mock-bank receipt."
+    : POLICY_PENDING_MESSAGE;
 
   if (!legacy) {
-    const diagnosticPage = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>ZKPassport anchor diagnostics</title></head><body><main><h1>ZKPassport anchor diagnostics</h1><p>${POLICY_PENDING_MESSAGE}</p><p>Do not send funds. Deposits, withdrawals, bank simulation, and payout processing are disabled. SEP-12 does not grant KYC approval.</p><p>A mathematically valid proof alone does not authorize a customer or transaction. This is not a production or mainnet financial service.</p><p><a href="/zkpassport/info">Native verifier diagnostic information</a></p><p><a href="/health">Service health</a> | <a href="/.well-known/stellar.toml">SEP-1 discovery</a> | <a href="/sep6/info">Current SEP-6 capabilities</a></p></main></body></html>`;
+    const title = nativeGateConfigured
+      ? "ZKPassport native gate Testnet demo"
+      : "ZKPassport anchor diagnostics";
+    const notice = nativeGateConfigured
+      ? "Use test assets only. TRY bank transfers and document identities are simulated. No real fiat moves."
+      : "Do not send funds. Deposits, withdrawals, bank simulation, and payout processing are disabled.";
+    const gateLinks = nativeGateConfigured
+      ? '<p><a href="/anchor-gate">Proof-gated deposit and withdrawal demo</a> | <a href="/anchor-gate/info">Native gate configuration and policy</a></p>'
+      : "";
+    const diagnosticPage = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title></head><body><main><h1>${title}</h1><p>${strictPolicyMessage}</p><p>${notice} SEP-12 does not grant KYC approval.</p><p>A mathematically valid proof alone does not authorize a customer or transaction. This is not a production or mainnet financial service.</p>${gateLinks}<p><a href="/zkpassport/info">Native verifier diagnostic information</a></p><p><a href="/health">Service health</a> | <a href="/.well-known/stellar.toml">SEP-1 discovery</a> | <a href="/sep6/info">Current SEP-6 capabilities</a></p></main></body></html>`;
     for (const path of ["/", "/sep", "/explorer", "/guide", "/mainnet"]) {
       app.get(path, (c) => c.html(diagnosticPage));
     }
     const diagnosticReference = [
-      "# ZKPassport anchor diagnostics",
+      `# ${title}`,
       "",
-      POLICY_PENDING_MESSAGE,
-      "Do not send funds. Deposits, withdrawals, bank simulation, and payout processing are disabled.",
+      strictPolicyMessage,
+      notice,
       "SEP-12 remains pending; proof validity alone is not KYC or transaction authorization.",
       "This service is not production-ready and provides no mainnet payout workflow.",
       "",
       `Base URL: ${cfg.publicUrl}`,
+      ...(nativeGateConfigured
+        ? [
+            `- Proof-gated deposit and withdrawal demo: ${cfg.publicUrl}/anchor-gate`,
+            `- Native gate configuration and policy: ${cfg.publicUrl}/anchor-gate/info`,
+          ]
+        : []),
       `- Native verifier diagnostic information: ${cfg.publicUrl}/zkpassport/info`,
       `- Service health: ${cfg.publicUrl}/health`,
       `- SEP-1 discovery: ${cfg.publicUrl}/.well-known/stellar.toml`,
@@ -204,11 +225,18 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
       service: "tr-mock-anchor",
       environment: "sandbox",
       anchor_mode: cfg.anchorMode,
-      diagnostic_only: !legacy,
+      diagnostic_only: !legacy && !nativeGateConfigured,
+      native_gate_configured: nativeGateConfigured,
+      native_gate: nativeGateConfigured
+        ? {
+            app_url: `${cfg.publicUrl}/anchor-gate`,
+            info_url: `${cfg.publicUrl}/anchor-gate/info`,
+          }
+        : null,
       payout_authorized: legacy,
       policy_message: legacy
         ? "Legacy sandbox payout processing is enabled, subject to normal per-order checks. No ZKPassport eligibility policy is enforced."
-        : POLICY_PENDING_MESSAGE,
+        : strictPolicyMessage,
       stellar_mode: stellar.mode,
       network_passphrase: cfg.networkPassphrase,
       horizon_url: cfg.horizonUrl,
