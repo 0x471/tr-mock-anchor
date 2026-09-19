@@ -1,0 +1,318 @@
+import {
+  getAddress,
+  getNetworkDetails,
+  requestAccess,
+  signTransaction,
+  WatchWalletChanges,
+} from "@stellar/freighter-api";
+import { ZKPassport, VERSION } from "@zkpassport/sdk";
+import { countryCodeAlpha3ToName } from "@zkpassport/utils";
+import QRCode from "qrcode";
+import {
+  createAnchorGateFlow,
+  type GatePhone,
+  type GateWallet,
+} from "./anchor-gate-flow.js";
+
+const element = <T extends HTMLElement>(id: string) =>
+  document.getElementById(id) as T;
+const button = (id: string) => element<HTMLButtonElement>(id);
+let busy = false;
+let qrUrl = "";
+let renderingQr = 0;
+
+const wallet: GateWallet = {
+  async connect() {
+    const result = await requestAccess();
+    if (result.error || !result.address)
+      throw new Error("Freighter connection was declined or unavailable.");
+    return result.address;
+  },
+  async current() {
+    const [address, network] = await Promise.all([
+      getAddress(),
+      getNetworkDetails(),
+    ]);
+    if (address.error || network.error)
+      throw new Error("Freighter account or network is unavailable.");
+    return { address: address.address, network: network.networkPassphrase };
+  },
+  async sign(transaction, address) {
+    const result = await signTransaction(transaction, {
+      address,
+      networkPassphrase: "Test SDF Network ; September 2015",
+    });
+    if (result.error || !result.signedTxXdr || result.signerAddress !== address)
+      throw new Error("Freighter did not sign with the selected wallet.");
+    return result.signedTxXdr;
+  },
+};
+
+const phone: GatePhone = {
+  async request(config, events) {
+    if (
+      VERSION !== "0.17.1" ||
+      config.domain !== window.location.hostname ||
+      !config.dev_mode
+    )
+      throw new Error("Unsupported synthetic browser request.");
+    const client = new ZKPassport(config.domain);
+    const builder = await client.request({
+      name: "Stellar Proof-Gated Anchor",
+      purpose:
+        "Prove this order's age and country eligibility with a synthetic document. Simulated TRY and Testnet tokens only.",
+      scope: config.scope,
+      mode: "compressed-evm",
+      devMode: true,
+      validity: config.policy.max_proof_age,
+      uniqueIdentifierType: 0,
+      verifierMode: "local",
+    });
+    const supported = (
+      code: string
+    ): code is Parameters<typeof builder.in>[1][number] =>
+      /^[A-Z]{3}$/.test(code) && !!countryCodeAlpha3ToName(code);
+    const codes = (values: string[]) =>
+      values.map((code) => {
+        if (!supported(code))
+          throw new Error("The configured country is unsupported by this SDK.");
+        return code;
+      });
+    builder.gte("age", config.policy.min_age);
+    if (config.policy.allowed_nationalities.length)
+      builder.in("nationality", codes(config.policy.allowed_nationalities));
+    if (config.policy.allowed_issuers.length)
+      builder.in("issuing_country", codes(config.policy.allowed_issuers));
+    const request = builder.bind("custom_data", config.custom_data).done();
+    request.onBridgeConnect(() =>
+      events.event("Phone relay connected. Awaiting your consent.")
+    );
+    request.onRequestReceived(() =>
+      events.event(
+        "Secure phone channel established. Review the policy on your phone."
+      )
+    );
+    request.onGeneratingProof(() =>
+      events.event(
+        "Your phone is generating the proof. No eligibility is granted yet."
+      )
+    );
+    request.onBridgeConnectionLost(() =>
+      events.event("Phone connection interrupted. No new approval is assumed.")
+    );
+    request.onError(() =>
+      events.event(
+        "The phone reported an error. Cancel and request a fresh proof if needed."
+      )
+    );
+    request.onReject(() => events.rejected());
+    request.onProofGenerated((proof) => {
+      void events.proof(proof);
+    });
+    const timer = setTimeout(
+      () => {
+        client.clearAllRequests();
+        events.rejected();
+      },
+      Math.max(0, config.expires_at * 1000 - Date.now())
+    );
+    return {
+      url: request.url,
+      cancel() {
+        clearTimeout(timer);
+        client.clearAllRequests();
+      },
+    };
+  },
+};
+
+const flow = createAnchorGateFlow({
+  origin: window.location.origin,
+  fetch: window.fetch.bind(window),
+  wallet,
+  phone,
+  changed: render,
+});
+
+function render() {
+  const {
+    info,
+    wallet: address,
+    order,
+    quote,
+    prepared,
+    phoneUrl,
+    message,
+  } = flow.view;
+  const now = Math.floor(Date.now() / 1000);
+  element("status").textContent = message;
+  element("wallet").textContent = address || "No wallet connected.";
+  if (info) {
+    const policy = info.config.policy;
+    element("policy").textContent =
+      `Age: at least ${policy.min_age}\nNationality: ${policy.allowed_nationalities.join(", ") || "No nationality predicate"}\nDocument issuer: ${policy.allowed_issuers.join(", ") || "No issuing-country predicate"}\nSynthetic documents only. Policy expires ${new Date(info.config.policy_valid_until * 1000).toLocaleString()}.`;
+  }
+  element("quote-result").textContent = quote
+    ? `Pay ${quote.sell_amount} simulated TRY\nReceive ${quote.buy_amount} Testnet ${info?.buy_asset.split(":")[1] ?? "tokens"}\nFee included: ${quote.fee.total} TRY\nQuote expires ${new Date(quote.expires_at).toLocaleTimeString()}`
+    : "";
+  element("order").textContent = order
+    ? `Order ${order.id}\nStatus: ${order.stage}${order.expired ? " (expired; reservation held)" : ""}\nRecipient: ${order.recipient}\n${order.amount_try} simulated TRY -> ${order.amount_token} Testnet tokens\nToken: ${order.token}\nVault: ${order.contract}\nDeadline: ${new Date(order.deadline * 1000).toLocaleString()}${order.confirmed_ledger === null ? "" : `\nConfirmed ledger: ${order.confirmed_ledger}`}${order.eligibility_expires_at ? `\nEligibility until: ${new Date(order.eligibility_expires_at * 1000).toLocaleTimeString()}` : ""}`
+    : "No order reserved.";
+  if (order) element<HTMLInputElement>("order-id").value = order.id;
+  const wait =
+    order?.created_at == null ? 0 : Math.max(0, order.created_at + 30 - now);
+  element("proof-help").textContent = wait
+    ? `Wait ${wait}s before creating the phone request so its source-chain timestamp can follow order creation.`
+    : "Use the installed ZKPassport app in developer mode with a synthetic document. Refresh an expired eligibility grant without changing this order.";
+  element("bank").textContent = order?.bank_instructions
+    ? `SIMULATED BANK RECEIPT ONLY\nExact amount: ${order.bank_instructions.amount_try} TRY\nReference: ${order.bank_instructions.reference}\nDo not make a real bank transfer.`
+    : order?.receipt_id
+      ? `Mock-bank receipt recorded: ${order.receipt_id}\n${order.completed ? "Testnet settlement confirmed." : "Receipt is not itself settlement."}`
+      : "Bank instructions remain locked until native eligibility is confirmed.";
+  const live =
+    !!order && !order.expired && order.deadline > now && !order.completed;
+  const eligible =
+    live &&
+    !!order.eligibility_expires_at &&
+    order.eligibility_expires_at > now;
+  const pendingProof = order?.actions.some(
+    (action) => action.kind === "prove" && action.status === "pending"
+  );
+  button("connect").disabled = busy || !info || !!address;
+  button("disconnect").disabled = !address && !busy;
+  button("quote").disabled = busy || !address || !!order;
+  button("reserve").disabled = busy || !address || !quote || !!order;
+  button("prove").disabled =
+    busy ||
+    !address ||
+    !live ||
+    !["created", "eligible", "funded"].includes(order.stage) ||
+    order.created_at === null ||
+    wait > 0 ||
+    !!phoneUrl ||
+    !!pendingProof;
+  button("cancel-proof").disabled = !phoneUrl;
+  button("sign-proof").disabled =
+    busy || !prepared || prepared.expires_at <= now || !live;
+  button("bank-action").disabled =
+    busy ||
+    !eligible ||
+    order?.stage !== "eligible" ||
+    !order.bank_instructions;
+  button("settle").disabled =
+    busy || !eligible || order?.stage !== "funded" || !order.receipt_id;
+  button("refresh").disabled = busy || !address;
+  const transactions = element("transactions");
+  transactions.replaceChildren();
+  for (const action of order?.actions ?? []) {
+    const item = document.createElement("li");
+    const link = document.createElement("a");
+    link.href = `https://stellar.expert/explorer/testnet/tx/${action.transaction_hash}`;
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    link.textContent = `${action.kind}: ${action.status}${action.ledger === null ? "" : ` / ledger ${action.ledger}`} / ${action.transaction_hash.slice(0, 12)}...`;
+    item.append(link);
+    transactions.append(item);
+  }
+  element("phone-box").hidden = !phoneUrl;
+  if (phoneUrl !== qrUrl) {
+    qrUrl = phoneUrl;
+    const generation = ++renderingQr;
+    const canvas = element<HTMLCanvasElement>("qr");
+    canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+    const link = element<HTMLAnchorElement>("phone-link");
+    link.removeAttribute("href");
+    if (phoneUrl) {
+      const url = new URL(phoneUrl);
+      if (url.protocol !== "https:" || url.hostname !== "zkpassport.id") {
+        flow.cancelPhone();
+        return;
+      }
+      link.href = phoneUrl;
+      void QRCode.toCanvas(canvas, phoneUrl, {
+        width: 384,
+        margin: 4,
+        errorCorrectionLevel: "M",
+      }).catch(() => {
+        if (generation === renderingQr)
+          element("status").textContent =
+            "QR rendering failed. Use the private request link.";
+      });
+    }
+  }
+}
+
+async function run(action: () => Promise<unknown>) {
+  if (busy) return;
+  busy = true;
+  element("status").classList.remove("error");
+  render();
+  try {
+    await action();
+  } catch (error) {
+    element("status").classList.add("error");
+    flow.view.message =
+      error instanceof Error && error.name !== "ZodError"
+        ? error.message
+        : "The anchor returned an unavailable or unsupported policy/response. No payout is assumed.";
+  } finally {
+    busy = false;
+    render();
+  }
+}
+
+button("connect").onclick = () => {
+  void run(() => flow.connect());
+};
+button("disconnect").onclick = () => {
+  flow.disconnect();
+};
+button("quote").onclick = () => {
+  void run(() => flow.quote(element<HTMLInputElement>("amount").value.trim()));
+};
+button("reserve").onclick = () => {
+  void run(() => flow.createOrder());
+};
+button("prove").onclick = () => {
+  void run(() => flow.requestProof());
+};
+button("cancel-proof").onclick = () => flow.cancelPhone();
+button("sign-proof").onclick = () => {
+  void run(() => flow.signProof());
+};
+button("bank-action").onclick = () => {
+  void run(() => flow.simulateBank());
+};
+button("settle").onclick = () => {
+  void run(() => flow.settle());
+};
+button("refresh").onclick = () => {
+  void run(() =>
+    flow.refresh(element<HTMLInputElement>("order-id").value.trim())
+  );
+};
+button("copy-link").onclick = () => {
+  if (flow.view.phoneUrl)
+    void navigator.clipboard.writeText(flow.view.phoneUrl).catch(() => {
+      flow.view.message =
+        "Clipboard unavailable. Use the request link beside the QR.";
+      render();
+    });
+};
+const watcher = new WatchWalletChanges();
+watcher.watch((state) => {
+  if (
+    flow.view.wallet &&
+    (state.error ||
+      state.address !== flow.view.wallet ||
+      state.networkPassphrase !== "Test SDF Network ; September 2015")
+  )
+    flow.disconnect();
+});
+const timer = setInterval(render, 1000);
+window.addEventListener("pagehide", () => {
+  clearInterval(timer);
+  watcher.stop();
+  flow.disconnect();
+});
+void run(() => flow.initialize());
