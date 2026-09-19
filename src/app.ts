@@ -17,6 +17,7 @@ import { sep12Routes } from "./routes/sep12.js";
 import { sep38Routes } from "./routes/sep38.js";
 import { zkpassportRoutes } from "./routes/zkpassport.js";
 import { anchorGateRoutes } from "./routes/anchor-gate.js";
+import { anchorGateBrowserRoutes } from "./anchor-gate-browser.js";
 import { createSepContext, type SepContext } from "./sepauth.js";
 
 // This mock exposes a single, standard door: SEP-1 discovery, SEP-10 auth, SEP-6 deposit/withdraw,
@@ -89,6 +90,7 @@ export function createApp(
   app.route("/", sep38Routes(deps, sep) as unknown as Hono<AppEnv>);
   app.route("/", zkpassportRoutes(deps, sep) as unknown as Hono<AppEnv>);
   app.route("/", anchorGateRoutes(deps, sep) as unknown as Hono<AppEnv>);
+  app.route("/", anchorGateBrowserRoutes(deps.cfg.publicUrl));
 
   // Revalidate static assets every load so CSS/JS changes reach browsers immediately.
   app.use("/static/*", async (c, next) => {

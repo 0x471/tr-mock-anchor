@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Proof-gated anchor | Stellar Testnet</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+        color: #19362e;
+        background: #f1f2e9;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      main {
+        max-width: 1100px;
+        margin: auto;
+        padding: 36px 22px 60px;
+      }
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        border-bottom: 1px solid #cbd3c5;
+        padding-bottom: 22px;
+      }
+      .brand {
+        font-weight: 750;
+        letter-spacing: -0.03em;
+        font-size: 22px;
+      }
+      .badge {
+        font:
+          12px ui-monospace,
+          monospace;
+        padding: 9px 12px;
+        border: 1px solid #adc4ac;
+        border-radius: 99px;
+        white-space: nowrap;
+      }
+      h1 {
+        font-size: clamp(36px, 6vw, 64px);
+        line-height: 1.05;
+        max-width: 800px;
+        letter-spacing: -0.055em;
+        margin: 40px 0 16px;
+      }
+      h2 {
+        margin: 0 0 15px;
+        font-size: 20px;
+        letter-spacing: -0.025em;
+      }
+      p {
+        line-height: 1.55;
+      }
+      .intro {
+        max-width: 720px;
+        color: #51665c;
+        font-size: 17px;
+      }
+      .notice {
+        padding: 14px 18px;
+        border-left: 3px solid #7f9936;
+        background: #e7edda;
+        font-size: 14px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1.1fr 1fr;
+        gap: 18px;
+        margin-top: 22px;
+      }
+      section {
+        background: #fcfdf8;
+        border: 1px solid #d4dcd0;
+        padding: 24px;
+        border-radius: 14px;
+        min-width: 0;
+      }
+      .wide {
+        grid-column: 1 / -1;
+      }
+      .step {
+        color: #7c8a70;
+        font:
+          12px ui-monospace,
+          monospace;
+        margin-bottom: 9px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+      }
+      label {
+        display: block;
+        margin: 16px 0 7px;
+        font-size: 14px;
+      }
+      input {
+        width: 100%;
+        padding: 13px;
+        background: white;
+        color: #19362e;
+        border: 1px solid #b8c6b7;
+        border-radius: 7px;
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+        border: 0;
+        border-radius: 7px;
+        background: #193f32;
+        color: white;
+        padding: 12px 17px;
+        font:
+          600 14px system-ui,
+          sans-serif;
+        margin: 10px 8px 0 0;
+      }
+      button.secondary {
+        color: #284337;
+        background: #e8eddf;
+      }
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.4;
+      }
+      button:focus-visible,
+      input:focus-visible,
+      a:focus-visible {
+        outline: 3px solid #9aad53;
+        outline-offset: 3px;
+      }
+      .mono {
+        font-family: ui-monospace, monospace;
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
+      .muted {
+        color: #627367;
+        font-size: 13px;
+      }
+      .result {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        line-height: 1.7;
+        font-size: 14px;
+      }
+      #status {
+        font-weight: 550;
+      }
+      #status.error {
+        color: #a12f23;
+      }
+      #phone-box {
+        display: grid;
+        place-items: center;
+        gap: 10px;
+        background: white;
+        padding: 16px;
+        border-radius: 10px;
+        margin-top: 16px;
+      }
+      #phone-box[hidden] {
+        display: none;
+      }
+      canvas {
+        width: min(100%, 340px);
+        height: auto;
+      }
+      a {
+        color: #17654b;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+      }
+      #transactions {
+        padding-left: 20px;
+        line-height: 1.8;
+      }
+      footer {
+        color: #627367;
+        font-size: 12px;
+        line-height: 1.6;
+        margin-top: 24px;
+      }
+      @media (max-width: 700px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .wide {
+          grid-column: auto;
+        }
+        main {
+          padding: 22px 14px;
+        }
+        section {
+          padding: 20px;
+        }
+        header {
+          align-items: start;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="brand">Stellar / proof-gated anchor</div>
+        <span class="badge">TESTNET ONLY</span>
+      </header>
+      <h1>Prove eligibility.<br />Keep your document private.</h1>
+      <p class="intro">
+        A native Soroban verifier checks the proof. A contract-held reservation
+        can settle only after the order's document policy and a separate
+        mock-bank receipt are satisfied.
+      </p>
+      <p class="notice">
+        Synthetic documents. Simulated TRY. Testnet tokens. Do not send real
+        money. This demo does not establish production identity or regulatory
+        compliance.
+      </p>
+      <div class="grid">
+        <section>
+          <div class="step">01 / Wallet and policy</div>
+          <h2>Your wallet, your signature</h2>
+          <p id="policy" class="result">
+            Loading the immutable onchain policy...
+          </p>
+          <p id="wallet" class="mono">No wallet connected.</p>
+          <div class="actions">
+            <button id="connect" disabled>Connect Freighter + sign login</button
+            ><button id="disconnect" class="secondary" disabled>
+              Clear session
+            </button>
+          </div>
+          <p class="muted">
+            Select Stellar Testnet in Freighter. Login is a SEP-10 challenge,
+            not a payment. An existing token trustline and XLM for fees are
+            required.
+          </p>
+        </section>
+        <section>
+          <div class="step">02 / Exact reservation</div>
+          <h2>Review a firm quote</h2>
+          <label for="amount">Simulated TRY amount</label
+          ><input
+            id="amount"
+            inputmode="decimal"
+            placeholder="Enter an amount"
+            autocomplete="off"
+          /><button id="quote" disabled>Get firm quote</button>
+          <div id="quote-result" class="result"></div>
+          <button id="reserve" disabled>Accept quote + reserve order</button>
+          <p class="muted">
+            The quote fixes the token amount. Expiry does not imply a refund or
+            release a held reservation.
+          </p>
+        </section>
+        <section>
+          <div class="step">03 / Private document proof</div>
+          <h2>Scan with ZKPassport</h2>
+          <p id="proof-help" class="muted">
+            Reserve an order first. The phone request will use the exact policy
+            and bind this wallet, amount and order.
+          </p>
+          <button id="prove" disabled>Create synthetic phone request</button
+          ><button id="cancel-proof" class="secondary" disabled>
+            Cancel phone request
+          </button>
+          <div id="phone-box" hidden>
+            <canvas id="qr" aria-label="ZKPassport request QR code"></canvas
+            ><a id="phone-link" rel="noreferrer">Open in ZKPassport</a
+            ><button id="copy-link" class="secondary">
+              Copy private request link
+            </button>
+            <p class="muted">
+              This QR is rendered locally. Do not share or publish it.
+            </p>
+          </div>
+          <button id="sign-proof" disabled>
+            Sign native proof transaction
+          </button>
+          <p class="muted">
+            Receiving a proof is not approval. Freighter signs the exact onchain
+            invocation; only confirmed contract state unlocks the next step.
+          </p>
+        </section>
+        <section>
+          <div class="step">04 / Receipt and settlement</div>
+          <h2>Release the exact reservation</h2>
+          <div id="bank" class="result">
+            Bank instructions remain locked until native eligibility is
+            confirmed.
+          </div>
+          <button id="bank-action" disabled>Record simulated TRY receipt</button
+          ><button id="settle" disabled>Settle Testnet tokens</button>
+          <p class="muted">
+            The bank notary attests simulated receipt separately. Settlement
+            cannot change the recipient, asset or reserved amount.
+          </p>
+        </section>
+        <section class="wide">
+          <div class="step">Onchain record</div>
+          <h2>Order and transaction evidence</h2>
+          <p id="status" role="status" aria-live="polite">
+            Loading the Testnet anchor.
+          </p>
+          <div id="order" class="result"></div>
+          <ul id="transactions"></ul>
+          <label for="order-id">Resume an owned order by its ID</label
+          ><input
+            id="order-id"
+            class="mono"
+            autocomplete="off"
+            spellcheck="false"
+          /><button id="refresh" class="secondary" disabled>
+            Refresh / reconcile order
+          </button>
+          <p class="muted">
+            A timeout is an unknown outcome, not a failed payment. Refresh
+            before retrying. Only a confirmed settled state is shown as
+            completed.
+          </p>
+        </section>
+      </div>
+      <footer>
+        Document attributes stay inside the proof subject to the chosen
+        predicates. Wallet, amount, order, policy and the submitted proof
+        transaction are public. Country means nationality or document-issuing
+        country as explicitly shown, not residence. This experimental verifier
+        and vault are not independently security-audited.
+      </footer>
+    </main>
+    <script src="/anchor-gate/bundle.js" defer></script>
+  </body>
+</html>
