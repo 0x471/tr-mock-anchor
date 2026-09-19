@@ -1,239 +1,228 @@
-# Gated anchor integration plan
+# Native proof-gated anchor integration
 
-Prepared 20 September 2026. Proposed implementation, not completed functionality.
-Scope: a fresh synthetic phone proof, age and country predicates, real SEP-10
-wallet authentication, native onchain eligibility, simulated TRY receipt, and
-Testnet tokens paid from a contract-controlled vault. Deployment destination,
-country policy, accepted proof profile, and final Rust argument types remain decisions
-for the main implementation. No secrets or live identity material were read.
+Updated 20 September 2026. This describes implemented v2 interfaces and local
+tests, not completion of fresh-phone, hosted or live Testnet acceptance tests.
+The configured policy is immutable onchain. The selected demo requires age
+18+, TUR nationality and TUR issuing country, synthetic ZKPassport developer
+documents, a matching Outer7 verifier, simulated TRY and Testnet tokens.
+A browser callback alone grants no eligibility or payout permission.
 
-## Existing behavior and reuse limits
+The approved age, bind, nationality and issuer predicates require Outer7:
+10240 proof bytes plus 12 separate 32-byte public inputs (384 bytes).
+The SDK's combined prefix-and-proof form is 10624 bytes; the API receives the
+two components separately. Padding an Outer5/6 proof is not compatible.
 
-- `src/routes/sep10.ts` already builds a server-signed challenge and checks the
-  wallet's signature, including funded-account thresholds. `src/sepauth.ts`
-  maps the JWT subject to the customer. Reuse this flow, not a client-supplied
-  wallet address or a fabricated JWT.
-- `src/routes/sep38.ts` creates customer-owned firm quotes. `src/money.ts` uses
-  integer minor units. Reuse pricing and formatting, but snapshot complete asset
-  identities: current quote rows retain currency names, not the asset issuer or
-  token contract. Reading an old quote under changed asset configuration must
-  not silently select a different token.
-- `src/routes/sep6.ts::fundSepDeposit` permits amount defaulting and live-rate
-  fallback when a quote expires or differs. `src/core/orders.ts::createOnramp`
-  debits a TRY balance and `src/workers.ts` pays from the treasury. These are
-  legacy behavior and must not handle gated orders.
-- `src/anchor-policy.ts` deliberately permits economic actions only in legacy
-  mode. Keep that check intact. Add a separate explicit gated-flow capability;
-  never make all economic actions available after a proof succeeds.
-- `src/zkpassport-browser.ts` is one loopback diagnostic session without wallet
-  ownership. Reuse browser SDK bundling and lifecycle handling from
-  `web/zkpassport-diagnostic.ts`, not its process-global session model.
-- `src/routes/zkpassport.ts` records mathematical diagnostics only. Neither a
-  `math_valid` row nor `customer.kyc_status` is an onchain payout permission.
+## Modules and authority
 
-## Small interfaces and ownership
+- `src/anchor-gate.ts` owns exact quotes, authenticated orders, proof handoff,
+  mock-bank transitions and reconciliation. HTTP handlers do not grant
+  eligibility or assemble financial SQL independently.
+- `src/anchor-gate-rpc.ts` maps the fixed Soroban ABI using Stellar SDK 17,
+  checks the RPC network, signs provider/notary calls and prepares unsigned
+  recipient proof calls. `src/anchor-gate-types.ts` is that external-chain seam.
+- `src/routes/anchor-gate.ts` applies SEP-10 JWT signature, issuer, timing and
+  header checks, plain-G-account ownership, demo admission and request limits.
+- `contracts/anchor-gate` controls reservations and escrow. Its native verifier
+  checks proof mathematics; its policy checks roots, predicates, freshness and
+  exact wallet/order/direction/beneficiary binding.
+- `web/anchor-gate-flow.ts`, `web/anchor-gate.ts` and matching HTML implement
+  wallet and phone state. `src/anchor-gate-browser.ts` serves the prebuilt bundle
+  on the anchor's origin. The loopback diagnostic remains separate.
 
-Introduce one deep `GatedOnramp` module in `src/gated-onramp.ts`. Its interface
-owns order creation, proof-request terms, funding transitions, transaction
-preparation, and reconciliation. HTTP routes and the browser do not assemble
-SQL state transitions independently. Inject a `GateVaultGateway` through
-`src/context.ts`; its two adapters are the real Testnet gateway and a
-deterministic external-chain test adapter. Do not mock internal order helpers.
+Existing SEP-10 challenge signing and SEP-38 pricing are reused. The legacy
+SEP-6 handlers, treasury `sendUsdc`, customer TRY balances and workers are not
+the gated settlement path. Their strict-mode policy hold remains intact.
+The custom proof-and-wallet flow is not a claim of full SEP-6 conformance.
 
-Suggested HTTP interface, all under SEP-10 authentication and owner checks:
+## Public and authenticated API
 
-| Operation                                   | Meaning                                                                                                   |
-| ------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `POST /zkpassport/orders`                   | Reserve one owned, unexpired firm quote; create one immutable gated order.                                |
-| `GET /zkpassport/orders/:id`                | Return sanitized terms, chain-backed stage, transaction links, and next action.                           |
-| `POST /zkpassport/orders/:id/proof-request` | Return server-owned domain, scope, predicates, binding and request expiry.                                |
-| `POST /zkpassport/orders/:id/proof`         | Validate bounded encoding/profile and prepare the recipient's exact onchain proof transaction.            |
-| `POST /zkpassport/orders/:id/transactions`  | Record an expected transaction hash and reconcile its actual receipt; never trust a browser success flag. |
-| `POST /zkpassport/orders/:id/simulate-bank` | Explicit Testnet-only bank simulation for an eligible order and its exact TRY amount.                     |
+Public: `GET /anchor-gate`, `GET /anchor-gate/bundle.js` and
+`GET /anchor-gate/info`. Info exposes enabled status, Testnet passphrase,
+full deposit asset identifiers, fee cap and public immutable configuration.
+It never includes signer secrets. Disabled configuration fails closed.
 
-The gateway interface should expose `registerOrder`, `prepareProofTransaction`,
-`recordFiatReceipt`, `settle`, and `readOrder`. The agreed contract methods are
-`create_order`, `prove_order`, `record_receipt`, and `settle`; argument types
-come from the frozen Rust interface. Gateway results distinguish pending/unknown transport state,
-confirmed contract failure, and confirmed success. A simulated `true` result
-is never settlement. Node's existing `tx(db, fn)` is synchronous: do not await
-RPC while holding a SQLite write transaction.
+Use `GET /auth?account=G...`, sign the actual SEP-10 challenge with the wallet,
+then `POST /auth {transaction}` to obtain a bearer token. Firm quotes use the
+existing authenticated `POST /sep38/quote`. Deposit sells `iso4217:TRY` and
+buys the exact `stellar:USDC:<issuer>`; withdrawal reverses that pair.
 
-The agreed sequence is provider-authenticated registration and reservation,
-recipient-authenticated proof acceptance, bank-notary receipt, then
-permissionless settlement. Bank instructions appear only after native eligibility
-is confirmed. Receipt recording is separate and durable even if the transfer
-later fails. Contract internals and root checking are defined by the Rust design.
+Every route below requires the admitted owner wallet's SEP-10 token:
 
-## Immutable order and quote binding
+| Route under /anchor-gate          | Input and effect                                                                                                      |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| POST /orders                      | `{quote_id,direction,bank_destination?}` plus `Idempotency-Key`; direction is deposit or withdrawal, default deposit. |
+| GET /orders/:id                   | Reconcile known transactions and return confirmed contract state and fixed terms.                                     |
+| GET /orders/:id/proof-request     | Domain, scope, exact policy, custom_data digest, created_at, expiry and binary profile.                               |
+| POST /orders/:id/prepare-proof    | `{proof,public_inputs}` as lowercase hex without 0x; prepare an unsigned recipient-source transaction.                |
+| POST /orders/:id/submit           | `{action_id,signed_transaction}`; submit only the expected proof transaction.                                         |
+| POST /orders/:id/authorize-payout | Withdrawal only; the backend notary authorizes the fixed payout onchain.                                              |
+| POST /orders/:id/simulate-bank    | Deposit receipt or authorized withdrawal's simulated bank credit and paid receipt. No amount or destination override. |
+| POST /orders/:id/settle           | Permissionless contract settlement submitted by the configured fee payer.                                             |
 
-Accept only a plain `G...` recipient equal to the exact SEP-10 subject for the
-first gated implementation. Explicitly reject muxed accounts and memo-qualified
-subjects; do not collapse custody identities with `subAccount`. Unsupported
-wallets get a clear error, not a newly generated custodial key.
+A withdrawal requires a synthetic destination matching
+`^demo:[A-Za-z0-9_-]{1,64}$`, for example `demo:my-account`. Real IBANs,
+names and bank account details are not accepted. Deposits must omit this field.
+Its hash is SHA256 of JSON
+`["anchor-mock-beneficiary-v1", authenticated_subject, destination]`.
+The contract binds the resulting 32 bytes in its v2 XDR challenge.
 
-Before any phone request, persist and register an immutable order containing:
+Order responses include `direction`, wallet `recipient`, exact
+`amount_try` and `amount_token`, `source_asset`, token/vault addresses,
+`deadline`, `created_at`, `confirmed_ledger`, eligibility expiry,
+`escrowed`, `payout_authorized_at`, receipt ID and action hashes/statuses.
+`bank_destination` is the synthetic label. `mock_bank_credit` is null or
+`{destination,amount_try,credited_at}`, with an ISO timestamp; it is explicitly
+local simulated-bank evidence, not an onchain receipt or real fiat transfer.
 
-- Versioned order ID and unique quote ID, authenticated recipient, direction
-  `TRY_TO_TOKEN`, and a random challenge.
-- Source asset `iso4217:TRY`, positive TRY minor-unit amount, exact destination
-  asset code/issuer and Testnet token-contract address, positive token amount,
-  and token decimals. Use 7 decimals only for the pinned Stellar asset; reject
-  any token whose configured decimals differ.
-- Quote amounts, fee amount/currency, source-rate metadata, quote expiry,
-  order expiry, and proof freshness requirements. The payout amount is the
-  quote's frozen destination amount, not a later recomputation from its rate.
-- Network ID, vault/gate contract address, policy fingerprint/version, exact
-  domain and scope, and accepted verifier profile/key identifier.
+## Immutable quotes, configuration and proof intent
 
-One canonical encoding must be agreed with Rust before implementation. Prefer
-a fixed-order, versioned XDR/byte layout with integer values and decoded address
-bytes, not unordered JSON or locale-formatted decimals. The contract recomputes
-the same binding; it never trusts a digest supplied by the browser. The phone's
-`custom_data` carries the agreed digest encoding. Maintain independently checked
-TypeScript/Rust known-answer vectors for both order binding and query
-commitments. Age and country commitments are part of the exact approved policy,
-not claims inferred from a callback's display result.
+SEP-38 creation snapshots complete sell/buy asset identifiers in `quote_assets`.
+The gate rejects unsnapshotted legacy quotes and issuer/token mismatches.
+One SQLite transaction checks ownership, direction, exact asset pair, positive
+integer amounts, limits, unused status and current quote expiry, then reserves
+the quote and stores the order. It never awaits RPC inside that SQL transaction.
 
-Inside one SQLite transaction, verify quote ownership, direction, full asset
-pair, amounts, expiry, and unused status; conditionally set `consumed_by` and
-insert the order. A lost race returns conflict. Do not release a consumed quote
-while registration is uncertain. Expired or mismatched quotes require a new
-quote and new proof challenge; never reprice an existing proof-bound order.
+The quoted TRY and token amounts are frozen without later repricing. The order
+deadline is the lesser of policy expiry and the current confirmed ledger time
+(or local time, if earlier) plus the contract's maximum order lifetime.
+Quote validity is required at reservation, not extended by repricing. The
+original quote expiry is still included in the quote hash.
 
-## Authentication and browser flow
+The versioned quote hash commits to direction, beneficiary hash, Testnet,
+vault/token, asset code and issuer, wallet, quote ID, exact amounts, rate metadata
+and original quote expiry. Random order ID and nonce are 32 bytes. A deposit's
+beneficiary hash is zero; a withdrawal's is nonzero.
 
-1. Publish/validate the Testnet asset, gate, vault, policy and SEP-10 discovery
-   configuration. Keep the existing diagnostics available separately.
-2. Connect the user's wallet through the browser wallet adapter (initially
-   Freighter). Check Testnet, fetch the SEP-10
-   challenge, validate its anchor/network/home-domain terms, request the wallet
-   signature, and exchange it for the bearer token. Signing this challenge
-   does not authorize a token transfer. Keep tokens out of URLs and logs.
-3. Obtain a firm quote, display exact TRY and token amounts, then create the
-   owned gated order using an idempotency key. The provider registers the order
-   onchain with its own authorization and reserves vault liquidity. Do not
-   request a proof until that registration is confirmed.
-4. Load a per-order proof request into the browser SDK, using the real browser
-   origin. Request the selected age/country predicates and exact order binding.
-   Show a QR/deep link only for that session. Cancel, expiry, wallet changes and
-   replacement requests invalidate late callbacks. Do not reuse the diagnostic
-   age-only profile as the age-plus-country profile.
-5. Upload a bounded proof container only to the authenticated order route.
-   The browser result is untrusted. Validate encoding/profile and prepare the
-   onchain invocation. For the minimal wallet path, the recipient is transaction
-   source and signs the prepared transaction; the contract requires recipient
-   authorization for the exact order and proof invocation. A SEP-10 JWT is not
-   a substitute for this authorization. Do not introduce a fee sponsor or
-   detached authorization flow without separate tests.
-6. Confirm native proof acceptance from the actual transaction and contract
-   state. The stored eligibility must be short-lived and bound to immutable
-   order terms and policy, not a reusable account-wide approval. It represents
-   consent to this exact future payout. Permissionless settlement therefore
-   needs no second recipient signature but cannot change the recipient, asset,
-   amount or order deadline.
-7. Display simulated bank instructions only now. The explicit bank action
-   records one receipt for the exact order and TRY amount. A separate notary
-   identity authorizes the receipt onchain; user proof never proves fiat arrival.
-   Development simulation must not accept arbitrary recipient/token/amount
-   fields or an unauthenticated public legacy-bank call.
-8. Settle from the vault only when eligibility and trusted-root validity remain
-   current, the original order deadline has not passed, the mock-bank receipt is
-   confirmed, the order is unconsumed, and the exact reserved transfer succeeds atomically.
-   Missing trustline, insufficient balance or contract failure is not completion.
-   Do not fall back to classic treasury payment or claimable balance.
-9. Reconcile and display the confirmed ledger, transaction hash, recipient and
-   token amount. Label synthetic identity, simulated TRY and Testnet tokens
-   explicitly; never call the flow real-bank settlement.
+The native v2 challenge additionally binds these terms, the confirmed order
+creation time and the immutable policy hash in the exact ordered XDR layout
+documented in `GATE_VAULT_DESIGN.md`. The phone binds its lowercase 64-character
+hex digest as `custom_data`; no Ethereum wallet or transaction is involved.
+The browser waits for the confirmed creation timestamp before requesting a
+fresh proof. A short additional wait accommodates the phone's Ethereum-block
+proof timestamp; the contract still requires proof time >= order creation.
 
-Use a new `web/gated-onramp.ts` and matching HTML with order-scoped state. The
-wallet adapter and phone-proof adapter belong in the browser; signer secrets
-never belong in frontend configuration. Protect authenticated mutations with
-same-origin checks, appropriate CORS, request-size limits and `no-store`.
+Every later order reconciliation checks that the active gateway's immutable
+contract, token and policy match the stored configuration. A deployment change
+fails closed instead of recreating an old reservation in a replacement vault.
+The changing RPC ledger timestamp is excluded from that identity comparison.
 
-## Persistence, status and recovery
+## Deposit and withdrawal state machines
 
-Add a separate `gated_orders` table, not an entry in legacy `onramps`. Store
-owner subject/customer ID, immutable terms/terms hash, unique quote/order IDs,
-creation idempotency key plus request hash, expected transaction hashes, chain
-stage, confirmed ledger, eligibility expiry and receipt reference. Add narrowly
-scoped `gated_receipts` and transaction-attempt records for recovery. Persistent
-idempotency constraints must survive restarts; process-local flags are not enough.
-Raw phone proofs need no long-term storage for authorization. If a short-lived
-upload is retained for transaction preparation, isolate it from logs and public
-order responses, enforce owner access and deletion/expiry.
+Deposit:
 
-| Stage                     | Required evidence and recovery                                                          |
-| ------------------------- | --------------------------------------------------------------------------------------- |
-| Registering               | Quote reserved locally; query expected transaction/order before resubmission.           |
-| Awaiting proof            | Order and vault reservation confirmed; no bank instructions or payout.                  |
-| Eligible                  | Recipient-authenticated native acceptance confirmed for these terms; show grant expiry. |
-| Fiat pending confirmation | Mock receipt recorded locally; preserve exact receipt and reconcile notary transaction. |
-| Funded                    | Receipt confirmed; retain reservation if transfer fails.                                |
-| Settling                  | Submitted transaction is pending/unknown; reconcile before producing another attempt.   |
-| Completed                 | Confirmed contract state and transfer receipt; immutable terminal result.               |
-| Expired/refund required   | No new payout or provider reclaim; preserve reservation pending explicit recovery.      |
+1. Provider-authorized `create_order` transfers the exact token amount into
+   the vault before a phone request is issued.
+2. Recipient-authorized `prove_order` performs native proof and policy checks.
+   Only confirmed eligibility releases simulated deposit instructions.
+3. The owner requests the mock-bank action. The server freezes one exact
+   receipt, then the separate notary records it onchain.
+4. `settle` rechecks current eligibility, original deadline, roots and verifier
+   identity, then transfers only the reservation to the stored recipient.
+   Its settled state and successful transfer are atomic.
 
-The same creation idempotency key with the same body returns the same order;
-different bodies return conflict. Repeated bank receipt identifiers cannot fund
-another order. Contract replay protection enforces one settlement even if HTTP
-requests race or the backend crashes after success. Persist the signed transaction
-hash before submission; after an unknown result, query hash and order state.
-Never treat a timeout as failure, refund, or permission to pay again.
+Stages: registering, created, eligible, funded, settled. Expired funded
+deposits remain held. A delayed bank receipt does not renew eligibility.
 
-Omit provider reclaim from the first version: absence of an onchain receipt does
-not prove that the mock bank never received funds, because its attestation may
-be delayed. Expiry alone never releases reserved tokens. Future refund/reclaim
-support needs explicit, unique bank-refund evidence and corresponding contract
-rules. Proof refresh is allowed only before the original order deadline and
-with unchanged terms; no re-quote, amount edit or deadline extension. Expired
-funded orders remain held, with no false refund-success label.
+Withdrawal:
 
-## Files and SEP compatibility
+1. Provider-authorized `create_order` stores the fixed quote and beneficiary;
+   it does not debit the user or reserve provider inventory.
+2. The first successful recipient-authorized `prove_order` verifies the
+   native proof and atomically transfers the exact user tokens into escrow.
+   A proof refresh cannot debit again.
+3. Notary-authorized `authorize_payout` requires current proof, roots,
+   deadline and escrow. It creates an irreversible obligation to pay only
+   that fixed synthetic destination and TRY amount.
+4. The explicit mock-bank action writes one durable local credit and freezes
+   its receipt in the same SQL transaction. Only then does the notary submit
+   the matching paid receipt. A response timeout cannot cause a second credit.
+5. After the paid receipt is confirmed, `settle` releases the exact escrow
+   to the provider. A later proof/root/deadline expiry cannot undo the
+   previously authorized bank obligation or block its reconciliation.
 
-- `src/gated-onramp.ts`, `src/gate-vault.ts`, `src/routes/gated-onramp.ts`: new
-  order module, Testnet gateway adapter and thin authenticated routes.
-- `src/db.ts`, `src/context.ts`, `src/server.ts`, `src/app.ts`: additive tables,
-  dependency injection, startup configuration and route mounting.
-- `src/sepauth.ts`/`src/jwt.ts`: ensure the gated interface validates expected
-  token issuer and timing/header semantics as well as signature; retain genuine
-  SEP-10 challenge tests. Existing `verifyJwt` only validates signature, expiry
-  and nonempty subject, so this should be deliberate before expanding authority.
-- `src/routes/sep38.ts`: snapshot full asset identity and consume quote once.
-- `src/core/sepstatus.ts`, `src/routes/sep6.ts`: optional dedicated gated-order
-  projection/adapter after the new flow passes. Do not remove the existing
-  policy hold globally or publish SEP-6 deposit support while its handler remains
-  disabled. Custom proof/contract-signing steps are not automatically standard
-  SEP-6 conformance. Continue to block withdrawals and direct legacy settlement.
-- `src/anchor-policy.ts`, `src/stellar.ts`, `src/workers.ts`: retain legacy guards;
-  gated settlement uses the vault gateway, never `sendUsdc`.
+Stages: registering, created, eligible, payout_authorized, paid, settled.
+Receipt time must be at least payout authorization time. There is no reproving
+after authorization. Both directions set `escrowed=false` at settlement.
+There is no cancel, automatic refund, provider reclaim or deadline extension.
 
-## Approved test seams and vertical slices
+## Signatures, admission and startup
 
-The user approved HTTP, gate/vault and fresh-phone end-to-end seams. Implement
-one failing behavior test, its minimum implementation, then the next slice:
+Required runtime configuration is explicit: `ANCHOR_GATE_CONTRACT`,
+`ANCHOR_GATE_PROVIDER_SECRET` and `ANCHOR_GATE_BANK_NOTARY_SECRET`.
+Secrets are server-only environment values; no UI accepts them. The identities
+must match the distinct immutable contract roles. `PUBLIC_URL` hostname must
+match the contract's proof domain, and RPC/network must be Testnet.
 
-1. HTTP: obtain tokens through real challenge signing, create/read an owned
-   order, reject another wallet and unsupported subject forms. Use real in-memory
-   SQLite and fixed clock/rates; fake only the external chain adapter.
-2. HTTP: exact quote binding, wrong issuer/token, excess precision, zero amount,
-   expiry, duplicate request/conflicting idempotency key, and concurrent quote
-   use. Assert through responses/status, not private helper calls.
-3. Compiled gate/vault: required provider/recipient/notary authorization, actual
-   matching native age/country proof acceptance, wrong roots/policy/binding,
-   expired eligibility, missing fiat, replay, insufficient liquidity and failed
-   transfer rollback. Prove successful math alone cannot move tokens.
-4. HTTP recovery: interruption before/after each chain submission; confirmed
-   success with lost HTTP response; delayed/failed receipts; restart reconciliation.
-   Balances and order state show exactly one transfer and no false refund.
-5. Browser: no secret-key entry; wallet/network switch invalidation; stale phone
-   callbacks; malformed/unsupported proof; denied signature; safe retry; CSP and
-   same-origin behavior. Keep synthetic fixtures clearly distinguished from live
-   phone-generated proof evidence.
-6. Testnet end to end: fresh phone age/country proof, actual SEP-10 wallet login,
-   recipient-authorized onchain proof, simulated bank attestation, vault transfer,
-   receipt/balance confirmation, then replay rejection. Preserve transaction
-   references and sanitized evidence, not raw identity material or session URLs.
+`ANCHOR_GATE_MAX_FEE_STROOPS` bounds the complete simulated transaction fee
+(default 1000000 stroops). No fee sponsorship or mainnet route is added.
+The recipient signs the exact prepared transaction: full Testnet hash,
+source, operation, contract, order, fee and time bounds cannot be changed.
+This scoped wallet path requires a valid recipient master-key signature;
+delegated-only wallets are unsupported. Stellar still enforces the actual
+account threshold, so one signature is not claimed sufficient for every account.
 
-Do not deploy or fund the proposed vault until the destination and bounded
-Testnet operations are authorized. This plan changes no running integration.
+`ANCHOR_GATE_ALLOWED_WALLETS` is a comma/whitespace-separated list of public
+G accounts. A configured non-loopback deployment refuses startup without a
+nonempty valid list. Loopback is exactly localhost, 127.0.0.1 or [::1].
+The list restricts authenticated gate-order access to capped-demo participants;
+it is not identity evidence and never bypasses native eligibility checks.
+Public UI, info and discovery remain readable. Bank simulation is a separate
+trusted notary role, not something the passport proof proves.
+
+Requests carrying an Origin must match the anchor origin. Bearer tokens and
+proof sessions stay out of URLs/logs. Body limits and no-store apply to the API.
+The node process serializes its gate mutations; the deployment uses one
+persistent SQLite-backed instance. Concurrent unrelated transactions from one
+operator account can still encounter sequence contention and require
+reconciliation; the adapter never guesses a higher sequence to bypass ambiguity.
+
+## Persistence and recovery
+
+`anchor_gate_orders` stores ownership, immutable terms/configuration, creation
+idempotency, frozen amounts, chain projection, synthetic destination and receipt.
+`anchor_gate_actions_v2` stores expected hashes, kind, status, ledger and exact
+envelope time bounds. Existing v1 action rows are copied without deleting the
+old table; new optional columns are additive migrations.
+`anchor_gate_bank_credits` has one order and event per simulated payout.
+
+Expected transaction hashes are persisted before submission. Operator envelopes
+may be retained for exact retry; proof envelopes and raw proof bytes are not
+stored by the backend. The client must retain its prepared/signed proof until
+reconciliation. The eventual onchain invocation itself is public, including
+its proof and public inputs; this is not private transaction transport.
+
+A timeout, send admission error or NOT_FOUND is not failure evidence by itself.
+Only a terminal transaction response, or expiry with RPC history covering the
+actual signed [minTime,maxTime] interval, proves a locally known attempt can
+be replaced. Rows lacking a known minTime remain pending until terminal
+evidence; no timestamp is inferred from later DB insertion time.
+
+Reconciliation reloads action status before deciding whether an old signature
+window matters. A transaction that already succeeded stays successful after
+its signing window expires. Confirmed immutable contract settled state is
+authoritative even if an external permissionless caller settled it; known
+local transaction receipts are displayed separately, not prerequisites to
+recognize that completion.
+
+Before freezing any mock credit/receipt, the server requires its clock to be
+at least the confirmed creation or withdrawal-authorization timestamp.
+Otherwise it returns bank_clock_pending without crediting or storing receipt
+data. The adapter also waits boundedly for the ledger to reach a frozen
+received_at before simulating its notary call. Neither retry rewrites the
+receipt time, amount, destination or event ID.
+
+## Verification boundaries
+
+HTTP tests use real in-memory SQLite and actual SEP-10 challenge signatures,
+faking only the external gate seam. RPC-boundary tests use actual SDK XDR,
+fee assembly and cryptographic signatures against a deterministic RPC adapter.
+They cover owner isolation, quote issuer drift, transaction substitution,
+pending/late receipt recovery, irreversible withdrawal payout, admission and
+beneficiary locking. These are not fresh native proof acceptance claims.
+
+The separate Rust native/compiled-Wasm tests cover contract authorization,
+policy, escrow and rollback. Release still requires the chosen immutable
+deployment, a fresh matching synthetic phone proof, actual recipient signature,
+both Testnet directions, exact balance/receipt confirmation, and hosted checks.
+Historical or differently sized proof fixtures are not substitutes for that
+fresh full-flow evidence.

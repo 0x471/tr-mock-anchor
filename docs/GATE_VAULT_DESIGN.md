@@ -15,35 +15,69 @@ Seams. Policy/state tests may use a fake verifier at that Seam; such tests do no
 prove the native verifier works. Real verifier Wasm and a fresh matching phone
 proof are separate integration gates. The HTTP Adapter never grants eligibility.
 
-Four mutating calls, in order:
+Version two has five mutating calls. Direction is immutable per order. The
+deposit flow retains its existing freshness/settlement rules; withdrawal adds a
+separate durable bank-payout authorization, not a policy bypass for deposits.
 
 1. `create_order(id, terms) -> Order`: immutable provider authorizes the full call
-   and the nested exact token transfer into the vault. It reserves the exact
-   amount before a proof request is issued. Identical retry returns the original
-   order; changed terms under the same ID fail.
+   and fixes exact TRY/token amounts. A Deposit also authorizes the nested exact
+   provider-to-vault token reservation before a proof request. A Withdrawal
+   creates the immutable quote/order without moving either party's tokens.
+   Identical retry returns the original order; changed terms under the same ID fail.
 2. `prove_order(id, proof, public_inputs) -> Order`: the stored recipient
    authorizes the full call. The native verifier must succeed and every policy
    and order-binding check must pass. Proof refresh cannot extend the original
-   deadline. Bank instructions are released only after confirmed eligibility.
-3. `record_receipt(id, receipt) -> Order`: the separate immutable mock-bank
-   notary authenticates the exact event, quote, TRY amount and receipt time.
-   The order must previously have eligibility. A late receipt is still recorded
-   permanently, but does not restore stale eligibility or extend a deadline.
-4. `settle(id) -> Order`: permissionless, but requires funded state, current
-   stored eligibility, current immutable roots, and the original deadline. The
-   vault transfers only the exact reservation to the stored recipient. A failed
-   SAC transfer rolls back settlement. Retrying a settled order returns its
-   terminal state without another transfer.
+   deadline. For Withdrawal, the first successful call atomically transfers the
+   exact tokens from the recipient to the vault and records escrow; recipient
+   authorization covers both proof invocation and nested token transfer. A failed
+   proof or transfer grants no eligibility; refresh never debits twice. Deposit
+   bank instructions appear only after confirmed eligibility. A Withdrawal cannot
+   refresh its proof after bank payout has been authorized.
+3. `authorize_payout(id) -> Order`: Withdrawal only. The bank-notary authenticates
+   one immutable obligation to pay the fixed TRY amount to the fixed bank
+   destination. Current proof, roots, original deadline and healthy escrow are
+   required at the first authorization. It is irreversible; identical retries
+   preserve the original authorization timestamp even after expiry. This is not
+   evidence of bank payment and does not release tokens.
+4. `record_receipt(id, receipt) -> Order`: the separate immutable mock-bank notary
+   authenticates the exact unique event, quote, TRY amount, bank destination and
+   actual bank event time. Deposit means TRY received, Withdrawal means TRY paid.
+   Deposit requires prior eligibility. Withdrawal requires prior payout
+   authorization and event time at/after that authorization. Future-dated events
+   fail. Late submission is allowed for both directions; a Withdrawal's actual
+   payment may also complete after the original deadline under the already
+   accepted obligation. This does not create a new authorization after expiry.
+5. `settle(id) -> Order`: permissionless, requires the exact stored receipt and
+   reservation. Deposit still requires current eligibility/roots/deadline and
+   transfers tokens only to the recipient. Withdrawal completes its previously
+   authorized, now-paid obligation and transfers exact escrow only to the fixed
+   provider; no fresh proof, current roots or original deadline is required at
+   this finalization stage. A failed SAC transfer rolls back settlement. Retrying
+   a settled order returns terminal state without another transfer.
+
+| Direction  | Token movement before bank event                  | Bank-event prerequisite    | Final token destination                                        |
+| ---------- | ------------------------------------------------- | -------------------------- | -------------------------------------------------------------- |
+| Deposit    | Provider reserves at create_order                 | Confirmed eligibility      | Recipient, only while proof/policy/order remain current        |
+| Withdrawal | Recipient escrows at first successful prove_order | Confirmed authorize_payout | Provider after exact paid receipt, including late finalization |
+
+The offchain bank Adapter must use the order ID as an immutable one-use payout
+reference and persist its outcome before submitting receipt evidence. Retrying
+authorization or a lost receipt submission must never initiate a second bank
+credit. The contract does not control or independently observe any bank. This
+deployment supports synthetic `demo:` bank destinations and simulated TRY only.
 
 Read calls: `get_config`, `get_order(id) -> Option<Order>`,
 `get_challenge(id) -> BytesN<32>`, `get_policy_hash`, `get_total_reserved`.
 Constructor initialization is atomic and cannot be called again. No initializer,
-policy setter, upgrade, withdrawal, cancel, refund or reclaim entry point exists.
+policy setter, upgrade, administrative withdrawal, cancel, refund or reclaim
+entry point exists. A proof-gated customer Withdrawal is not an admin withdrawal.
 In particular, an order that looks unfunded onchain may already have received a
 bank transfer whose notary submission is delayed. A deadline alone cannot justify
-returning its reservation. Version one deliberately strands unresolved or expired
-reservations; use capped Testnet inventory and reconcile manually without claiming
-a refund mechanism. A later refund design needs an explicit trusted bank outcome.
+returning its reservation. A Withdrawal may likewise have an in-flight or unknown
+bank payout. Version two deliberately strands unresolved reservations, including
+customer escrow if eligibility expires before payout authorization; use capped
+Testnet balances and never claim a refund mechanism. A later refund design needs
+explicit trusted bank non-payment/refund evidence and safe in-flight exclusion.
 
 ## Fixed ABI
 
@@ -60,15 +94,23 @@ not an empty allowlist. Nationality and issuing country are different predicates
 The SDK request must preserve exactly this list order. The deployment manifest
 must explain the approved policy, roots, verifier, asset code/issuer and amounts.
 
-`OrderTerms`: `recipient: Address`, `quote_hash: BytesN<32>`, `try_minor: u64`,
+`Direction`: contract enum `Deposit` or `Withdrawal`.
+`OrderTerms`: `direction: Direction`, `bank_destination_hash: BytesN<32>`,
+`recipient: Address`, `quote_hash: BytesN<32>`, `try_minor: u64`,
 `amount: i128`, `deadline: u64`, `nonce: BytesN<32>`.
 `Order`: `terms: OrderTerms`, `created_at: u64`,
-`eligibility: EligibilityState`, `receipt: ReceiptState`, `settled: bool`.
+`eligibility: EligibilityState`, `receipt: ReceiptState`, `escrowed: bool`,
+`payout: PayoutState`, `settled: bool`. `escrowed` becomes false on settlement.
 The two state enums are `None` or `Some(Eligibility)` / `Some(BankReceipt)`;
 JavaScript native XDR conversion produces `["None"]` or `["Some", value]`.
+`PayoutState` is `None` or `Authorized(u64)`; native XDR becomes `["None"]` or
+`["Authorized", timestamp]`. This timestamp is immutable once set.
 `Eligibility`: `proof_time: u64`, `valid_until: u64`.
 `BankReceipt`: `event_id: BytesN<32>`, `quote_hash: BytesN<32>`,
-`try_minor: u64`, `received_at: u64`.
+`try_minor: u64`, `received_at: u64`, `bank_destination_hash: BytesN<32>`.
+The bank destination hash must be zero for Deposit and nonzero for Withdrawal;
+the receipt must match. `received_at` means the actual bank receive/pay event
+time according to direction, not the time the receipt was uploaded.
 Local order IDs and external anchor quote IDs are not interchangeable. The
 backend commits an exact quote snapshot into `quote_hash`; the provider's auth
 consents to the immutable resulting terms and exact reservation.
@@ -78,19 +120,21 @@ consents to the immutable resulting terms and exact reservation.
 The challenge is SHA256 of one ScVal vector serialized by SDK `ToXdr`. Fields
 are in this exact order and ScVal types; there is no JSON or implicit coercion:
 
-1. String `stellar-anchor-intent-v1`
+1. String `stellar-anchor-intent-v2`
 2. Bytes network_id (32)
 3. Address current gate contract
 4. Address recipient
 5. Bytes order ID (32)
 6. Bytes quote_hash (32)
 7. Address token
-8. U64 try_minor
-9. U128 positive token amount
-10. U64 created_at (from ledger timestamp)
-11. U64 deadline
-12. Bytes nonce (32)
-13. Bytes policy_hash (32)
+8. Direction contract enum: ScVec containing Symbol `Deposit` or `Withdrawal`
+9. Bytes bank_destination_hash (32)
+10. U64 try_minor
+11. U128 positive token amount
+12. U64 created_at (from ledger timestamp)
+13. U64 deadline
+14. Bytes nonce (32)
+15. Bytes policy_hash (32)
 
 `policy_hash = SHA256(ScVal vector[String "stellar-anchor-policy-v1", Config])`;
 the Config element is its SDK contracttype ScMap encoding (ASCII field names in
@@ -99,7 +143,10 @@ match the actual Rust getter before a phone request can authorize settlement.
 The deterministic synthetic unit fixture was independently reconstructed in
 TypeScript (including every typed Config field, not by copying Rust's XDR):
 policy hash `91fe26e123805a8718dffced06a45df0df71607d2875a3e0f6bbda53b85d9a74`,
-challenge `d7244c3764e3b8ce8b2299f1d8f133c8577a7f406d74e5b0933db97fce876285`.
+Deposit/zero-bank challenge
+`a18bc4983f3f46812a8de431ce9bc46c8b4ef83edb79b3371ea533cfe3ac5899`;
+Withdrawal/bank hash of 32 repeated `0x14` bytes challenge
+`20e9374b7276ac469656c708e61f0bcbc70e6e2edca4c59bfa26e1295b202554`.
 These are regression vectors for that fixture, not deployment policy values.
 The phone binds the lowercase 64-character hex challenge without `0x` as
 `custom_data`. It does not invent an EVM address or chain for a Stellar wallet.
@@ -142,7 +189,10 @@ certificate and circuit root snapshots, and all predicates at construction.
 The snapshot curator is trusted to select authenticated roots, not to approve
 proofs. Fixed snapshot expiry is at most 24 hours after construction; no claim of
 continuous foreign-chain revocation checking is made. A new root/policy requires
-a new deployment. Verifier executable identity is checked before proof and payout.
+a new deployment. Verifier executable identity is checked at proof, Deposit
+settlement, and first Withdrawal payout authorization. A previously authorized
+Withdrawal is a durable obligation and does not re-check the verifier or expired
+policy when recording its paid receipt or releasing the matching escrow.
 
 Provider and bank-notary are distinct accounts. Recipients are existing classic
 accounts, not muxed/custodial memo identities. Token trustlines/authorization and
@@ -162,8 +212,10 @@ integration are explicit release tests, not inferred from native unit success.
 
 Raw proof, public inputs and nullifiers are not published in events, but the
 transaction invocation itself is public. Wallet, amount, order and policy remain
-public. The mock-bank notary can lie about simulated receipt; it cannot bypass
-native proof checks or change the recipient/amount.
+public. A hashed bank destination can remain guessable if its source has low
+entropy. The mock-bank notary can lie about simulated receipt/payment; it cannot
+create Withdrawal authorization without native eligibility or change fixed
+direction, recipient, bank destination, or amounts.
 The asset issuer's native authorization/clawback powers are a separate asset
 trust assumption; pinning a SAC does not disable those issuer powers.
 
