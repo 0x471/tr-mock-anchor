@@ -1,8 +1,8 @@
 # ZKPassport BB5 verifier for Soroban
 
-Experimental, **unaudited** native-host-accelerated verifier for one pinned ZKPassport proof format. The implementation verifies the complete mathematical proof; it does **not** authorize an anchor payout or establish application eligibility by itself.
+Experimental, **unaudited** native-host-accelerated verifier for compile-time pinned ZKPassport proof profiles. The implementation verifies the complete mathematical proof; it does **not** authorize an anchor payout or establish application eligibility by itself.
 
-## Supported format
+## Default profile
 
 - ZKPassport circuit package **0.20.0**, BB5 UltraKeccak non-ZK _outer_ proof, `OuterCount5`.
 - Fixed circuit parameters: `log_n = 22`, 18 total public inputs, 10 externally supplied inputs, offset 5.
@@ -13,13 +13,37 @@ Experimental, **unaudited** native-host-accelerated verifier for one pinned ZKPa
 
 `PassportVerifier::verify(proof, public_inputs)` uses the embedded key; callers cannot supply a replacement key. It returns `true` only after successful verification, or a contract error. It stores no eligibility, identity, or replay state.
 
+## Country profiles
+
+Build with exactly one of `--features count6` or `--features count7` to select
+the corresponding official 0.20.0 outer circuit. Selecting both fails compilation.
+There is no runtime key or profile selection. `profile()` returns the actual
+embedded key hash, external-input count, proof size and round count.
+
+| Build   | Outer circuit | External inputs | Proof bytes | Rounds |
+| ------- | ------------- | --------------- | ----------- | ------ |
+| Default | OuterCount5   | 10              | 9888        | 22     |
+| count6  | OuterCount6   | 11              | 10240       | 23     |
+| count7  | OuterCount7   | 12              | 10240       | 23     |
+
+One private country predicate added to age+binding requires count6; nationality
+and document-issuer predicates together require count7. Exact keys, commitments,
+source pins and binary hashes are recorded in
+[the country profile specification](../../docs/COUNTRY_PROOF_PROFILE.md).
+
+The country builds pass native arithmetic/decoder tests, compiled-Wasm metadata
+checks and rejection of the age-only fixture. Those checks do **not** establish
+positive country-proof compatibility. A fresh matching phone proof must pass the
+complete native, compiled-Wasm and Testnet paths before claiming that profile
+verified end to end. The historical transaction below used the default profile.
+
 The bundled positive fixture is an **official historical synthetic-document proof dated 14 July 2026**. It is a cryptographic compatibility test, not a fresh identity check, current phone-app proof, or production KYC evidence. A non-ZK final outer proof does not imply that its recursively verified inner witnesses are public.
 
 ## What is checked
 
-The decoder requires exact lengths and canonical scalar/base-field encodings. It checks every one of the 31 ordinary proof points, all 28 key points, and both reconstructed recursive points before MSM coefficient filtering. Recursive coordinates use low-136/high-120 limbs; default/infinite recursive accumulators are rejected for this deliberately narrow format.
+The decoder requires exact lengths and canonical scalar/base-field encodings. It checks every ordinary proof point (31 in the default profile, 32 in either country profile), all 28 key points, and both reconstructed recursive points before MSM coefficient filtering. Recursive coordinates use low-136/high-120 limbs; default/infinite recursive accumulators are rejected for these deliberately narrow formats.
 
-Verification includes the BB5 transcript, all 29 relations, 22 sumcheck rounds, and Gemini/Shplonk opening reduction. **Both pairing equations must pass:**
+Verification includes the BB5 transcript, all 29 relations, the selected profile's sumcheck rounds, and Gemini/Shplonk opening reduction. **Both pairing equations must pass:**
 
 1. The outer proof's KZG opening equation.
 2. The deferred recursive accumulator equation, whose eight limbs are bound into the same outer proof transcript/public-input calculation.
@@ -65,7 +89,7 @@ These are finite tests, not a security audit.
 
 ## Confirmed Testnet verification
 
-The final Wasm is 41,114 bytes, SHA-256 `4fa267bfa781adddddd91ee1a89eebbab317f32979e7b00d86ad46da898e2656`.
+The historical default-profile deployment at commit `6c0bf92` used a 41,114-byte Wasm, SHA-256 `4fa267bfa781adddddd91ee1a89eebbab317f32979e7b00d86ad46da898e2656`. Adding the profile getter changes rebuilt Wasm; this hash does not describe the newer source or country builds.
 
 - Contract: `CB2R3TF45CASFOJS7KHFDWOYKDVBHOYBRSIQLSPLE4SDXXT75WUOM7JI`.
 - [Successful verification transaction](https://stellar.expert/explorer/testnet/tx/1565ddf72714fc9dcc37e97030bbc5ac850244a1580266090b978222f9967494), ledger **4,766,089**. Independently fetched receipt: `SUCCESS`, return value `bool: true`.
