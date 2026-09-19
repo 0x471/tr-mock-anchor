@@ -119,9 +119,15 @@ describe("public diagnostic-mode presentation", () => {
 
   it("blocks direct legacy HTML assets in strict mode but preserves ordinary assets", async () => {
     const { strict, legacy } = fixture();
-    const response = await strict.request("/static/index.html");
-    expect(response.status).toBe(403);
-    expect(await response.text()).toContain(POLICY_PENDING_MESSAGE);
+    for (const path of [
+      "/static/",
+      "/static/index.html",
+      "/static/index%2ehtml",
+    ]) {
+      const response = await strict.request(path);
+      expect(response.status).toBe(403);
+      expect(await response.text()).toContain(POLICY_PENDING_MESSAGE);
+    }
     expect((await strict.request("/static/style.css")).status).toBe(200);
     expect((await strict.request("/static/site.js")).status).toBe(200);
     expect((await legacy.request("/static/index.html")).status).toBe(200);
