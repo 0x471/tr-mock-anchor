@@ -1,6 +1,6 @@
-import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { DatabaseSync } from "node:sqlite";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 
 export type DB = DatabaseSync;
 
@@ -211,28 +211,45 @@ CREATE TABLE IF NOT EXISTS sep_transactions (
 CREATE INDEX IF NOT EXISTS sep_tx_customer ON sep_transactions(customer_id, created_at);
 CREATE INDEX IF NOT EXISTS sep_tx_onramp ON sep_transactions(onramp_id);
 CREATE INDEX IF NOT EXISTS sep_tx_offramp ON sep_transactions(offramp_id);
+CREATE TABLE IF NOT EXISTS passport_proofs (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  stellar_subject TEXT NOT NULL,
+  proof_sha256 TEXT NOT NULL,
+  public_inputs_sha256 TEXT NOT NULL,
+  verifier_contract TEXT NOT NULL,
+  math_status TEXT NOT NULL CHECK(math_status IN ('math_valid', 'invalid', 'verifier_unavailable')),
+  verification_ledger INTEGER,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS passport_proofs_owner ON passport_proofs(customer_id, stellar_subject, created_at);
 `;
 
 /** Additive migrations for databases created before a column existed. */
 const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
-  ['onramps', 'mid_rate', 'TEXT'],
-  ['onramps', 'claimable_balance_supported', 'INTEGER NOT NULL DEFAULT 1'],
-  ['offramps', 'mid_rate', 'TEXT'],
-  ['customers', 'kyc_callback_url', 'TEXT'],
-  ['customers', 'sep12_registered', 'INTEGER NOT NULL DEFAULT 0'],
+  ["onramps", "mid_rate", "TEXT"],
+  ["onramps", "claimable_balance_supported", "INTEGER NOT NULL DEFAULT 1"],
+  ["offramps", "mid_rate", "TEXT"],
+  ["customers", "kyc_callback_url", "TEXT"],
+  ["customers", "sep12_registered", "INTEGER NOT NULL DEFAULT 0"],
 ];
 
 function addMissingColumns(db: DatabaseSync) {
   for (const [table, column, ddl] of COLUMN_MIGRATIONS) {
-    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-    if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      name: string;
+    }>;
+    if (!cols.some((c) => c.name === column))
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
   }
 }
 
 export function openDb(path: string): DB {
-  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
+  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+  db.exec(
+    "PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;"
+  );
   db.exec(SCHEMA);
   addMissingColumns(db);
   return db;
@@ -240,24 +257,28 @@ export function openDb(path: string): DB {
 
 /** Run `fn` inside a write transaction. node:sqlite is synchronous, so this is safe to nest-free use. */
 export function tx<T>(db: DB, fn: () => T): T {
-  db.exec('BEGIN IMMEDIATE');
+  db.exec("BEGIN IMMEDIATE");
   try {
     const out = fn();
-    db.exec('COMMIT');
+    db.exec("COMMIT");
     return out;
   } catch (e) {
-    db.exec('ROLLBACK');
+    db.exec("ROLLBACK");
     throw e;
   }
 }
 
 export const nowIso = () => new Date().toISOString();
-export const plusSeconds = (s: number) => new Date(Date.now() + s * 1000).toISOString();
+export const plusSeconds = (s: number) =>
+  new Date(Date.now() + s * 1000).toISOString();
 
 export function kvGet(db: DB, key: string): string | undefined {
-  const row = db.prepare('SELECT value FROM kv WHERE key = ?').get(key) as { value: string } | undefined;
+  const row = db.prepare("SELECT value FROM kv WHERE key = ?").get(key) as
+    { value: string } | undefined;
   return row?.value;
 }
 export function kvSet(db: DB, key: string, value: string): void {
-  db.prepare('INSERT INTO kv(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
+  db.prepare(
+    "INSERT INTO kv(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+  ).run(key, value);
 }
