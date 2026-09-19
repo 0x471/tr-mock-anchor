@@ -1,0 +1,1 @@
+node scripts/hooks-policy.mjs commit-msg "$1"
