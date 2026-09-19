@@ -44,6 +44,7 @@ const infoSchema = z.object({
       external_inputs: z.number().int(),
       policy_valid_until: z.number().int(),
       max_try_minor: z.string().regex(/^\d+$/),
+      max_amount: z.string().regex(/^\d+$/),
     })
     .passthrough(),
 });
@@ -62,10 +63,30 @@ const orderSchema = z.object({
   recipient: z.string(),
   amount_try: z.string(),
   amount_token: z.string(),
-  source_asset: z.literal("iso4217:TRY"),
+  source_asset: z.string(),
+  direction: z.enum(["deposit", "withdrawal"]),
+  bank_destination: z.string().nullable(),
+  bank_destination_hash: hashString,
+  escrowed: z.boolean(),
+  payout_authorized_at: z.number().int().nullable(),
+  mock_bank_credit: z
+    .object({
+      destination: z.string(),
+      amount_try: z.string(),
+      credited_at: z.string().datetime(),
+    })
+    .nullable(),
   token: z.string(),
   contract: z.string(),
-  stage: z.enum(["registering", "created", "eligible", "funded", "settled"]),
+  stage: z.enum([
+    "registering",
+    "created",
+    "eligible",
+    "funded",
+    "payout_authorized",
+    "paid",
+    "settled",
+  ]),
   expired: z.boolean(),
   created_at: z.number().int().nullable(),
   deadline: z.number().int(),
@@ -132,6 +153,7 @@ export interface GateView {
   phoneUrl: string;
   prepared: z.infer<typeof preparedSchema> | null;
   message: string;
+  direction: "deposit" | "withdrawal";
 }
 
 export interface GateWallet {
@@ -158,6 +180,7 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
     phoneUrl: "",
     prepared: null,
     message: "Loading Testnet policy.",
+    direction: "deposit",
   };
   const origin = new URL(deps.origin).origin;
   if (
@@ -171,7 +194,17 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
   let phoneSession: { cancel(): void } | undefined;
   let idempotencyKey = "";
   let preparedInputs: { proof: string; public_inputs: string } | undefined;
+  let requestedDestination: string | undefined;
   const now = () => Math.floor((deps.now?.() ?? Date.now()) / 1000);
+  function units(value: string, decimals: number) {
+    if (!new RegExp(`^(0|[1-9]\\d*)(\\.\\d{1,${decimals}})?$`).test(value))
+      throw new Error(`Enter an amount with at most ${decimals} decimals.`);
+    const [whole, fraction = ""] = value.split(".");
+    return (
+      BigInt(whole!) * 10n ** BigInt(decimals) +
+      BigInt(fraction.padEnd(decimals, "0"))
+    );
+  }
   const change = (message: string) => {
     view.message = message;
     deps.changed();
@@ -187,8 +220,18 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
     if (!view.info) throw new Error("The Testnet gate is unavailable.");
     return view.info;
   }
-  function requireOrder() {
-    if (!view.order || view.order.expired || view.order.deadline <= now())
+  function requireOrder(allowAuthorizedCompletion = false) {
+    const irreversibleWithdrawal =
+      allowAuthorizedCompletion &&
+      view.order?.direction === "withdrawal" &&
+      ["payout_authorized", "paid"].includes(view.order.stage) &&
+      view.order.escrowed &&
+      view.order.payout_authorized_at !== null;
+    if (
+      !view.order ||
+      (!irreversibleWithdrawal &&
+        (view.order.expired || view.order.deadline <= now()))
+    )
       throw new Error(
         "The order is missing or expired. No refund or payout is implied."
       );
@@ -232,10 +275,13 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       order.recipient !== view.wallet ||
       order.contract !== info.config.contract ||
       order.token !== info.config.token ||
+      order.source_asset !==
+        (order.direction === "deposit" ? info.sell_asset : info.buy_asset) ||
       order.completed !== (order.stage === "settled")
     )
       throw new Error("Order does not match this wallet and vault.");
     view.order = order;
+    view.direction = order.direction;
     change(
       order.completed
         ? "Settlement confirmed on Testnet."
@@ -243,8 +289,8 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
     );
     return order;
   }
-  async function orderAction(path: string) {
-    const order = requireOrder();
+  async function orderAction(path: string, allowAuthorizedCompletion = false) {
+    const order = requireOrder(allowAuthorizedCompletion);
     const session = generation;
     await sameWallet(view.wallet);
     const value = await (
@@ -373,69 +419,134 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       view.prepared = null;
       preparedInputs = undefined;
       idempotencyKey = "";
+      requestedDestination = undefined;
       change(
         "Wallet session cleared. Existing onchain reservations are unchanged."
       );
     },
-    async quote(amount: string) {
-      if (!/^(0|[1-9]\d*)(\.\d{1,2})?$/.test(amount))
-        throw new Error(
-          "Enter a positive TRY amount with at most two decimals."
-        );
-      const minor = (value: string) => {
-        const [whole, fraction = ""] = value.split(".");
-        return BigInt(whole!) * 100n + BigInt(fraction.padEnd(2, "0"));
-      };
+    selectDirection(direction: "deposit" | "withdrawal") {
+      if (view.order)
+        throw new Error("An existing order's direction cannot change.");
+      view.direction = direction;
+      view.quote = null;
+      idempotencyKey = "";
+      requestedDestination = undefined;
+      change("Request a fresh quote for the selected direction.");
+    },
+    async quote(
+      amount: string,
+      direction: "deposit" | "withdrawal" = view.direction
+    ) {
+      const info = requireInfo();
+      const decimals = direction === "deposit" ? 2 : 7;
+      const requestedUnits = units(amount, decimals);
       if (
-        minor(amount) <= 0n ||
-        minor(amount) > BigInt(requireInfo().config.max_try_minor)
+        requestedUnits <= 0n ||
+        requestedUnits >
+          BigInt(
+            direction === "deposit"
+              ? info.config.max_try_minor
+              : info.config.max_amount
+          )
       )
-        throw new Error("TRY amount exceeds the configured Testnet policy.");
+        throw new Error("Amount exceeds the configured Testnet policy.");
       if (view.order)
         throw new Error(
           "Finish or explicitly leave the current order before another quote."
         );
-      const info = requireInfo();
+      const sellAsset =
+        direction === "deposit" ? info.sell_asset : info.buy_asset;
+      const buyAsset =
+        direction === "deposit" ? info.buy_asset : info.sell_asset;
       const session = generation;
       await sameWallet(view.wallet);
       const quote = quoteSchema.parse(
         await (
           await request("/sep38/quote", {
-            sell_asset: info.sell_asset,
-            buy_asset: info.buy_asset,
+            sell_asset: sellAsset,
+            buy_asset: buyAsset,
             sell_amount: amount,
           })
         ).json()
       );
       if (
         session !== generation ||
-        !/^\d+(\.\d{1,2})?$/.test(quote.sell_amount) ||
-        minor(quote.sell_amount) !== minor(amount) ||
-        quote.sell_asset !== info.sell_asset ||
-        quote.buy_asset !== info.buy_asset ||
-        quote.fee.asset !== info.sell_asset ||
+        units(quote.sell_amount, decimals) !== requestedUnits ||
+        units(quote.buy_amount, direction === "deposit" ? 7 : 2) <= 0n ||
+        units(
+          direction === "deposit" ? quote.buy_amount : quote.sell_amount,
+          7
+        ) > BigInt(info.config.max_amount) ||
+        units(
+          direction === "deposit" ? quote.sell_amount : quote.buy_amount,
+          2
+        ) > BigInt(info.config.max_try_minor) ||
+        units(quote.fee.total, decimals) > requestedUnits ||
+        quote.sell_asset !== sellAsset ||
+        quote.buy_asset !== buyAsset ||
+        quote.fee.asset !== sellAsset ||
         !Number.isFinite(Date.parse(quote.expires_at)) ||
         Date.parse(quote.expires_at) <= now() * 1000
       )
         throw new Error("Quote does not match this request.");
       view.quote = quote;
+      view.direction = direction;
+      requestedDestination = undefined;
       idempotencyKey = crypto.randomUUID();
       change("Review the exact quote before reserving an order.");
     },
-    async createOrder() {
+    async createOrder(bankDestination?: string) {
       if (!view.quote || !idempotencyKey || view.order)
         throw new Error("Request and review a fresh quote first.");
+      if (
+        view.direction === "withdrawal"
+          ? !bankDestination ||
+            !/^demo:[A-Za-z0-9_-]{1,64}$/.test(bankDestination)
+          : bankDestination !== undefined
+      )
+        throw new Error(
+          "Withdrawals require a synthetic demo: reference; deposits cannot specify a bank destination."
+        );
+      if (
+        requestedDestination !== undefined &&
+        requestedDestination !== bankDestination
+      )
+        throw new Error(
+          "Do not change the destination when retrying an existing reservation."
+        );
+      requestedDestination = bankDestination;
       const session = generation;
       await sameWallet(view.wallet);
       const value = await (
         await request(
           "/anchor-gate/orders",
-          { quote_id: view.quote.id },
+          {
+            quote_id: view.quote.id,
+            direction: view.direction,
+            ...(bankDestination ? { bank_destination: bankDestination } : {}),
+          },
           true,
           { "Idempotency-Key": idempotencyKey }
         )
       ).json();
       if (session !== generation) throw new Error("Wallet session changed.");
+      const order = orderSchema.parse(value);
+      if (
+        order.quote_id !== view.quote.id ||
+        order.direction !== view.direction ||
+        order.amount_try !==
+          (view.direction === "deposit"
+            ? view.quote.sell_amount
+            : view.quote.buy_amount) ||
+        order.amount_token !==
+          (view.direction === "deposit"
+            ? view.quote.buy_amount
+            : view.quote.sell_amount) ||
+        order.bank_destination !== (bankDestination ?? null)
+      )
+        throw new Error(
+          "Reserved order does not match the accepted quote and destination."
+        );
       acceptOrder(value);
     },
     async refresh(id = view.order?.id) {
@@ -452,7 +563,11 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       const order = requireOrder();
       const info = requireInfo();
       if (
-        !["created", "eligible", "funded"].includes(order.stage) ||
+        !(
+          order.direction === "deposit"
+            ? ["created", "eligible", "funded"]
+            : ["created", "eligible"]
+        ).includes(order.stage) ||
         order.created_at === null ||
         order.created_at + 30 > now()
       )
@@ -661,8 +776,33 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       cancelPhone();
       acceptOrder(value);
     },
-    async simulateBank() {
+    async authorizePayout() {
       const order = requireOrder();
+      if (
+        order.direction !== "withdrawal" ||
+        order.stage !== "eligible" ||
+        !order.escrowed ||
+        !order.eligibility_expires_at ||
+        order.eligibility_expires_at <= now()
+      )
+        throw new Error(
+          "Current eligibility and confirmed token escrow are required to authorize simulated TRY payout."
+        );
+      return orderAction("authorize-payout");
+    },
+    async simulateBank() {
+      const order = requireOrder(true);
+      if (order.direction === "withdrawal") {
+        if (
+          order.stage !== "payout_authorized" ||
+          !order.escrowed ||
+          order.payout_authorized_at === null
+        )
+          throw new Error(
+            "The withdrawal must be authorized onchain before simulated TRY payout."
+          );
+        return orderAction("simulate-bank", true);
+      }
       if (
         order.stage !== "eligible" ||
         !order.bank_instructions ||
@@ -675,7 +815,19 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       return orderAction("simulate-bank");
     },
     async settle() {
-      const order = requireOrder();
+      const order = requireOrder(true);
+      if (order.direction === "withdrawal") {
+        if (
+          order.stage !== "paid" ||
+          !order.receipt_id ||
+          !order.escrowed ||
+          order.payout_authorized_at === null
+        )
+          throw new Error(
+            "A confirmed simulated payout receipt is required to release withdrawal escrow to the provider."
+          );
+        return orderAction("settle", true);
+      }
       if (
         order.stage !== "funded" ||
         !order.receipt_id ||
