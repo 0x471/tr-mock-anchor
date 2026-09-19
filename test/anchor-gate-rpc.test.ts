@@ -167,6 +167,33 @@ function fixture() {
 }
 
 describe("gate contract RPC boundary", () => {
+  it("retains the actual envelope lower time bound for safe missing-transaction reconciliation", async () => {
+    const { gate, state, terms, time } = fixture();
+    const prepared = await gate.prepareCreate(id, terms);
+    const decoded = new Transaction(prepared.transaction, Networks.TESTNET);
+    expect(prepared).toMatchObject({
+      min_time: Number(decoded.timeBounds!.minTime),
+    });
+    state.latest = time + 500;
+    state.oldest = time - 10;
+    expect(
+      await gate.transaction(prepared.hash, {
+        min_time: time - 15,
+        expires_at: time + 120,
+      })
+    ).toEqual({ status: "pending", ledger: null });
+    state.oldest = time - 20;
+    expect(
+      await gate.transaction(prepared.hash, {
+        min_time: time - 15,
+        expires_at: time + 120,
+      })
+    ).toEqual({ status: "failed", ledger: null });
+    expect(await gate.transaction(prepared.hash)).toEqual({
+      status: "pending",
+      ledger: null,
+    });
+  });
   it("maps immutable config and explicit Soroban state unions without disclosing credential secrets", async () => {
     const { gate, cfg, time } = fixture();
     const policy = await gate.configuration();
@@ -268,14 +295,14 @@ describe("gate contract RPC boundary", () => {
     state.latest = time + 500;
     expect(
       await gate.transaction(prepared.hash, {
-        created_at: time,
+        min_time: time - 5,
         expires_at: time + 120,
       })
     ).toEqual({ status: "failed", ledger: null });
     state.oldest = time + 1;
     expect(
       await gate.transaction(prepared.hash, {
-        created_at: time,
+        min_time: time - 5,
         expires_at: time + 120,
       })
     ).toEqual({ status: "pending", ledger: null });

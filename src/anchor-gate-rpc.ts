@@ -356,11 +356,12 @@ export function createAnchorGateGateway(
       transaction: assembled.toXdr(),
       hash: Buffer.from(assembled.hash()).toString("hex"),
       expires_at: Number(assembled.timeBounds!.maxTime),
+      min_time: Number(assembled.timeBounds!.minTime),
     };
   }
   async function transaction(
     hash: string,
-    bounds?: { created_at: number; expires_at: number }
+    bounds?: { min_time: number; expires_at: number }
   ): Promise<GateTransaction> {
     await network();
     const result = await server.getTransaction(hash);
@@ -372,7 +373,7 @@ export function createAnchorGateGateway(
     const expiredWithinHistory =
       bounds &&
       result.latestLedgerCloseTime > bounds.expires_at &&
-      result.oldestLedgerCloseTime <= bounds.created_at - 5;
+      result.oldestLedgerCloseTime <= bounds.min_time;
     return {
       status: expiredWithinHistory ? "failed" : "pending",
       ledger: null,

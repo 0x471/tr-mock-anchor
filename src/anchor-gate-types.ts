@@ -58,6 +58,7 @@ export interface PreparedGateAction {
   transaction: string;
   hash: string;
   expires_at: number;
+  min_time?: number;
 }
 
 export interface GateTransaction {
@@ -81,6 +82,6 @@ export interface GateGateway {
   submit(transaction: string): Promise<GateTransaction>;
   transaction(
     hash: string,
-    bounds?: { created_at: number; expires_at: number }
+    bounds?: { min_time: number; expires_at: number }
   ): Promise<GateTransaction>;
 }

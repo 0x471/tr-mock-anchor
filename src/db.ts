@@ -288,6 +288,7 @@ CREATE TABLE IF NOT EXISTS anchor_gate_bank_credits (
 const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   ["anchor_gate_orders", "receipt_json", "TEXT"],
   ["anchor_gate_orders", "bank_destination", "TEXT"],
+  ["anchor_gate_actions_v2", "min_time", "INTEGER"],
   ["onramps", "mid_rate", "TEXT"],
   ["onramps", "claimable_balance_supported", "INTEGER NOT NULL DEFAULT 1"],
   ["offramps", "mid_rate", "TEXT"],
