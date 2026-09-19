@@ -1,0 +1,14 @@
+.git
+.env
+.env.*
+.claude
+CLAUDE.md
+node_modules
+dist
+data
+work
+outputs
+contracts
+test
+*.log
+.DS_Store
