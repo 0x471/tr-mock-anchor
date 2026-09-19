@@ -146,6 +146,7 @@ function render() {
     direction,
   } = flow.view;
   const now = Math.floor(Date.now() / 1000);
+  const recoveryOnly = flow.recoveryOnly;
   const withdrawal = direction === "withdrawal";
   const tokenName = info?.buy_asset.split(":")[1] ?? "tokens";
   const authorized =
@@ -158,10 +159,10 @@ function render() {
   element("wallet").textContent = address || "No wallet connected.";
   const directionInput = element<HTMLSelectElement>("direction");
   directionInput.value = direction;
-  directionInput.disabled = busy || !!order;
+  directionInput.disabled = busy || !!order || recoveryOnly;
   element("destination-box").hidden = !withdrawal;
   const destinationInput = element<HTMLInputElement>("bank-destination");
-  destinationInput.disabled = busy || !!order;
+  destinationInput.disabled = busy || !!order || recoveryOnly;
   if (order) destinationInput.value = order.bank_destination ?? "";
   element("amount-label").textContent = withdrawal
     ? `Testnet ${tokenName} amount to escrow`
@@ -169,7 +170,7 @@ function render() {
   if (info) {
     const policy = info.config.policy;
     element("policy").textContent =
-      `Age: at least ${policy.min_age}\nNationality: ${policy.allowed_nationalities.join(", ") || "No nationality predicate"}\nDocument issuer: ${policy.allowed_issuers.join(", ") || "No issuing-country predicate"}\nSynthetic documents only. Policy expires ${new Date(info.config.policy_valid_until * 1000).toLocaleString()}.`;
+      `Age: at least ${policy.min_age}\nNationality: ${policy.allowed_nationalities.join(", ") || "No nationality predicate"}\nDocument issuer: ${policy.allowed_issuers.join(", ") || "No issuing-country predicate"}\nSynthetic documents only. Policy expires ${new Date(info.config.policy_valid_until * 1000).toLocaleString()}.${recoveryOnly ? "\nRECOVERY ONLY: policy expired. Connect to refresh or finish an already-authorized withdrawal. New quotes, orders, proofs and payout authorizations are disabled." : ""}`;
   } else {
     element("policy").textContent =
       message === "Loading Testnet policy."
@@ -185,11 +186,13 @@ function render() {
   if (order) element<HTMLInputElement>("order-id").value = order.id;
   const wait =
     order?.created_at == null ? 0 : Math.max(0, order.created_at + 30 - now);
-  element("proof-help").textContent = wait
-    ? `Wait ${wait}s before creating the phone request so its source-chain timestamp can follow order creation.`
-    : authorized || order?.completed
-      ? "This order no longer accepts a phone proof. Its authorized completion follows the recorded bank and settlement states."
-      : "Use the installed ZKPassport app in developer mode with a synthetic document. Refresh an expired eligibility grant without changing this order.";
+  element("proof-help").textContent = recoveryOnly
+    ? "Recovery only: this expired policy accepts no new phone proofs. Resume an existing order to inspect its confirmed state."
+    : wait
+      ? `Wait ${wait}s before creating the phone request so its source-chain timestamp can follow order creation.`
+      : authorized || order?.completed
+        ? "This order no longer accepts a phone proof. Its authorized completion follows the recorded bank and settlement states."
+        : "Use the installed ZKPassport app in developer mode with a synthetic document. Refresh an expired eligibility grant without changing this order.";
   element("proof-consent").textContent = withdrawal
     ? order?.escrowed
       ? "A refresh verifies a new proof for this same escrow. It must not debit tokens again. Only confirmed chain state grants eligibility."
@@ -203,7 +206,7 @@ function render() {
         : authorized
           ? `SIMULATED PAYOUT AUTHORIZED\n${order.amount_try} TRY to ${order.bank_destination}\nNo real bank transfer will occur. This authorization permits completion after the proof deadline.`
           : "Simulated TRY payout remains locked until native eligibility, token escrow and onchain payout authorization are confirmed."
-    : order?.bank_instructions
+    : order?.bank_instructions && !recoveryOnly
       ? `SIMULATED BANK RECEIPT ONLY\nExact amount: ${order.bank_instructions.amount_try} TRY\nReference: ${order.bank_instructions.reference}\nDo not make a real bank transfer.`
       : order?.receipt_id
         ? `Mock-bank receipt recorded: ${order.receipt_id}\n${order.completed ? "Testnet settlement confirmed." : "Receipt is not itself settlement."}`
@@ -212,7 +215,11 @@ function render() {
     ? "Authorize simulated payout while eligibility is current. The mock-bank notary records one synthetic credit; settlement then transfers the exact escrow to the provider. An authorized payout cannot be replaced by a new proof."
     : "The bank notary attests simulated receipt separately. Settlement cannot change the recipient, asset or reserved amount.";
   const live =
-    !!order && !order.expired && order.deadline > now && !order.completed;
+    !!order &&
+    !recoveryOnly &&
+    !order.expired &&
+    order.deadline > now &&
+    !order.completed;
   const eligible =
     live &&
     !!order.eligibility_expires_at &&
@@ -222,8 +229,9 @@ function render() {
   );
   button("connect").disabled = busy || !info || !!address;
   button("disconnect").disabled = !address && !busy;
-  button("quote").disabled = busy || !address || !!order;
-  button("reserve").disabled = busy || !address || !quote || !!order;
+  button("quote").disabled = busy || !address || !!order || recoveryOnly;
+  button("reserve").disabled =
+    busy || !address || !quote || !!order || recoveryOnly;
   button("prove").disabled =
     busy ||
     !address ||
@@ -276,6 +284,10 @@ function render() {
     link.textContent = `${action.kind}: ${action.status}${action.ledger === null ? "" : ` / ledger ${action.ledger}`} / ${action.transaction_hash.slice(0, 12)}...`;
     item.append(link);
     transactions.append(item);
+  }
+  if (recoveryOnly && phoneUrl) {
+    flow.cancelPhone();
+    return;
   }
   element("phone-box").hidden = !phoneUrl;
   if (phoneUrl !== qrUrl) {

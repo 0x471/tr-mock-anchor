@@ -22,9 +22,12 @@ import {
   type PhoneEvents,
 } from "../web/anchor-gate-flow.js";
 
-function browserHarness(direction: "deposit" | "withdrawal" = "deposit") {
+function browserHarness(
+  direction: "deposit" | "withdrawal" = "deposit",
+  options: { clockOffset?: number; policyLifetime?: number } = {}
+) {
   const now = Math.floor(Date.now() / 1000);
-  let clockNow = now;
+  let clockNow = now + (options.clockOffset ?? 0);
   const wallet = Keypair.random();
   const anchor = Keypair.random();
   const contract = StrKey.encodeContract(new Uint8Array(32).fill(7));
@@ -124,7 +127,7 @@ function browserHarness(direction: "deposit" | "withdrawal" = "deposit") {
         proof_bytes: 10240,
         external_inputs: 11,
         max_order_lifetime: 600,
-        policy_valid_until: now + 3600,
+        policy_valid_until: now + (options.policyLifetime ?? 3600),
         max_amount: "1000000000",
         max_try_minor: "100000",
       },
@@ -195,7 +198,11 @@ function browserHarness(direction: "deposit" | "withdrawal" = "deposit") {
   app.post("/anchor-gate/orders/:id/settle", (c) => {
     if (order.direction !== "withdrawal" || order.stage !== "paid")
       return c.json({ error: "not paid" }, 409);
-    Object.assign(order, { stage: "settled", completed: true });
+    Object.assign(order, {
+      stage: "settled",
+      completed: true,
+      escrowed: false,
+    });
     return c.json(order);
   });
   app.get("/anchor-gate/orders/:id/proof-request", (c) =>
@@ -397,6 +404,66 @@ describe("gated browser wallet authentication", () => {
 });
 
 describe("gated browser order and phone lifecycle", () => {
+  it("reconnects after policy expiry to finish an already-authorized withdrawal without allowing new actions", async () => {
+    const test = browserHarness("withdrawal", { clockOffset: 3601 });
+    Object.assign(test.order, {
+      stage: "payout_authorized",
+      payout_authorized_at: test.order.created_at,
+      escrowed: true,
+      expired: true,
+    });
+    await test.flow.initialize();
+    expect(test.flow.view.info).not.toBeNull();
+    expect(test.flow.view.message).toContain("Recovery only");
+    await test.flow.connect();
+    expect(test.flow.view.wallet).toBe(test.order.recipient);
+    await expect(test.flow.quote("2.5", "withdrawal")).rejects.toThrow(
+      "Policy expired"
+    );
+    await expect(
+      test.flow.createOrder("demo:synthetic-account")
+    ).rejects.toThrow("Policy expired");
+    await test.flow.refresh(test.order.id);
+    await expect(test.flow.requestProof()).rejects.toThrow("Policy expired");
+    await expect(test.flow.signProof()).rejects.toThrow("Policy expired");
+    await expect(test.flow.authorizePayout()).rejects.toThrow("Policy expired");
+    await test.flow.simulateBank();
+    expect(test.flow.view.order?.stage).toBe("paid");
+    await test.flow.settle();
+    expect(test.flow.view.order).toMatchObject({
+      stage: "settled",
+      completed: true,
+      escrowed: false,
+    });
+  });
+
+  it("blocks new actions when the policy expires after the page was initialized", async () => {
+    const test = browserHarness("withdrawal", { policyLifetime: 1 });
+    await test.flow.initialize();
+    await test.flow.connect();
+    await test.flow.quote("2.5", "withdrawal");
+    expect(test.flow.recoveryOnly).toBe(false);
+    test.advance(1);
+    expect(test.flow.recoveryOnly).toBe(true);
+    await expect(test.flow.quote("2.5", "withdrawal")).rejects.toThrow(
+      "Policy expired"
+    );
+    await expect(
+      test.flow.createOrder("demo:synthetic-account")
+    ).rejects.toThrow("Policy expired");
+    Object.assign(test.order, {
+      stage: "eligible",
+      escrowed: true,
+      eligibility_expires_at: test.order.deadline,
+    });
+    await test.flow.refresh(test.order.id);
+    await expect(test.flow.requestProof()).rejects.toThrow("Policy expired");
+    await expect(test.flow.signProof()).rejects.toThrow("Policy expired");
+    await expect(test.flow.authorizePayout()).rejects.toThrow("Policy expired");
+    await expect(test.flow.simulateBank()).rejects.toThrow("Policy expired");
+    expect(test.flow.view.order?.stage).toBe("eligible");
+  });
+
   it("keeps the existing deposit receipt when requesting a fresh eligibility proof", async () => {
     const test = browserHarness();
     await test.flow.initialize();
