@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ZKPassport Testnet diagnostic</title>
+  </head>
+  <body>
+    <h1>ZKPassport Testnet diagnostic</h1>
+    <p>
+      Synthetic documents only. This is proof compatibility testing, not
+      identity approval or a payout.
+    </p>
+    <p>
+      The request originates in this browser. Known proof public inputs are sent
+      to Stellar Testnet RPC for read-only verification.
+    </p>
+    <button id="start" type="button">Create synthetic request</button>
+    <button id="cancel" type="button">Cancel</button>
+    <p><a id="request-url" rel="noreferrer" target="_blank"></a></p>
+    <p>
+      Open the request link on the phone. This diagnostic expires after ten
+      minutes or when this page is closed.
+    </p>
+    <h2>Progress</h2>
+    <pre id="progress" aria-live="polite"></pre>
+    <h2>Read-only verification summary</h2>
+    <pre id="summary"></pre>
+    <script src="/bundle.js" defer></script>
+  </body>
+</html>
