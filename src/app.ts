@@ -3,6 +3,10 @@ import { cors } from "hono/cors";
 import { serveStatic } from "@hono/node-server/serve-static";
 import type { AppEnv, Deps } from "./context.js";
 import { ApiError } from "./errors.js";
+import {
+  economicActionsEnabled,
+  POLICY_PENDING_MESSAGE,
+} from "./anchor-policy.js";
 import { MoneyError } from "./money.js";
 import { StellarError } from "./stellar.js";
 import { publicRoutes } from "./routes/public.js";
@@ -86,6 +90,15 @@ export function createApp(
 
   // Revalidate static assets every load so CSS/JS changes reach browsers immediately.
   app.use("/static/*", async (c, next) => {
+    let path: string;
+    try {
+      path = decodeURIComponent(c.req.path);
+    } catch {
+      return c.text("Invalid path", 400);
+    }
+    if (!economicActionsEnabled(deps.cfg) && /\.html?$/i.test(path)) {
+      return c.text(POLICY_PENDING_MESSAGE, 403);
+    }
     await next();
     c.header("Cache-Control", "no-cache");
   });
