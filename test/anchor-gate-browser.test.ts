@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   Account,
   Asset,
@@ -24,7 +24,11 @@ import {
 
 function browserHarness(
   direction: "deposit" | "withdrawal" = "deposit",
-  options: { clockOffset?: number; policyLifetime?: number } = {}
+  options: {
+    clockOffset?: number;
+    policyLifetime?: number;
+    externalInputs?: number;
+  } = {}
 ) {
   const now = Math.floor(Date.now() / 1000);
   let clockNow = now + (options.clockOffset ?? 0);
@@ -37,7 +41,7 @@ function browserHarness(
   const policy = {
     min_age: 18,
     allowed_nationalities: ["GBR", "USA"],
-    allowed_issuers: [],
+    allowed_issuers: new Array<string>(),
     mock_only: true,
     max_proof_age: 600,
     verifier_vk_hash:
@@ -125,7 +129,7 @@ function browserHarness(
         scope: "test-policy",
         policy,
         proof_bytes: 10240,
-        external_inputs: 11,
+        external_inputs: options.externalInputs ?? 11,
         max_order_lifetime: 600,
         policy_valid_until: now + (options.policyLifetime ?? 3600),
         max_amount: "1000000000",
@@ -282,6 +286,10 @@ function browserHarness(
     flow,
     order,
     policy,
+    browserFetch: async (
+      input: Parameters<typeof fetch>[0],
+      init?: RequestInit
+    ) => app.request(String(input), init),
     events: () => events!,
     uploads: () => uploads,
     prepare(value: unknown) {
@@ -664,6 +672,143 @@ describe("gated browser order and phone lifecycle", () => {
 });
 
 describe("production-built gated browser serving", () => {
+  it.each([
+    {
+      name: "exact 18+/ZKR/ZKR",
+      age: 18,
+      nationalities: ["ZKR"],
+      issuers: ["ZKR"],
+      stock: true,
+    },
+    {
+      name: "different nationality",
+      age: 18,
+      nationalities: ["TUR"],
+      issuers: ["ZKR"],
+      stock: false,
+    },
+    {
+      name: "different issuer",
+      age: 18,
+      nationalities: ["ZKR"],
+      issuers: ["TUR"],
+      stock: false,
+    },
+    {
+      name: "different minimum age",
+      age: 21,
+      nationalities: ["ZKR"],
+      issuers: ["ZKR"],
+      stock: false,
+    },
+    {
+      name: "broader nationality list",
+      age: 18,
+      nationalities: ["TUR", "ZKR"],
+      issuers: ["ZKR"],
+      stock: false,
+    },
+  ])(
+    "renders synthetic-document guidance for $name without claiming approval",
+    async ({ age, nationalities, issuers, stock }) => {
+      const test = browserHarness("deposit", { externalInputs: 12 });
+      test.policy.min_age = age;
+      test.policy.allowed_nationalities = nationalities;
+      test.policy.allowed_issuers = issuers;
+      test.policy.verifier_vk_hash =
+        "00fe2b15b91a3c7c3ede7f84a0751e29373bfbf2da0ab7392e2cfa564eab8ab7";
+      const nodes = new Map<
+        string,
+        {
+          textContent: string;
+          value: string;
+          disabled: boolean;
+          hidden: boolean;
+          classList: { add(): void; remove(): void };
+          replaceChildren(): void;
+        }
+      >();
+      const node = (id: string) => {
+        if (!nodes.has(id))
+          nodes.set(id, {
+            textContent: "",
+            value: "",
+            disabled: false,
+            hidden: false,
+            classList: { add() {}, remove() {} },
+            replaceChildren() {},
+          });
+        return nodes.get(id)!;
+      };
+      vi.resetModules();
+      vi.doMock("@stellar/freighter-api", () => ({
+        getAddress() {
+          throw new Error("No wallet action expected");
+        },
+        getNetworkDetails() {
+          throw new Error("No wallet action expected");
+        },
+        requestAccess() {
+          throw new Error("No wallet action expected");
+        },
+        signTransaction() {
+          throw new Error("No wallet action expected");
+        },
+        WatchWalletChanges: class {
+          watch() {}
+          stop() {}
+        },
+      }));
+      vi.doMock("@zkpassport/sdk", () => ({
+        VERSION: "0.17.1",
+        ZKPassport: class {
+          constructor() {
+            throw new Error("No phone request expected");
+          }
+        },
+      }));
+      vi.stubGlobal("window", {
+        location: { origin: "http://localhost:8787", hostname: "localhost" },
+        fetch: test.browserFetch,
+        addEventListener() {},
+      });
+      vi.stubGlobal("document", { getElementById: node });
+      vi.stubGlobal("setInterval", () => 0);
+      try {
+        const browserEntry = "../web/anchor-gate.js";
+        await import(browserEntry);
+        await vi.waitFor(() => expect(node("connect").disabled).toBe(false));
+        if (stock) {
+          expect(node("proof-help").textContent).toContain("John Smith");
+          expect(node("proof-help").textContent).toContain("1995-11-12");
+        } else {
+          expect(node("proof-help").textContent).not.toContain("John Smith");
+          expect(node("proof-help").textContent).not.toContain("1995-11-12");
+          expect(node("proof-help").textContent).toContain(
+            "matching the exact age, nationality and issuing-country policy"
+          );
+        }
+        expect(node("proof-help").textContent).toContain("synthetic");
+        expect(node("proof-help").textContent).toContain(
+          "Do not use a real ID"
+        );
+        expect(node("proof-help").textContent).toContain(
+          "phone proof is not onchain approval"
+        );
+        expect(node("proof-consent").textContent).toContain(
+          "Receiving a proof is not approval"
+        );
+        expect(node("prove").disabled).toBe(true);
+        expect(node("bank-action").disabled).toBe(true);
+      } finally {
+        vi.unstubAllGlobals();
+        vi.doUnmock("@stellar/freighter-api");
+        vi.doUnmock("@zkpassport/sdk");
+        vi.resetModules();
+      }
+    }
+  );
+
   it("serves generated assets with private-session headers only at the configured host", async () => {
     const directory = await mkdtemp(join(tmpdir(), "anchor-gate-browser-"));
     try {

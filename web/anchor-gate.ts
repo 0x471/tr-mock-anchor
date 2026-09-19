@@ -186,13 +186,22 @@ function render() {
   if (order) element<HTMLInputElement>("order-id").value = order.id;
   const wait =
     order?.created_at == null ? 0 : Math.max(0, order.created_at + 30 - now);
+  const stockAdultMock =
+    info?.config.policy.mock_only === true &&
+    info.config.policy.min_age === 18 &&
+    info.config.policy.allowed_nationalities.length === 1 &&
+    info.config.policy.allowed_nationalities[0] === "ZKR" &&
+    info.config.policy.allowed_issuers.length === 1 &&
+    info.config.policy.allowed_issuers[0] === "ZKR";
   element("proof-help").textContent = recoveryOnly
     ? "Recovery only: this expired policy accepts no new phone proofs. Resume an existing order to inspect its confirmed state."
     : wait
       ? `Wait ${wait}s before creating the phone request so its source-chain timestamp can follow order creation.`
       : authorized || order?.completed
         ? "This order no longer accepts a phone proof. Its authorized completion follows the recorded bank and settlement states."
-        : "Use the installed ZKPassport app in developer mode with a synthetic document. Refresh an expired eligibility grant without changing this order.";
+        : stockAdultMock
+          ? "For this 18+/ZKR/ZKR policy, use ZKPassport developer mode and select the stock adult mock document John Smith: synthetic date of birth 1995-11-12, nationality ZKR, document issuer ZKR. Do not use a real ID. A phone proof is not onchain approval; the contract must verify the exact order policy."
+          : "Use ZKPassport developer mode with a synthetic document matching the exact age, nationality and issuing-country policy shown above. Do not use a real ID. A phone proof is not onchain approval. Refresh an expired eligibility grant without changing this order.";
   element("proof-consent").textContent = withdrawal
     ? order?.escrowed
       ? "A refresh verifies a new proof for this same escrow. It must not debit tokens again. Only confirmed chain state grants eligibility."
