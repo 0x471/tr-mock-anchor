@@ -149,7 +149,7 @@ sequenceDiagram
   A-->>W: transaction completed + stellar_transaction_id
       </pre>
       <p>A SEP-6 <code>deposit</code> (with the SEP-10 JWT) takes <code>asset_code=USDC</code> and the destination <code>account</code> (a <code>G…</code> or muxed <code>M…</code>), and returns a transaction in <code>pending_user_transfer_start</code> with SEP-9 bank <code>instructions</code>. When the TRY arrives (you simulate it here), the anchor locks the rate (a SEP-38 <code>quote_id</code> if attached and valid, else live), debits TRY and pays <b>real testnet USDC</b> — a payment, or a claimable balance when there is no trustline (<code>claimable_balance_id</code> in the transaction). The status walks to <code>completed</code> with <code>stellar_transaction_id</code>. If the send fails permanently the transaction is <code>error</code> and the TRY is refunded.</p>
-      <p>Limits: <span class="lim-onramp">50 – 3000 TRY</span> per order (configurable; live values from <code>/health</code>).</p>
+      <p>Limits: <span class="lim-onramp">No limit (testnet)</span> per order (configurable; live values from <code>/health</code>).</p>
 
       <h3 id="offramp">Off-ramp (USDC → TRY)</h3>
       <pre class="mermaid">
@@ -260,8 +260,8 @@ const ok = Keypair.fromPublicKey(SIGNING_KEY).verify(Buffer.from(`${t}.${req.hea
         <tr><td>Spread</td><td>50 bps each side</td></tr>
         <tr><td>SEP-38 quote validity</td><td>15 min default (up to 1 h)</td></tr>
         <tr><td>Off-ramp rate lock</td><td>30 min, then repriced</td></tr>
-        <tr><td>On-ramp per order</td><td><span class="lim-onramp">50 – 3000 TRY</span></td></tr>
-        <tr><td>Off-ramp minimum</td><td>1 USDC</td></tr>
+        <tr><td>On-ramp per order</td><td><span class="lim-onramp">No limit (testnet)</span></td></tr>
+        <tr><td>Off-ramp minimum</td><td>None (testnet)</td></tr>
         <tr><td>Settlement cadence</td><td>on-ramps every 3 s, off-ramp detection every 5 s</td></tr>
       </tbody></table>
 
@@ -325,7 +325,10 @@ const ok = Keypair.fromPublicKey(SIGNING_KEY).verify(Buffer.from(`${t}.${req.hea
   // Live on-ramp limits so the numbers never go stale against the deployed config.
   fetch('/health').then((r) => r.json()).then((h) => {
     if (!h.limits) return;
-    const t = `${Number(h.limits.min_onramp_try)} – ${Number(h.limits.max_onramp_try)} TRY`;
+    const lim = h.limits;
+    const t = (lim.min_onramp_try || lim.max_onramp_try)
+      ? `${lim.min_onramp_try ? Number(lim.min_onramp_try) : 0} – ${lim.max_onramp_try ? Number(lim.max_onramp_try) : '∞'} TRY`
+      : 'No limit (testnet)';
     document.querySelectorAll('.lim-onramp').forEach((el) => { el.textContent = t; });
   }).catch(() => {});
 </script>
