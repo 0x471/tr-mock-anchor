@@ -100,6 +100,21 @@ No verified instruction to select a Turkish mock exists in the inspected stock
 UI. Absence from this bounded source review is not proof that no private or
 future upstream tooling exists.
 
+## Separate capture-session regression
+
+The first ZKR capture closed before receiving a phone proof, with no rejection
+event in the active page. This was separate from the earlier TUR mismatch.
+The task-local capture harness allowed any same-origin tab to cancel the shared
+capture. A two-client HTTP regression reproduced that state in approximately
+40 milliseconds. The actual live sender was not identified.
+
+The harness now issues an ownership capability only to a successful start and
+requires it for cancellation and upload. Old-server and duplicate-tab requests
+cannot cancel a newer capture. Nine harness tests passed, and a real browser
+duplicate-start/tab-close check left the owner's capture active. These are
+session-lifecycle checks, not evidence that a country proof or payout succeeded.
+The anchor contract and its authorization rules were not changed by this fix.
+
 [dev-mode]: https://docs.zkpassport.id/getting-started/dev-mode
 [mobile-head]: https://api.github.com/repos/zkpassport/mobile-app/commits/main
 [fixtures]: https://github.com/zkpassport/mobile-app/blob/c52f5ef1c4c29ce3fd7e46c6dd25d172a1f1cb0e/assets/mock-data/passport.ts#L15-L72

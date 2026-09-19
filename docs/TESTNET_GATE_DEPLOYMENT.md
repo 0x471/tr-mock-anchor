@@ -101,6 +101,13 @@ The fresh authenticated ZKR deposit order is
 succeeded at ledger 4767538. These tokens are reserved, not paid out. Fresh
 phone proof acceptance and both settlement directions remain unconfirmed.
 
+At ledger 4767608, read-only SAC balance checks found 95.8104216 mock USDC at
+the provider, zero at the recipient and 2.0947892 in each of the original TUR
+and new ZKR vaults. Six live negative HTTP checks against the ZKR order rejected
+unauthenticated/foreign-origin access, premature bank and settlement actions,
+the wrong-direction authorization and malformed proof lengths. The order and
+its sole create action were unchanged; no eligibility or bank credit was granted.
+
 The old TUR reservation and its local database were preserved. Neither the
 new deployment nor the country-policy change refunds its held Testnet tokens.
 
