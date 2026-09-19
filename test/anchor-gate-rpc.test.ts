@@ -49,6 +49,8 @@ function fixture() {
   };
   const time = Math.floor(Date.now() / 1000);
   const terms: GateTerms = {
+    direction: "deposit",
+    bank_destination_hash: "0".repeat(64),
     recipient: recipient.publicKey(),
     quote_hash: "b".repeat(64),
     try_minor: "10000",
@@ -57,6 +59,8 @@ function fixture() {
     nonce: "c".repeat(64),
   };
   const termsValue = map({
+    direction: nativeToScVal([xdr.ScVal.scvSymbol("Deposit")]),
+    bank_destination_hash: xdr.ScVal.scvBytes(Buffer.alloc(32)),
     recipient: new Address(terms.recipient).toScVal(),
     quote_hash: xdr.ScVal.scvBytes(Buffer.from(terms.quote_hash, "hex")),
     try_minor: u64(10000),
@@ -92,6 +96,8 @@ function fixture() {
     max_try_minor: u64(1000000),
   });
   const orderValue = map({
+    escrowed: xdr.ScVal.scvBool(true),
+    payout: nativeToScVal([xdr.ScVal.scvSymbol("None")]),
     terms: termsValue,
     created_at: u64(time - 30),
     eligibility: nativeToScVal([
@@ -223,6 +229,7 @@ describe("gate contract RPC boundary", () => {
     const receipt = new Transaction(
       (
         await gate.prepareReceipt(id, {
+          bank_destination_hash: "0".repeat(64),
           event_id: "d".repeat(64),
           quote_hash: terms.quote_hash,
           try_minor: terms.try_minor,

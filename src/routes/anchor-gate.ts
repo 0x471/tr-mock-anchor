@@ -6,7 +6,7 @@ import type { Deps } from "../context.js";
 import { ApiError } from "../errors.js";
 import { sepJwtAuth, type SepContext, type SepEnv } from "../sepauth.js";
 import { verifyJwt } from "../jwt.js";
-import { createGatedOnramp } from "../anchor-gate.js";
+import { createGatedAnchor } from "../anchor-gate.js";
 
 export function anchorGateRoutes(deps: Deps, sep: SepContext) {
   const app = new Hono<SepEnv>();
@@ -15,7 +15,7 @@ export function anchorGateRoutes(deps: Deps, sep: SepContext) {
     deps.cfg.networkPassphrase === Networks.TESTNET
       ? deps.anchorGate
       : undefined;
-  const onramp = gate ? createGatedOnramp(deps, gate) : undefined;
+  const anchor = gate ? createGatedAnchor(deps, gate) : undefined;
   app.use("/anchor-gate/*", async (c, next) => {
     c.header("Cache-Control", "no-store");
     c.header("Referrer-Policy", "no-referrer");
@@ -40,7 +40,7 @@ export function anchorGateRoutes(deps: Deps, sep: SepContext) {
     })
   );
   app.use("/anchor-gate/orders*", async (c, next) => {
-    if (!onramp)
+    if (!anchor)
       throw new ApiError(
         503,
         "gate_unavailable",
@@ -109,7 +109,14 @@ export function anchorGateRoutes(deps: Deps, sep: SepContext) {
   });
   app.post("/anchor-gate/orders", async (c) => {
     const parsed = z
-      .object({ quote_id: z.string().min(1).max(100) })
+      .object({
+        quote_id: z.string().min(1).max(100),
+        direction: z.enum(["deposit", "withdrawal"]).default("deposit"),
+        bank_destination: z
+          .string()
+          .regex(/^demo:[A-Za-z0-9_-]{1,64}$/)
+          .optional(),
+      })
       .strict()
       .safeParse(await c.req.json().catch(() => null));
     const key = c.req.header("idempotency-key") ?? "";
@@ -120,20 +127,22 @@ export function anchorGateRoutes(deps: Deps, sep: SepContext) {
         "Provide quote_id and an Idempotency-Key header."
       );
     return c.json(
-      await onramp!.create(
+      await anchor!.create(
         c.get("sepSub"),
         c.get("sepCustomer").id,
         parsed.data.quote_id,
-        key
+        key,
+        parsed.data.direction,
+        parsed.data.bank_destination
       ),
       201
     );
   });
   app.get("/anchor-gate/orders/:id", async (c) =>
-    c.json(await onramp!.get(c.req.param("id"), c.get("sepSub")))
+    c.json(await anchor!.get(c.req.param("id"), c.get("sepSub")))
   );
   app.get("/anchor-gate/orders/:id/proof-request", async (c) =>
-    c.json(await onramp!.proofRequest(c.req.param("id"), c.get("sepSub")))
+    c.json(await anchor!.proofRequest(c.req.param("id"), c.get("sepSub")))
   );
   app.post("/anchor-gate/orders/:id/prepare-proof", async (c) => {
     const hex = z
@@ -151,7 +160,7 @@ export function anchorGateRoutes(deps: Deps, sep: SepContext) {
         "Provide proof and public_inputs as lowercase hexadecimal without 0x."
       );
     return c.json(
-      await onramp!.prepareProof(
+      await anchor!.prepareProof(
         c.req.param("id"),
         c.get("sepSub"),
         Buffer.from(parsed.data.proof, "hex"),
@@ -174,7 +183,7 @@ export function anchorGateRoutes(deps: Deps, sep: SepContext) {
         "Provide action_id and signed_transaction."
       );
     return c.json(
-      await onramp!.submitProof(
+      await anchor!.submitProof(
         c.req.param("id"),
         c.get("sepSub"),
         parsed.data.action_id,
@@ -183,10 +192,13 @@ export function anchorGateRoutes(deps: Deps, sep: SepContext) {
     );
   });
   app.post("/anchor-gate/orders/:id/simulate-bank", async (c) =>
-    c.json(await onramp!.simulateBank(c.req.param("id"), c.get("sepSub")))
+    c.json(await anchor!.simulateBank(c.req.param("id"), c.get("sepSub")))
+  );
+  app.post("/anchor-gate/orders/:id/authorize-payout", async (c) =>
+    c.json(await anchor!.authorizePayout(c.req.param("id"), c.get("sepSub")))
   );
   app.post("/anchor-gate/orders/:id/settle", async (c) =>
-    c.json(await onramp!.settle(c.req.param("id"), c.get("sepSub")))
+    c.json(await anchor!.settle(c.req.param("id"), c.get("sepSub")))
   );
   return app;
 }

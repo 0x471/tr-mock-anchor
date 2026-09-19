@@ -241,6 +241,7 @@ CREATE TABLE IF NOT EXISTS anchor_gate_orders (
   amount_token TEXT NOT NULL,
   chain_json TEXT,
   receipt_json TEXT,
+  bank_destination TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(subject, idempotency_key)
@@ -258,11 +259,35 @@ CREATE TABLE IF NOT EXISTS anchor_gate_actions (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS anchor_gate_active_action
 ON anchor_gate_actions(order_id, kind) WHERE status IN ('prepared', 'pending');
+CREATE TABLE IF NOT EXISTS anchor_gate_actions_v2 (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL REFERENCES anchor_gate_orders(id),
+  kind TEXT NOT NULL CHECK(kind IN ('create', 'prove', 'authorize', 'receipt', 'settle')),
+  transaction_hash TEXT NOT NULL UNIQUE,
+  operator_envelope TEXT,
+  expires_at INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('prepared', 'pending', 'success', 'failed')),
+  ledger INTEGER,
+  created_at TEXT NOT NULL
+);
+INSERT OR IGNORE INTO anchor_gate_actions_v2(id, order_id, kind, transaction_hash, operator_envelope, expires_at, status, ledger, created_at)
+SELECT id, order_id, kind, transaction_hash, operator_envelope, expires_at, status, ledger, created_at FROM anchor_gate_actions;
+CREATE UNIQUE INDEX IF NOT EXISTS anchor_gate_active_action_v2
+ON anchor_gate_actions_v2(order_id, kind) WHERE status IN ('prepared', 'pending');
+CREATE TABLE IF NOT EXISTS anchor_gate_bank_credits (
+  order_id TEXT PRIMARY KEY REFERENCES anchor_gate_orders(id),
+  event_id TEXT NOT NULL UNIQUE,
+  destination TEXT NOT NULL,
+  destination_hash TEXT NOT NULL,
+  amount_try TEXT NOT NULL,
+  credited_at TEXT NOT NULL
+);
 `;
 
 /** Additive migrations for databases created before a column existed. */
 const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   ["anchor_gate_orders", "receipt_json", "TEXT"],
+  ["anchor_gate_orders", "bank_destination", "TEXT"],
   ["onramps", "mid_rate", "TEXT"],
   ["onramps", "claimable_balance_supported", "INTEGER NOT NULL DEFAULT 1"],
   ["offramps", "mid_rate", "TEXT"],
