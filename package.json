@@ -32,6 +32,7 @@
   "devDependencies": {
     "@stellar/anchor-tests": "^0.6.22",
     "@types/node": "^26.3.0",
+    "@zkpassport/sdk": "0.17.1",
     "husky": "^9.1.7",
     "lint-staged": "16.4.0",
     "prettier": "^3.9.8",
