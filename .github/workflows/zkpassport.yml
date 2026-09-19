@@ -13,6 +13,7 @@ on:
       - scripts/**
       - test/**
       - contracts/zkpassport-verifier/**
+      - contracts/anchor-gate/**
   pull_request:
     paths:
       - .github/workflows/zkpassport.yml
@@ -25,6 +26,7 @@ on:
       - scripts/**
       - test/**
       - contracts/zkpassport-verifier/**
+      - contracts/anchor-gate/**
   workflow_dispatch:
 
 permissions:
@@ -91,3 +93,16 @@ jobs:
         run: |
           test -s "$PASSPORT_WASM"
           cargo test --locked --features wasm-tests
+      - name: Check country verifier profiles
+        run: |
+          for profile in count6 count7; do
+            cargo test --locked --features "std,$profile"
+            cargo build --locked --release --target wasm32v1-none --features "$profile"
+            cargo test --locked --features "wasm-tests,$profile" --test profile
+          done
+      - name: Test gate and build its Wasm
+        working-directory: contracts/anchor-gate
+        run: |
+          cargo test --locked --features std
+          cargo build --locked --release --target wasm32v1-none
+          ANCHOR_GATE_WASM="$CARGO_TARGET_DIR/wasm32v1-none/release/anchor_gate.wasm" cargo test --locked --features std
