@@ -18,7 +18,9 @@ All four transaction receipts were independently fetched from Testnet RPC and
 reported SUCCESS. Each contract's profile getter reports the expected immutable
 key from [the country specification](COUNTRY_PROOF_PROFILE.md): respectively 11
 and 12 external inputs, 10240 proof bytes, and 23 rounds. These are read-only
-metadata checks, not positive country-proof verification transactions.
+metadata checks, not positive country-proof verification transactions. Direct
+contract-instance reads at ledgers 4767007 and 4767008 independently matched
+the executable Wasm hashes in the table.
 
 ## Isolated demo accounts and asset
 
