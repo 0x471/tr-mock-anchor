@@ -8,6 +8,7 @@ on:
       - package-lock.json
       - tsconfig.json
       - tsconfig.browser.json
+      - vitest.config.ts
       - web/**
       - src/**
       - scripts/**
@@ -21,6 +22,7 @@ on:
       - package-lock.json
       - tsconfig.json
       - tsconfig.browser.json
+      - vitest.config.ts
       - web/**
       - src/**
       - scripts/**
