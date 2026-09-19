@@ -223,6 +223,35 @@ CREATE TABLE IF NOT EXISTS passport_proofs (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS passport_proofs_owner ON passport_proofs(customer_id, stellar_subject, created_at);
+CREATE TABLE IF NOT EXISTS anchor_gate_orders (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  subject TEXT NOT NULL,
+  quote_id TEXT NOT NULL UNIQUE REFERENCES quotes(id),
+  idempotency_key TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  terms_json TEXT NOT NULL,
+  config_json TEXT NOT NULL,
+  amount_try TEXT NOT NULL,
+  amount_token TEXT NOT NULL,
+  chain_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(subject, idempotency_key)
+);
+CREATE TABLE IF NOT EXISTS anchor_gate_actions (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL REFERENCES anchor_gate_orders(id),
+  kind TEXT NOT NULL CHECK(kind IN ('create', 'prove', 'receipt', 'settle')),
+  transaction_hash TEXT NOT NULL UNIQUE,
+  operator_envelope TEXT,
+  expires_at INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('prepared', 'pending', 'success', 'failed')),
+  ledger INTEGER,
+  created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS anchor_gate_active_action
+ON anchor_gate_actions(order_id, kind) WHERE status IN ('prepared', 'pending');
 `;
 
 /** Additive migrations for databases created before a column existed. */
