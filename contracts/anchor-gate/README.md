@@ -1,15 +1,25 @@
 # Anchor gate and vault
 
-Unaudited Testnet-only native-proof policy gate for simulated TRY deposits.
-See [the design and exact ABI](../../docs/GATE_VAULT_DESIGN.md). Four mutators:
-`create_order`, `prove_order`, `record_receipt`, `settle`. Immutable constructor
+Unaudited Testnet-only native-proof policy gate for simulated TRY deposits and
+withdrawals. See [the design and exact ABI](../../docs/GATE_VAULT_DESIGN.md).
+Five mutators: `create_order`, `prove_order`, `authorize_payout`, `record_receipt`,
+`settle`. Immutable constructor
 configuration, typed age/country predicates, real SAC reservations, distinct
-provider/recipient/mock-bank authorization, and no withdrawal/upgrade bypass.
+provider/recipient/mock-bank authorization, and no administrative drain or
+upgrade bypass.
 
 This is not a backend-attested proof gate. `prove_order` invokes the pinned native
 verifier contract, checks its Wasm hash and VK/profile, and checks the exact
 order-bound commitments and roots. Synthetic document nullifier type 2 is the
 only accepted type. The bank notary establishes simulated receipt, not real fiat.
+
+Deposits reserve provider tokens when created. Withdrawals escrow the recipient's
+tokens only after an accepted proof and recipient authorization; proof refresh
+does not debit again. A current eligible withdrawal needs a separate notary
+authorization before simulated bank payout. That immutable authorization records
+one specific obligation: its exact payout receipt and token settlement can be
+reconciled after proof, policy or order expiry. It does not authorize another
+payout. The mock-bank adapter must durably deduplicate that bank action by order.
 
 ## Local verification
 
@@ -25,7 +35,7 @@ cargo fmt --all --check
 
 Use task-local CARGO_HOME/CARGO_TARGET_DIR when reusing the existing isolated
 toolchain cache. The Wasm path is explicit; a missing file fails the test run.
-Both native-gate and gate-Wasm runs passed the 17 policy/state tests on
+Both native-gate and gate-Wasm runs passed the 27 policy/state tests on
 20 September 2026. These tests call a real Stellar Asset Contract but deliberately
 use an external fake verifier: they test the gate's handling of its verifier,
 not mathematical proof acceptance. Country commitments are independent official
@@ -36,7 +46,10 @@ Covered behavior includes exact reservation and idempotency; missing role auth;
 native-verifier rejection; altered policy, binding, length, timestamp and
 nullifier fields; country profile shape; duplicate/foreign receipt rejection;
 late-funded reservation retention; exact single settlement; and rollback when
-the recipient trustline cannot receive tokens.
+the recipient trustline cannot receive tokens. Withdrawal tests also cover exact
+recipient token-transfer authorization, no debit on rejected proof, no double
+escrow, current eligibility at payout authorization, immutable authorization time,
+late reconciliation, and receipt replay across deposit and withdrawal orders.
 
 Required before claiming a complete onchain anchor demonstration:
 
@@ -51,4 +64,5 @@ Required before claiming a complete onchain anchor demonstration:
 No deployment, phone proof acceptance, or Testnet settlement is claimed by this
 crate's policy/state test results. There is intentionally no cancellation or
 refund path in this first version: unresolved/expired orders may strand capped
-Testnet reservations, including a late-funded order. Do not use real funds.
+Testnet reservations, including late-funded deposits and customer escrow that
+expires before payout authorization. Do not use real funds.

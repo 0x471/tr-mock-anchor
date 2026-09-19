@@ -1,7 +1,8 @@
 # Testnet gate deployment record
 
-Status: verifier profiles and mock asset deployed; gate policy and fresh phone
-proof are pending. No completed anchor deposit is claimed by this record.
+Status: verifier profiles, mock asset and localhost validation vault deployed;
+fresh country proof and both settlement directions are pending. No completed
+anchor deposit or withdrawal is claimed by this record.
 All amounts are synthetic Testnet assets. None of these contracts are audited.
 
 ## Country verifier deployments
@@ -21,6 +22,33 @@ and 12 external inputs, 10240 proof bytes, and 23 rounds. These are read-only
 metadata checks, not positive country-proof verification transactions. Direct
 contract-instance reads at ledgers 4767007 and 4767008 independently matched
 the executable Wasm hashes in the table.
+
+## Localhost v2 validation vault
+
+Contract: `CDGRHNKXIW4AN7T2UIFW4X33TXD7V7BY63XTNC2RX5JKKJM5ADJZXKR7`.
+Reviewed executable SHA-256:
+`51db61488ab32fef8deb61f4dda58903e3295f5baa27d52543b9d6fd641aae97`.
+
+- [Upload](https://stellar.expert/explorer/testnet/tx/8d6a27bbfa49099eeaafb6a9ddbdd0bcbe62af957b183a23fb33cc7bd160205d), SUCCESS, ledger 4767236.
+- [Deployment](https://stellar.expert/explorer/testnet/tx/2888a418653b98282500ada0a510eb31e8267202e24dac754eb3ffa2f96799e9), SUCCESS, ledger 4767244.
+- Independent instance/config/profile reads confirmed the executable, exact
+  provider/notary/token, roots and Count7 verifier. The immutable policy hash is
+  `8288c5192d980821f308e7f09803ca6d094f8c3389fbc62483e9a9955f1c1aca`.
+- Policy: age >=18, nationality TUR, document issuer TUR; synthetic non-salted
+  nullifier type 2 only. Proof and order lifetimes are each at most 3600 seconds.
+- Domain `localhost`, scope `tr-mock-anchor-demo-v2`; policy snapshot expires
+  2026-09-20T19:15:57Z. A public host requires its own hostname-bound vault.
+- Per-order caps: 10 mock USDC and 500 simulated TRY, enforced onchain.
+- Both official registry roots were revalidated immediately before deployment.
+- At ledger 4767296, enforce-auth read-only simulations rejected missing-order
+  prove/settle calls and unauthorized create/receipt/payout-authorization calls.
+  No test signature or transaction submission was used for those negatives.
+
+The upload helper initially stopped on its Testnet fee cap, then safely
+reconciled the submitted upload after a local hash-formatting error. The single
+upload and deployment receipts above were confirmed independently; neither
+error was treated as permission to duplicate an uncertain transaction.
+These deployment and negative checks do not establish positive proof acceptance.
 
 ## Isolated demo accounts and asset
 
