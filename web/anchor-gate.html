@@ -100,7 +100,8 @@
         margin: 16px 0 7px;
         font-size: 14px;
       }
-      input {
+      input,
+      select {
         width: 100%;
         padding: 13px;
         background: white;
@@ -131,6 +132,7 @@
       }
       button:focus-visible,
       input:focus-visible,
+      select:focus-visible,
       a:focus-visible {
         outline: 3px solid #9aad53;
         outline-offset: 3px;
@@ -216,9 +218,9 @@
       </header>
       <h1>Prove eligibility.<br />Keep your document private.</h1>
       <p class="intro">
-        A native Soroban verifier checks the proof. A contract-held reservation
-        can settle only after the order's document policy and a separate
-        mock-bank receipt are satisfied.
+        A native Soroban verifier checks the proof. Deposit simulated TRY for
+        Testnet tokens, or escrow Testnet tokens for a simulated TRY withdrawal.
+        The vault enforces the order's document policy and bank-receipt rules.
       </p>
       <p class="notice">
         Synthetic documents. Simulated TRY. Testnet tokens. Do not send real
@@ -248,7 +250,32 @@
         <section>
           <div class="step">02 / Exact reservation</div>
           <h2>Review a firm quote</h2>
-          <label for="amount">Simulated TRY amount</label
+          <label for="direction">Direction</label>
+          <select id="direction">
+            <option value="deposit">
+              Deposit: simulated TRY to Testnet USDC
+            </option>
+            <option value="withdrawal">
+              Withdraw: Testnet USDC to simulated TRY
+            </option>
+          </select>
+          <div id="destination-box" hidden>
+            <label for="bank-destination"
+              >Synthetic mock-bank destination</label
+            >
+            <input
+              id="bank-destination"
+              placeholder="demo:my-account"
+              autocomplete="off"
+              maxlength="69"
+              spellcheck="false"
+            />
+            <p class="muted">
+              Use a made-up demo: reference only. Never enter an IBAN, name or
+              other personal data.
+            </p>
+          </div>
+          <label id="amount-label" for="amount">Simulated TRY amount</label
           ><input
             id="amount"
             inputmode="decimal"
@@ -286,21 +313,24 @@
           <button id="sign-proof" disabled>
             Sign native proof transaction
           </button>
-          <p class="muted">
+          <p id="proof-consent" class="muted">
             Receiving a proof is not approval. Freighter signs the exact onchain
             invocation; only confirmed contract state unlocks the next step.
           </p>
         </section>
         <section>
           <div class="step">04 / Receipt and settlement</div>
-          <h2>Release the exact reservation</h2>
+          <h2>Complete the exact order</h2>
           <div id="bank" class="result">
             Bank instructions remain locked until native eligibility is
             confirmed.
           </div>
+          <button id="authorize-payout" hidden disabled>
+            Authorize simulated TRY payout
+          </button>
           <button id="bank-action" disabled>Record simulated TRY receipt</button
           ><button id="settle" disabled>Settle Testnet tokens</button>
-          <p class="muted">
+          <p id="settlement-help" class="muted">
             The bank notary attests simulated receipt separately. Settlement
             cannot change the recipient, asset or reserved amount.
           </p>

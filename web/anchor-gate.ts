@@ -143,32 +143,74 @@ function render() {
     prepared,
     phoneUrl,
     message,
+    direction,
   } = flow.view;
   const now = Math.floor(Date.now() / 1000);
+  const withdrawal = direction === "withdrawal";
+  const tokenName = info?.buy_asset.split(":")[1] ?? "tokens";
+  const authorized =
+    !!order &&
+    order.direction === "withdrawal" &&
+    ["payout_authorized", "paid"].includes(order.stage) &&
+    order.escrowed &&
+    order.payout_authorized_at !== null;
   element("status").textContent = message;
   element("wallet").textContent = address || "No wallet connected.";
+  const directionInput = element<HTMLSelectElement>("direction");
+  directionInput.value = direction;
+  directionInput.disabled = busy || !!order;
+  element("destination-box").hidden = !withdrawal;
+  const destinationInput = element<HTMLInputElement>("bank-destination");
+  destinationInput.disabled = busy || !!order;
+  if (order) destinationInput.value = order.bank_destination ?? "";
+  element("amount-label").textContent = withdrawal
+    ? `Testnet ${tokenName} amount to escrow`
+    : "Simulated TRY amount";
   if (info) {
     const policy = info.config.policy;
     element("policy").textContent =
       `Age: at least ${policy.min_age}\nNationality: ${policy.allowed_nationalities.join(", ") || "No nationality predicate"}\nDocument issuer: ${policy.allowed_issuers.join(", ") || "No issuing-country predicate"}\nSynthetic documents only. Policy expires ${new Date(info.config.policy_valid_until * 1000).toLocaleString()}.`;
+  } else {
+    element("policy").textContent =
+      message === "Loading Testnet policy."
+        ? "Loading the immutable onchain policy..."
+        : "The onchain policy is unavailable or not configured for this origin. Wallet login, proof requests and settlement remain disabled.";
   }
   element("quote-result").textContent = quote
-    ? `Pay ${quote.sell_amount} simulated TRY\nReceive ${quote.buy_amount} Testnet ${info?.buy_asset.split(":")[1] ?? "tokens"}\nFee included: ${quote.fee.total} TRY\nQuote expires ${new Date(quote.expires_at).toLocaleTimeString()}`
+    ? `Pay ${quote.sell_amount} ${withdrawal ? `Testnet ${tokenName}` : "simulated TRY"}\nReceive ${quote.buy_amount} ${withdrawal ? "simulated TRY" : `Testnet ${tokenName}`}\nFee included: ${quote.fee.total} ${withdrawal ? tokenName : "TRY"}\nQuote expires ${new Date(quote.expires_at).toLocaleTimeString()}`
     : "";
   element("order").textContent = order
-    ? `Order ${order.id}\nStatus: ${order.stage}${order.expired ? " (expired; reservation held)" : ""}\nRecipient: ${order.recipient}\n${order.amount_try} simulated TRY -> ${order.amount_token} Testnet tokens\nToken: ${order.token}\nVault: ${order.contract}\nDeadline: ${new Date(order.deadline * 1000).toLocaleString()}${order.confirmed_ledger === null ? "" : `\nConfirmed ledger: ${order.confirmed_ledger}`}${order.eligibility_expires_at ? `\nEligibility until: ${new Date(order.eligibility_expires_at * 1000).toLocaleTimeString()}` : ""}`
+    ? `Order ${order.id}\nDirection: ${order.direction}\nStatus: ${order.stage}${order.expired && !order.completed ? (authorized ? " (proof window expired; authorized payout may finish)" : " (expired; no refund is implied)") : ""}\nWallet: ${order.recipient}\n${withdrawal ? `${order.amount_token} Testnet ${tokenName} -> ${order.amount_try} simulated TRY` : `${order.amount_try} simulated TRY -> ${order.amount_token} Testnet ${tokenName}`}\nToken: ${order.token}\nVault: ${order.contract}${withdrawal ? `\nSynthetic beneficiary: ${order.bank_destination}\nBeneficiary commitment: ${order.bank_destination_hash}\nToken escrow recorded: ${order.escrowed ? "yes" : "no"}` : ""}\nProof deadline: ${new Date(order.deadline * 1000).toLocaleString()}${order.confirmed_ledger === null ? "" : `\nConfirmed ledger: ${order.confirmed_ledger}`}${order.eligibility_expires_at ? `\nEligibility until: ${new Date(order.eligibility_expires_at * 1000).toLocaleTimeString()}` : ""}`
     : "No order reserved.";
   if (order) element<HTMLInputElement>("order-id").value = order.id;
   const wait =
     order?.created_at == null ? 0 : Math.max(0, order.created_at + 30 - now);
   element("proof-help").textContent = wait
     ? `Wait ${wait}s before creating the phone request so its source-chain timestamp can follow order creation.`
-    : "Use the installed ZKPassport app in developer mode with a synthetic document. Refresh an expired eligibility grant without changing this order.";
-  element("bank").textContent = order?.bank_instructions
-    ? `SIMULATED BANK RECEIPT ONLY\nExact amount: ${order.bank_instructions.amount_try} TRY\nReference: ${order.bank_instructions.reference}\nDo not make a real bank transfer.`
-    : order?.receipt_id
-      ? `Mock-bank receipt recorded: ${order.receipt_id}\n${order.completed ? "Testnet settlement confirmed." : "Receipt is not itself settlement."}`
-      : "Bank instructions remain locked until native eligibility is confirmed.";
+    : authorized || order?.completed
+      ? "This order no longer accepts a phone proof. Its authorized completion follows the recorded bank and settlement states."
+      : "Use the installed ZKPassport app in developer mode with a synthetic document. Refresh an expired eligibility grant without changing this order.";
+  element("proof-consent").textContent = withdrawal
+    ? order?.escrowed
+      ? "A refresh verifies a new proof for this same escrow. It must not debit tokens again. Only confirmed chain state grants eligibility."
+      : `IMPORTANT: signing the first proof transaction also authorizes the vault to debit exactly ${order?.amount_token ?? "the quoted amount of"} Testnet ${tokenName} from your wallet into escrow. Expiry does not imply a refund. Receiving a phone proof is not approval.`
+    : "Receiving a proof is not approval. Freighter signs the exact onchain invocation; only confirmed contract state unlocks the next step.";
+  element("bank").textContent = withdrawal
+    ? order?.receipt_id
+      ? `SIMULATED PAYOUT RECORDED\nMock-bank receipt: ${order.receipt_id}\n${order.completed ? "Escrow settlement to the provider is confirmed." : "Simulated payout is not yet escrow settlement."}`
+      : order?.mock_bank_credit
+        ? `MOCK-BANK CREDIT RECORDED LOCALLY\n${order.mock_bank_credit.amount_try} simulated TRY to ${order.mock_bank_credit.destination}\nOnchain receipt is not yet confirmed. Reconcile the existing payout; do not create a replacement order.`
+        : authorized
+          ? `SIMULATED PAYOUT AUTHORIZED\n${order.amount_try} TRY to ${order.bank_destination}\nNo real bank transfer will occur. This authorization permits completion after the proof deadline.`
+          : "Simulated TRY payout remains locked until native eligibility, token escrow and onchain payout authorization are confirmed."
+    : order?.bank_instructions
+      ? `SIMULATED BANK RECEIPT ONLY\nExact amount: ${order.bank_instructions.amount_try} TRY\nReference: ${order.bank_instructions.reference}\nDo not make a real bank transfer.`
+      : order?.receipt_id
+        ? `Mock-bank receipt recorded: ${order.receipt_id}\n${order.completed ? "Testnet settlement confirmed." : "Receipt is not itself settlement."}`
+        : "Bank instructions remain locked until native eligibility is confirmed.";
+  element("settlement-help").textContent = withdrawal
+    ? "Authorize simulated payout while eligibility is current. The mock-bank notary records one synthetic credit; settlement then transfers the exact escrow to the provider. An authorized payout cannot be replaced by a new proof."
+    : "The bank notary attests simulated receipt separately. Settlement cannot change the recipient, asset or reserved amount.";
   const live =
     !!order && !order.expired && order.deadline > now && !order.completed;
   const eligible =
@@ -186,7 +228,9 @@ function render() {
     busy ||
     !address ||
     !live ||
-    !["created", "eligible", "funded"].includes(order.stage) ||
+    !(
+      withdrawal ? ["created", "eligible"] : ["created", "eligible", "funded"]
+    ).includes(order.stage) ||
     order.created_at === null ||
     wait > 0 ||
     !!phoneUrl ||
@@ -194,13 +238,32 @@ function render() {
   button("cancel-proof").disabled = !phoneUrl;
   button("sign-proof").disabled =
     busy || !prepared || prepared.expires_at <= now || !live;
+  button("sign-proof").textContent =
+    withdrawal && !order?.escrowed
+      ? "Sign native proof + exact token escrow"
+      : "Sign native proof transaction";
+  button("authorize-payout").hidden = !withdrawal;
+  button("authorize-payout").disabled =
+    busy || !eligible || order?.stage !== "eligible" || !order.escrowed;
+  button("bank-action").textContent = withdrawal
+    ? order?.mock_bank_credit
+      ? "Reconcile simulated payout receipt"
+      : "Record simulated TRY payout"
+    : "Record simulated TRY receipt";
   button("bank-action").disabled =
     busy ||
-    !eligible ||
-    order?.stage !== "eligible" ||
-    !order.bank_instructions;
+    (withdrawal
+      ? !authorized || order?.stage !== "payout_authorized"
+      : !eligible || order?.stage !== "eligible" || !order.bank_instructions);
+  button("settle").textContent = withdrawal
+    ? "Settle escrow to provider"
+    : "Settle Testnet tokens to wallet";
   button("settle").disabled =
-    busy || !eligible || order?.stage !== "funded" || !order.receipt_id;
+    busy ||
+    !order?.receipt_id ||
+    (withdrawal
+      ? !authorized || order.stage !== "paid"
+      : !eligible || order.stage !== "funded");
   button("refresh").disabled = busy || !address;
   const transactions = element("transactions");
   transactions.replaceChildren();
@@ -271,7 +334,18 @@ button("quote").onclick = () => {
   void run(() => flow.quote(element<HTMLInputElement>("amount").value.trim()));
 };
 button("reserve").onclick = () => {
-  void run(() => flow.createOrder());
+  void run(() =>
+    flow.createOrder(
+      flow.view.direction === "withdrawal"
+        ? element<HTMLInputElement>("bank-destination").value.trim()
+        : undefined
+    )
+  );
+};
+element<HTMLSelectElement>("direction").onchange = (event) => {
+  const value = (event.currentTarget as HTMLSelectElement).value;
+  if (value === "deposit" || value === "withdrawal")
+    flow.selectDirection(value);
 };
 button("prove").onclick = () => {
   void run(() => flow.requestProof());
@@ -282,6 +356,9 @@ button("sign-proof").onclick = () => {
 };
 button("bank-action").onclick = () => {
   void run(() => flow.simulateBank());
+};
+button("authorize-payout").onclick = () => {
+  void run(() => flow.authorizePayout());
 };
 button("settle").onclick = () => {
   void run(() => flow.settle());

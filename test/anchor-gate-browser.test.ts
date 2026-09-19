@@ -2,21 +2,29 @@ import { describe, expect, it } from "vitest";
 import {
   Account,
   Asset,
+  Contract,
   Keypair,
   Networks,
   Operation,
   StrKey,
   TransactionBuilder,
   WebAuth,
+  nativeToScVal,
 } from "@stellar/stellar-sdk";
 import { Hono } from "hono";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { buildAnchorGateBrowser } from "../scripts/build-anchor-gate.js";
+import { anchorGateBrowserRoutes } from "../src/anchor-gate-browser.js";
 import {
   createAnchorGateFlow,
   type PhoneEvents,
 } from "../web/anchor-gate-flow.js";
 
-function browserHarness() {
+function browserHarness(direction: "deposit" | "withdrawal" = "deposit") {
   const now = Math.floor(Date.now() / 1000);
+  let clockNow = now;
   const wallet = Keypair.random();
   const anchor = Keypair.random();
   const contract = StrKey.encodeContract(new Uint8Array(32).fill(7));
@@ -38,7 +46,18 @@ function browserHarness() {
     recipient: wallet.publicKey(),
     amount_try: "100.00",
     amount_token: "2.5000000",
-    source_asset: "iso4217:TRY",
+    source_asset:
+      direction === "deposit"
+        ? "iso4217:TRY"
+        : `stellar:USDC:${anchor.publicKey()}`,
+    direction,
+    bank_destination:
+      direction === "withdrawal" ? "demo:synthetic-account" : null,
+    bank_destination_hash:
+      direction === "withdrawal" ? "33".repeat(32) : "00".repeat(32),
+    escrowed: false,
+    payout_authorized_at: null,
+    mock_bank_credit: null,
     token,
     contract,
     stage: "created",
@@ -111,8 +130,29 @@ function browserHarness() {
       },
     })
   );
-  app.post("/sep38/quote", (c) =>
-    c.json({
+  app.post("/sep38/quote", async (c) => {
+    const request = await c.req.json();
+    if (direction === "withdrawal") {
+      if (
+        request.sell_asset !== `stellar:USDC:${anchor.publicKey()}` ||
+        request.buy_asset !== "iso4217:TRY" ||
+        request.sell_amount !== "2.5"
+      )
+        return c.json({ error: "wrong withdrawal quote" }, 400);
+      return c.json({
+        id: "qt_demo",
+        sell_asset: `stellar:USDC:${anchor.publicKey()}`,
+        buy_asset: "iso4217:TRY",
+        sell_amount: "2.5000000",
+        buy_amount: "100.00",
+        expires_at: new Date((now + 600) * 1000).toISOString(),
+        fee: {
+          total: "0.0500000",
+          asset: `stellar:USDC:${anchor.publicKey()}`,
+        },
+      });
+    }
+    return c.json({
       id: "qt_demo",
       sell_asset: "iso4217:TRY",
       buy_asset: `stellar:USDC:${anchor.publicKey()}`,
@@ -120,10 +160,44 @@ function browserHarness() {
       buy_amount: "2.5000000",
       expires_at: new Date((now + 600) * 1000).toISOString(),
       fee: { total: "1.00", asset: "iso4217:TRY" },
-    })
-  );
-  app.post("/anchor-gate/orders", (c) => c.json(order));
+    });
+  });
+  app.post("/anchor-gate/orders", async (c) => {
+    const request = await c.req.json();
+    if (
+      direction === "withdrawal" &&
+      (request.direction !== "withdrawal" ||
+        request.bank_destination !== "demo:synthetic-account")
+    )
+      return c.json({ error: "wrong withdrawal terms" }, 400);
+    return c.json(order);
+  });
   app.get("/anchor-gate/orders/:id", (c) => c.json(order));
+  app.post("/anchor-gate/orders/:id/authorize-payout", (c) => {
+    if (
+      order.direction !== "withdrawal" ||
+      order.stage !== "eligible" ||
+      !order.escrowed
+    )
+      return c.json({ error: "not eligible" }, 409);
+    Object.assign(order, {
+      stage: "payout_authorized",
+      payout_authorized_at: clockNow,
+    });
+    return c.json(order);
+  });
+  app.post("/anchor-gate/orders/:id/simulate-bank", (c) => {
+    if (order.direction !== "withdrawal" || order.stage !== "payout_authorized")
+      return c.json({ error: "not authorized" }, 409);
+    Object.assign(order, { stage: "paid", receipt_id: "mock-receipt-1" });
+    return c.json(order);
+  });
+  app.post("/anchor-gate/orders/:id/settle", (c) => {
+    if (order.direction !== "withdrawal" || order.stage !== "paid")
+      return c.json({ error: "not paid" }, 409);
+    Object.assign(order, { stage: "settled", completed: true });
+    return c.json(order);
+  });
   app.get("/anchor-gate/orders/:id/proof-request", (c) =>
     c.json({
       domain: "localhost",
@@ -151,6 +225,25 @@ function browserHarness() {
           503
         );
   });
+  app.post("/anchor-gate/orders/:id/submit", async (c) => {
+    const body = await c.req.json();
+    const transaction = TransactionBuilder.fromXdr(
+      body.signed_transaction,
+      Networks.TESTNET
+    );
+    if (
+      !transaction.signatures.some((signature) =>
+        wallet.verify(transaction.hash(), signature.signature)
+      )
+    )
+      return c.json({ error: "invalid wallet signature" }, 403);
+    Object.assign(order, {
+      stage: "eligible",
+      escrowed: direction === "withdrawal",
+      eligibility_expires_at: order.deadline,
+    });
+    return c.json(order);
+  });
   const flow = createAnchorGateFlow({
     origin: "http://localhost:8787",
     fetch: async (input, init) => app.request(String(input), init),
@@ -161,13 +254,7 @@ function browserHarness() {
         network: Networks.TESTNET,
       }),
       sign: async (transaction) => {
-        const { tx } = WebAuth.readChallengeTx(
-          transaction,
-          anchor.publicKey(),
-          Networks.TESTNET,
-          "localhost:8787",
-          "localhost:8787"
-        );
+        const tx = TransactionBuilder.fromXdr(transaction, Networks.TESTNET);
         tx.sign(wallet);
         return tx.toXdr();
       },
@@ -182,7 +269,7 @@ function browserHarness() {
       },
     },
     changed() {},
-    now: () => now * 1000,
+    now: () => clockNow * 1000,
   });
   return {
     flow,
@@ -192,6 +279,9 @@ function browserHarness() {
     uploads: () => uploads,
     prepare(value: unknown) {
       prepared = value;
+    },
+    advance(seconds: number) {
+      clockNow += seconds;
     },
     proof: {
       name: "outer_evm_count_6",
@@ -307,6 +397,150 @@ describe("gated browser wallet authentication", () => {
 });
 
 describe("gated browser order and phone lifecycle", () => {
+  it("keeps the existing deposit receipt when requesting a fresh eligibility proof", async () => {
+    const test = browserHarness();
+    await test.flow.initialize();
+    await test.flow.connect();
+    await test.flow.quote("100.00");
+    await test.flow.createOrder();
+    Object.assign(test.order, {
+      stage: "funded",
+      receipt_id: "existing-deposit-receipt",
+      eligibility_expires_at: test.order.created_at,
+    });
+    await test.flow.refresh();
+    await test.flow.requestProof();
+    expect(test.flow.view.phoneUrl).toBeTruthy();
+    expect(test.flow.view.order).toMatchObject({
+      stage: "funded",
+      receipt_id: "existing-deposit-receipt",
+    });
+  });
+
+  it("discards a deposit quote when the customer switches direction", async () => {
+    const test = browserHarness();
+    await test.flow.initialize();
+    await test.flow.connect();
+    await test.flow.quote("100.00");
+    test.flow.selectDirection("withdrawal");
+    expect(test.flow.view.quote).toBeNull();
+    await expect(
+      test.flow.createOrder("demo:synthetic-account")
+    ).rejects.toThrow("fresh quote");
+  });
+
+  it("reserves an exact reverse quote for a synthetic withdrawal destination", async () => {
+    const test = browserHarness("withdrawal");
+    await test.flow.initialize();
+    await test.flow.connect();
+    await test.flow.quote("2.5", "withdrawal");
+    await test.flow.createOrder("demo:synthetic-account");
+    expect(test.flow.view.order).toMatchObject({
+      direction: "withdrawal",
+      amount_try: "100.00",
+      amount_token: "2.5000000",
+      bank_destination: "demo:synthetic-account",
+      escrowed: false,
+    });
+  });
+
+  it("shows a recorded mock credit without inventing an onchain paid receipt", async () => {
+    const test = browserHarness("withdrawal");
+    await test.flow.initialize();
+    await test.flow.connect();
+    Object.assign(test.order, {
+      stage: "payout_authorized",
+      escrowed: true,
+      payout_authorized_at: test.order.created_at,
+      mock_bank_credit: {
+        destination: "demo:synthetic-account",
+        amount_try: "100.00",
+        credited_at: new Date(test.order.created_at * 1000).toISOString(),
+      },
+    });
+    await test.flow.refresh(test.order.id);
+    expect(test.flow.view.order).toMatchObject({
+      stage: "payout_authorized",
+      receipt_id: null,
+      completed: false,
+      mock_bank_credit: {
+        destination: "demo:synthetic-account",
+        amount_try: "100.00",
+      },
+    });
+    await expect(test.flow.settle()).rejects.toThrow("receipt");
+  });
+
+  it("signs the exact native withdrawal invocation at the external wallet boundary", async () => {
+    const test = browserHarness("withdrawal");
+    await test.flow.initialize();
+    await test.flow.connect();
+    await test.flow.quote("2.5", "withdrawal");
+    await test.flow.createOrder("demo:synthetic-account");
+    const transaction = new TransactionBuilder(
+      new Account(test.order.recipient, "1"),
+      { fee: "100", networkPassphrase: Networks.TESTNET }
+    )
+      .addOperation(
+        new Contract(test.order.contract).call(
+          "prove_order",
+          nativeToScVal(Buffer.from(test.order.id, "hex")),
+          nativeToScVal(Buffer.from(test.proof.proof.slice(11 * 64), "hex")),
+          nativeToScVal(Buffer.from(test.proof.proof.slice(0, 11 * 64), "hex"))
+        )
+      )
+      .setTimeout(60)
+      .build();
+    test.prepare({
+      action_id: "synthetic-native-action",
+      transaction: transaction.toXdr(),
+      hash: Buffer.from(transaction.hash()).toString("hex"),
+      expires_at: Number(transaction.timeBounds!.maxTime),
+      network_passphrase: Networks.TESTNET,
+    });
+    await test.flow.requestProof();
+    await test.events().proof(test.proof);
+    expect(test.flow.view.order?.stage).toBe("created");
+    await test.flow.signProof();
+    expect(test.flow.view.order).toMatchObject({
+      stage: "eligible",
+      escrowed: true,
+    });
+  });
+
+  it("finishes an already-authorized withdrawal after its proof deadline without authorizing twice", async () => {
+    const test = browserHarness("withdrawal");
+    await test.flow.initialize();
+    await test.flow.connect();
+    await test.flow.quote("2.5", "withdrawal");
+    await test.flow.createOrder("demo:synthetic-account");
+    Object.assign(test.order, {
+      stage: "eligible",
+      escrowed: true,
+      eligibility_expires_at: test.order.deadline,
+    });
+    await test.flow.refresh();
+    await expect(test.flow.simulateBank()).rejects.toThrow("authorized");
+    await test.flow.authorizePayout();
+    expect(test.flow.view.order?.stage).toBe("payout_authorized");
+    test.advance(601);
+    Object.assign(test.order, { expired: true });
+    await test.flow.refresh();
+    await expect(test.flow.requestProof()).rejects.toThrow();
+    await expect(test.flow.authorizePayout()).rejects.toThrow();
+    await test.flow.simulateBank();
+    expect(test.flow.view.order).toMatchObject({
+      stage: "paid",
+      completed: false,
+      receipt_id: "mock-receipt-1",
+    });
+    await test.flow.settle();
+    expect(test.flow.view.order).toMatchObject({
+      stage: "settled",
+      completed: true,
+    });
+  });
+
   it("displays the exact quote and never uploads a cancelled phone callback", async () => {
     const test = browserHarness();
     await test.flow.initialize();
@@ -359,5 +593,40 @@ describe("gated browser order and phone lifecycle", () => {
     expect(test.flow.view.prepared).not.toBeNull();
     await expect(test.flow.signProof()).rejects.toThrow("proof invocation");
     expect(test.flow.view.order?.stage).toBe("created");
+  });
+});
+
+describe("production-built gated browser serving", () => {
+  it("serves generated assets with private-session headers only at the configured host", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "anchor-gate-browser-"));
+    try {
+      await buildAnchorGateBrowser(directory);
+      const app = anchorGateBrowserRoutes("https://anchor.example", directory);
+      const page = await app.request("https://anchor.example/anchor-gate");
+      expect(page.status).toBe(200);
+      expect(page.headers.get("Cache-Control")).toBe("no-store");
+      expect(page.headers.get("Referrer-Policy")).toBe("no-referrer");
+      expect(page.headers.get("Content-Security-Policy")).toContain(
+        "frame-ancestors 'none'"
+      );
+      const html = await page.text();
+      expect(html.includes('src="/anchor-gate/bundle.js"')).toBe(true);
+      expect(html.includes('id="authorize-payout"')).toBe(true);
+      const bundle = await app.request(
+        "https://anchor.example/anchor-gate/bundle.js"
+      );
+      expect(bundle.status).toBe(200);
+      expect(bundle.headers.get("Content-Type")).toContain(
+        "application/javascript"
+      );
+      expect((await bundle.text()).includes("Stellar Proof-Gated Anchor")).toBe(
+        true
+      );
+      expect(
+        (await app.request("https://other.example/anchor-gate")).status
+      ).toBe(403);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
