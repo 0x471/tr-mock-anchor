@@ -40,6 +40,7 @@ function fixture(anchorGate?: GateGateway) {
     rateSource: "static" as const,
     staticUsdTry: "40.00",
     spreadBps: 50,
+    anchorGateAllowedWallets: [],
   };
   const db = openDb(":memory:");
   databases.push(db);
@@ -376,6 +377,19 @@ describe("gated anchor HTTP interface", () => {
       expired: true,
     });
     expect(gate.payouts).toBe(1);
+  });
+  it("keeps public discovery readable but denies a non-admitted authenticated wallet", async () => {
+    const { app, authenticate, deps } = fixture(new FakeGate());
+    deps.cfg.anchorGateAllowedWallets = [Keypair.random().publicKey()];
+    expect((await app.request("/anchor-gate/info")).status).toBe(200);
+    const user = await authenticate();
+    const response = await app.request("/anchor-gate/orders/unknown", {
+      headers: user.headers,
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      error: { code: "demo_wallet_not_admitted" },
+    });
   });
   it("rejects real-bank destination text and locks the synthetic beneficiary under the creation key", async () => {
     const { app, user, order } = await checkout(new FakeGate(), "withdrawal");
