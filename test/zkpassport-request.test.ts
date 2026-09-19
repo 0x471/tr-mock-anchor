@@ -70,7 +70,16 @@ function fakeClient(data: unknown = parameters()) {
   let success: (value: unknown) => void = () => {};
   let reject: () => void = () => {};
   let error: (value: unknown) => void = () => {};
-  const request: DiagnosticRequest = {
+  let received: () => void = () => {};
+  let generating: () => void = () => {};
+  let generated: (value: unknown) => void = () => {};
+  let connected: () => void = () => {};
+  let disconnected: () => void = () => {};
+  const request: DiagnosticRequest & {
+    onProofGenerated(callback: (proof: unknown) => void): void;
+    onBridgeConnect(callback: () => void): void;
+    onBridgeConnectionLost(callback: () => void): void;
+  } = {
     url: "https://zkpassport.id/r?test=1",
     requestId: "fake",
     onSuccess: (callback) => {
@@ -82,8 +91,21 @@ function fakeClient(data: unknown = parameters()) {
     onError: (callback) => {
       error = callback;
     },
-    onRequestReceived: () => {},
-    onGeneratingProof: () => {},
+    onRequestReceived: (callback) => {
+      received = callback;
+    },
+    onGeneratingProof: (callback) => {
+      generating = callback;
+    },
+    onProofGenerated: (callback) => {
+      generated = callback;
+    },
+    onBridgeConnect: (callback) => {
+      connected = callback;
+    },
+    onBridgeConnectionLost: (callback) => {
+      disconnected = callback;
+    },
   };
   const builder: DiagnosticBuilder = {
     gte: vi.fn(() => builder),
@@ -105,7 +127,12 @@ function fakeClient(data: unknown = parameters()) {
     verify,
     success: (value: unknown) => success(value),
     reject: () => reject(),
-    error: () => error("sensitive error text"),
+    error: (value: unknown = "sensitive error text") => error(value),
+    received: () => received(),
+    generating: () => generating(),
+    generated: (value: unknown) => generated(value),
+    connected: () => connected(),
+    disconnected: () => disconnected(),
   };
 }
 
@@ -394,6 +421,141 @@ describe("received proof diagnostics", () => {
 });
 
 describe("bounded request lifecycle without network", () => {
+  it("retains progress and classifies a documented SDK proof error without exposing its text", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-20T02:00:00.000Z"));
+    const fake = fakeClient();
+    const events = vi.fn();
+    const pending = runPassportRequest(
+      options,
+      fake.client,
+      { verify: fake.verify },
+      events
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    fake.received();
+    fake.generated({ proof: "private proof" });
+    fake.error("Cannot generate proof: private document details");
+    const result = await pending;
+    expect(result.summary).toMatchObject({
+      outcome: "error",
+      last_milestone: "proof_generated",
+      proofs_received: 1,
+      sdk_error_category: "proof_generation_failed",
+    });
+    expect(events).toHaveBeenLastCalledWith({
+      event: "sdk_error",
+      at: "2026-09-20T02:00:00.000Z",
+      proofs_received: 1,
+      sdk_error_category: "proof_generation_failed",
+    });
+    expect(JSON.stringify({ result, events: events.mock.calls })).not.toContain(
+      "private"
+    );
+  });
+
+  it("reports only timestamped transport milestones and proof counts through timeout, ignoring late events", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-20T02:00:00.000Z"));
+    const fake = fakeClient();
+    const events = vi.fn();
+    const pending = runPassportRequest(
+      { ...options, timeoutSeconds: 1 },
+      fake.client,
+      { verify: fake.verify },
+      events
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    fake.connected();
+    fake.received();
+    fake.generating();
+    fake.generated({ name: "private document", proof: "private payload" });
+    fake.disconnected();
+    await vi.advanceTimersByTimeAsync(1000);
+    const result = await pending;
+    expect(result.summary).toMatchObject({
+      outcome: "timed_out",
+      last_milestone: "bridge_connection_lost",
+      proofs_received: 1,
+    });
+    expect(events.mock.calls.map(([event]) => event)).toEqual([
+      {
+        event: "request_ready",
+        at: "2026-09-20T02:00:00.000Z",
+        proofs_received: 0,
+        url: "https://zkpassport.id/r?test=1",
+      },
+      {
+        event: "bridge_connected",
+        at: "2026-09-20T02:00:00.000Z",
+        proofs_received: 0,
+      },
+      {
+        event: "secure_channel_established",
+        at: "2026-09-20T02:00:00.000Z",
+        proofs_received: 0,
+      },
+      {
+        event: "generating_proof",
+        at: "2026-09-20T02:00:00.000Z",
+        proofs_received: 0,
+      },
+      {
+        event: "proof_generated",
+        at: "2026-09-20T02:00:00.000Z",
+        proofs_received: 1,
+      },
+      {
+        event: "bridge_connection_lost",
+        at: "2026-09-20T02:00:00.000Z",
+        proofs_received: 1,
+      },
+    ]);
+    const eventCount = events.mock.calls.length;
+    fake.connected();
+    fake.received();
+    fake.generating();
+    fake.generated({ name: "late private document" });
+    fake.disconnected();
+    fake.error();
+    fake.reject();
+    fake.success({ proofs: [candidate] });
+    expect(events).toHaveBeenCalledTimes(eventCount);
+    expect(result.summary.proofs_received).toBe(1);
+    expect(JSON.stringify(events.mock.calls)).not.toContain("private");
+    expect(fake.verify).not.toHaveBeenCalled();
+    expect(fake.client.clearAllRequests).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["This ID is not supported yet", "unsupported_id"],
+    ["This ID is not supported yet: private detail", "other"],
+    ["private error text", "other"],
+    [{ message: "Cannot generate proof: private detail" }, "other"],
+  ])(
+    "classifies only source-defined SDK string errors",
+    async (error, category) => {
+      vi.useFakeTimers();
+      const fake = fakeClient();
+      const events = vi.fn();
+      const pending = runPassportRequest(
+        options,
+        fake.client,
+        { verify: fake.verify },
+        events
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      fake.error(error);
+      expect((await pending).summary).toMatchObject({
+        outcome: "error",
+        last_milestone: "request_ready",
+        proofs_received: 0,
+        sdk_error_category: category,
+      });
+      expect(JSON.stringify(events.mock.calls)).not.toContain("private");
+    }
+  );
+
   it("creates only age plus custom-data and cleans up after an unsupported response", async () => {
     const fake = fakeClient();
     const events = vi.fn();
@@ -407,6 +569,8 @@ describe("bounded request lifecycle without network", () => {
       expect(events).toHaveBeenCalledWith({
         event: "request_ready",
         url: "https://zkpassport.id/r?test=1",
+        at: expect.any(String),
+        proofs_received: 0,
       })
     );
     expect(fake.client.request).toHaveBeenCalledWith(
@@ -460,7 +624,11 @@ describe("bounded request lifecycle without network", () => {
       () => {}
     );
     await vi.advanceTimersByTimeAsync(1000);
-    expect((await pending).summary.outcome).toBe("timed_out");
+    expect((await pending).summary).toMatchObject({
+      outcome: "timed_out",
+      last_milestone: null,
+      proofs_received: 0,
+    });
     expect(fake.client.clearAllRequests).toHaveBeenCalledOnce();
   });
 
@@ -494,9 +662,15 @@ describe("bounded request lifecycle without network", () => {
       controller.signal
     );
     await vi.waitFor(() => expect(events).toHaveBeenCalled());
+    fake.received();
+    fake.generated({ proof: "private proof" });
     controller.abort();
     fake.success({ proofs: [candidate] });
-    expect((await pending).summary.outcome).toBe("interrupted");
+    expect((await pending).summary).toMatchObject({
+      outcome: "interrupted",
+      last_milestone: "proof_generated",
+      proofs_received: 1,
+    });
     expect(fake.verify).not.toHaveBeenCalled();
     expect(fake.client.clearAllRequests).toHaveBeenCalledOnce();
   });
