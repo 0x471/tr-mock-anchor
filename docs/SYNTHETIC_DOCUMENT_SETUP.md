@@ -79,6 +79,12 @@ vault unchanged.
 
 ## Concrete choices requiring user direction
 
+The tester subsequently approved the second option: a separate ZKR/ZKR/18+
+synthetic demo vault. It is deployed at
+`CARWNKPAP5YAXFTZZJ7SFXKP4GGMCXRCA365XE75OQDTALQYXEYGJYSM`; the original TUR
+vault was not changed. See [deployment evidence](TESTNET_GATE_DEPLOYMENT.md).
+This approval changes the demonstration policy, not the proof verifier.
+
 - Keep the existing TUR/TUR vault unchanged. Treat the stock ZKR rejection as a
   negative control; a positive test remains blocked until ZKPassport provides or
   documents a compatible trusted synthetic fixture and stock-app loading route.

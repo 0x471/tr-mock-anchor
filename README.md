@@ -11,15 +11,16 @@ exact SEP-38 quotes and wallet-signed native proof calls. It requires Freighter
 on Testnet and a trustline to the configured mock asset. A configured hosted
 demo admits specific public wallets; never paste a wallet secret into the UI.
 
-The selected policy is age >=18, nationality TUR and document issuer TUR using
+The selected synthetic demo policy is age >=18, nationality ZKR and document issuer ZKR using
 synthetic ZKPassport developer-mode documents. Both country attributes are
 required; residence is not inferred. This profile uses OuterCount7, not the
 age-only diagnostic profile described below.
 
-The stock app's synthetic fixtures use ZKR nationality and issuer, not TUR.
-The first country request was rejected with a nonmatching document; no positive
-country proof has been accepted. See [the fixture compatibility findings](docs/SYNTHETIC_DOCUMENT_SETUP.md).
-A separate ZKR demo policy requires explicit approval; the TUR vault is unchanged.
+Use the bundled adult mock John Smith, synthetic date of birth 1995-11-12.
+ZKR is the fictional Zero Knowledge Republic, not Turkish eligibility. The
+initial TUR request was rejected with a nonmatching stock document. The tester
+approved a separate ZKR deployment; the original TUR vault remains unchanged.
+See [the fixture compatibility findings](docs/SYNTHETIC_DOCUMENT_SETUP.md).
 
 - Deposit: provider tokens are reserved in the vault; native proof acceptance
   and a separate simulated TRY receipt are required before token payout.
@@ -30,8 +31,8 @@ A separate ZKR demo policy requires explicit approval; the TUR vault is unchange
 - No cancellation, refund or provider reclaim exists. Expired unresolved
   reservations remain held. Do not send real funds or use real documents.
 
-The localhost validation vault is deployed at
-`CDGRHNKXIW4AN7T2UIFW4X33TXD7V7BY63XTNC2RX5JKKJM5ADJZXKR7`.
+The active localhost ZKR demo vault is deployed at
+`CARWNKPAP5YAXFTZZJ7SFXKP4GGMCXRCA365XE75OQDTALQYXEYGJYSM`.
 Its country verifier and executable identity have been independently checked,
 and one authenticated deposit reservation is confirmed. Fresh Outer7 proof
 acceptance and completed deposits/withdrawals are not yet claimed.

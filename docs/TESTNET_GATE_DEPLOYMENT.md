@@ -77,6 +77,33 @@ requests, bank simulation before eligibility, settlement before receipt,
 withdrawal authorization on a deposit, and invalid proof lengths. The order
 remained at the created stage with its original single create action.
 
+## Active localhost ZKR demonstration vault
+
+The tester explicitly approved switching the synthetic demonstration to age
+18+, nationality ZKR and document issuer ZKR. Both country predicates remain
+mandatory onchain; ZKR is a mock jurisdiction, not Turkish eligibility.
+
+- Contract `CARWNKPAP5YAXFTZZJ7SFXKP4GGMCXRCA365XE75OQDTALQYXEYGJYSM`.
+- [Deployment](https://stellar.expert/explorer/testnet/tx/032a8e4b09d82ea55ba840abd50cb60acca9eb4fd027263855cb48a6edb2d7b8), SUCCESS, ledger 4767528.
+- Reuses the exact gate Wasm `51db61488ab32fef8deb61f4dda58903e3295f5baa27d52543b9d6fd641aae97`
+  and pinned Count7 verifier above; no new verifier or gate-code upload.
+- Domain `localhost`, scope `tr-mock-anchor-zkr-demo-v1`.
+- Policy hash `3d58790408ded071a7898b253d887ec0e08498e830d6bfda4b9f2cfa3e051114`.
+- Policy expires 2026-09-20T19:40:17Z; proof/order lifetimes remain 3600 seconds.
+- Independent reads at ledger 4767543 checked the deployment receipt, source
+  signature, constructor bytes, executable, policy hash and verifier profile.
+  The original TUR vault's executable and policy were independently unchanged.
+
+The fresh authenticated ZKR deposit order is
+`0123766e159bd7681dcaf6ae1d46178d8c2852d6ab3515bd4764e32dae5ce0bc`,
+100.00 simulated TRY for 2.0947892 mock USDC. Its
+[create transaction](https://stellar.expert/explorer/testnet/tx/beeffd4705208862b7c4ffd37b4ed31a1e737d0e9e56e74430e37fa33467ec16)
+succeeded at ledger 4767538. These tokens are reserved, not paid out. Fresh
+phone proof acceptance and both settlement directions remain unconfirmed.
+
+The old TUR reservation and its local database were preserved. Neither the
+new deployment nor the country-policy change refunds its held Testnet tokens.
+
 ## Isolated demo accounts and asset
 
 | Role                     | Public address                                             |
