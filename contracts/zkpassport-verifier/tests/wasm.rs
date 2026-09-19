@@ -1,4 +1,7 @@
-#![cfg(feature = "wasm-tests")]
+#![cfg(all(
+    feature = "wasm-tests",
+    not(any(feature = "count6", feature = "count7"))
+))]
 mod common;
 
 #[test]

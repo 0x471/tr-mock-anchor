@@ -5,7 +5,7 @@
 //! the constant term, then performs a BN254 pairing check.
 //!
 //! Pinned target: official ZKPassport 0.20.0 `OuterCount5.sol`, BB5 non-ZK
-//! Keccak outer proof. The 22-round format is unpadded and has 41 entities.
+//! Keccak outer proof. The pinned format is unpadded and has 41 entities.
 //! This verifies the outer PCS opening; the caller must ALSO complete the
 //! recursive pairing accumulator bound into the proof's public inputs.
 
@@ -118,9 +118,9 @@ pub fn verify_shplemini(
     //   [1..=28]            = VK precomputed, in BB5 evaluation order
     //   [29..=33]           = w1,w2,w3,w4,z_perm (merged shifted scalars)
     //   [34..=36]           = lookup_inverses, read_counts, read_tags
-    //   [37..=57]           = 21 Gemini fold commitments
-    //   [58]                = generator with const_acc scalar
-    //   [59]                = kzg_quotient with scalar z
+    //   [37..37+log_n-1)    = Gemini fold commitments
+    //   [36+log_n]          = generator with const_acc scalar
+    //   [37+log_n]          = kzg_quotient with scalar z
     const TOTAL: usize = 1 + NUMBER_UNSHIFTED + CONST_PROOF_SIZE_LOG_N + 1;
     trace!("total = {}", TOTAL);
     let mut scalars = Fr::zero_array::<TOTAL>(env);

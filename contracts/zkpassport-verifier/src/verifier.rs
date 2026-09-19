@@ -150,7 +150,7 @@ impl UltraHonkVerifier {
         let mut numerator = Fr::one(env);
         let mut denominator = Fr::one(env);
 
-        // BB5 permutation IDs use the fixed 2^28 domain, not this circuit's 2^22 rows.
+        // BB5 permutation IDs use the fixed 2^28 domain, not the circuit row count.
         let beta_n = beta * &Fr::from_u64(env, (1u64 << 28) + offset);
         let beta_off = beta * &Fr::from_u64(env, offset + 1);
         let mut numerator_acc = gamma + beta_n;
@@ -192,7 +192,7 @@ fn complete_recursive_accumulator(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(any(feature = "count6", feature = "count7"))))]
 mod tests {
     use super::*;
     use soroban_sdk::testutils::Ledger;
