@@ -46,6 +46,7 @@ function fixture() {
     anchorGateProviderSecret: provider.secret(),
     anchorGateBankNotarySecret: notary.secret(),
     anchorGateMaxFeeStroops: "1000000",
+    anchorGateAllowedWallets: [],
   };
   const time = Math.floor(Date.now() / 1000);
   const terms: GateTerms = {
@@ -193,6 +194,26 @@ describe("gate contract RPC boundary", () => {
       status: "pending",
       ledger: null,
     });
+  });
+  it("requires explicit admitted public wallets before enabling a hosted vault", () => {
+    const { cfg, recipient } = fixture();
+    expect(() =>
+      createAnchorGateGateway({ ...cfg, publicUrl: "https://demo.example" })
+    ).toThrow(/admitted G wallets/);
+    expect(() =>
+      createAnchorGateGateway({
+        ...cfg,
+        publicUrl: "https://demo.example",
+        anchorGateAllowedWallets: ["not-a-wallet"],
+      })
+    ).toThrow(/admitted G wallets/);
+    expect(
+      createAnchorGateGateway({
+        ...cfg,
+        publicUrl: "https://demo.example",
+        anchorGateAllowedWallets: [recipient.publicKey()],
+      })
+    ).toBeDefined();
   });
   it("maps immutable config and explicit Soroban state unions without disclosing credential secrets", async () => {
     const { gate, cfg, time } = fixture();

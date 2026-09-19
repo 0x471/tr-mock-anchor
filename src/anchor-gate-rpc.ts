@@ -115,6 +115,17 @@ export function createAnchorGateGateway(
   dependency?: AnchorGateRpc
 ): GateGateway | undefined {
   if (!cfg.anchorGateContract) return undefined;
+  const hostname = new URL(cfg.publicUrl).hostname;
+  if (
+    cfg.anchorGateAllowedWallets.some(
+      (wallet) => !StrKey.isValidEd25519PublicKey(wallet)
+    ) ||
+    (!["localhost", "127.0.0.1", "[::1]"].includes(hostname) &&
+      cfg.anchorGateAllowedWallets.length === 0)
+  )
+    throw new Error(
+      "A hosted gate requires an explicit nonempty list of valid admitted G wallets"
+    );
   if (
     cfg.anchorMode !== "zkpassport" ||
     cfg.networkPassphrase !== Networks.TESTNET ||

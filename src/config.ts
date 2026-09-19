@@ -39,6 +39,9 @@ export const config = {
   anchorGateProviderSecret: str(env.ANCHOR_GATE_PROVIDER_SECRET, ""),
   anchorGateBankNotarySecret: str(env.ANCHOR_GATE_BANK_NOTARY_SECRET, ""),
   anchorGateMaxFeeStroops: str(env.ANCHOR_GATE_MAX_FEE_STROOPS, "1000000"),
+  anchorGateAllowedWallets: str(env.ANCHOR_GATE_ALLOWED_WALLETS, "")
+    .split(/[\s,]+/)
+    .filter(Boolean),
 
   // Pricing
   rateSource: str(env.RATE_SOURCE, "reflector") as "reflector" | "static",

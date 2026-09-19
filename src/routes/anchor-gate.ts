@@ -83,6 +83,15 @@ export function anchorGateRoutes(deps: Deps, sep: SepContext) {
         "recipient_unsupported",
         "This vault requires a plain G account without a memo."
       );
+    if (
+      deps.cfg.anchorGateAllowedWallets.length &&
+      !deps.cfg.anchorGateAllowedWallets.includes(claims.sub)
+    )
+      throw new ApiError(
+        403,
+        "demo_wallet_not_admitted",
+        "This wallet is not admitted to the capped Testnet demo. Admission does not replace proof verification."
+      );
     return sepJwtAuth(deps, sep)(c, next);
   });
   app.use(
