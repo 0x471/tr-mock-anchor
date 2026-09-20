@@ -152,6 +152,7 @@ export interface GateView {
   order: z.infer<typeof orderSchema> | null;
   phoneUrl: string;
   prepared: z.infer<typeof preparedSchema> | null;
+  reservationPending: boolean;
   message: string;
   direction: "deposit" | "withdrawal";
 }
@@ -171,6 +172,15 @@ interface FlowDependencies {
   now?(): number;
 }
 
+class AnchorRequestError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code?: string
+  ) {
+    super(`Anchor request failed (${status}). Reconcile before retrying.`);
+  }
+}
+
 export function createAnchorGateFlow(deps: FlowDependencies) {
   const view: GateView = {
     wallet: "",
@@ -179,6 +189,7 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
     order: null,
     phoneUrl: "",
     prepared: null,
+    reservationPending: false,
     message: "Loading Testnet policy.",
     direction: "deposit",
   };
@@ -266,10 +277,15 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       credentials: "omit",
       redirect: "error",
     });
-    if (!response.ok)
-      throw new Error(
-        `Anchor request failed (${response.status}). Reconcile before retrying.`
+    if (!response.ok) {
+      const error = z
+        .object({ error: z.object({ code: z.string() }) })
+        .safeParse(await response.json().catch(() => null));
+      throw new AnchorRequestError(
+        response.status,
+        error.success ? error.data.error.code : undefined
       );
+    }
     return response;
   }
   async function sameWallet(address: string) {
@@ -289,6 +305,25 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       order.completed !== (order.stage === "settled")
     )
       throw new Error("Order does not match this wallet and vault.");
+    if (view.order?.id !== order.id) {
+      cancelPhone();
+      view.prepared = null;
+      preparedInputs = undefined;
+    }
+    if (
+      view.quote &&
+      (view.quote.id !== order.quote_id ||
+        view.quote.sell_asset !== order.source_asset ||
+        view.quote.sell_amount !==
+          (order.direction === "deposit"
+            ? order.amount_try
+            : order.amount_token) ||
+        view.quote.buy_amount !==
+          (order.direction === "deposit"
+            ? order.amount_token
+            : order.amount_try))
+    )
+      view.quote = null;
     view.order = order;
     view.direction = order.direction;
     change(
@@ -349,6 +384,9 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
     },
     async connect() {
       flow.disconnect();
+      change(
+        "Checking Freighter. Review the wallet connection and SEP-10 login request; no payment is authorized."
+      );
       const session = ++generation;
       token = "";
       view.wallet = "";
@@ -431,6 +469,7 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       view.quote = null;
       view.order = null;
       view.prepared = null;
+      view.reservationPending = false;
       preparedInputs = undefined;
       idempotencyKey = "";
       requestedDestination = undefined;
@@ -438,20 +477,44 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
         "Wallet session cleared. Existing onchain reservations are unchanged."
       );
     },
+    clearQuote() {
+      if (view.reservationPending)
+        throw new Error(
+          "Reconcile the existing reservation before changing terms."
+        );
+      if (view.order)
+        throw new Error("An existing order's terms cannot change.");
+      view.quote = null;
+      idempotencyKey = "";
+      requestedDestination = undefined;
+      change("Edit the amount, then request and review a fresh quote.");
+    },
     selectDirection(direction: "deposit" | "withdrawal") {
+      if (view.reservationPending)
+        throw new Error(
+          "Reconcile the existing reservation before changing terms."
+        );
       if (view.order)
         throw new Error("An existing order's direction cannot change.");
       view.direction = direction;
       view.quote = null;
       idempotencyKey = "";
       requestedDestination = undefined;
-      change("Request a fresh quote for the selected direction.");
+      change(
+        view.wallet
+          ? "Request a fresh quote for the selected direction."
+          : "Connect Freighter on Stellar Testnet before requesting a quote."
+      );
     },
     async quote(
       amount: string,
       direction: "deposit" | "withdrawal" = view.direction
     ) {
       const info = requireActivePolicy();
+      if (view.reservationPending)
+        throw new Error(
+          "Reconcile the existing reservation before changing terms."
+        );
       const decimals = direction === "deposit" ? 2 : 7;
       const requestedUnits = units(amount, decimals);
       if (
@@ -511,9 +574,16 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       change("Review the exact quote before reserving an order.");
     },
     async createOrder(bankDestination?: string) {
-      requireActivePolicy();
+      if (!view.reservationPending) requireActivePolicy();
       if (!view.quote || !idempotencyKey || view.order)
         throw new Error("Request and review a fresh quote first.");
+      if (
+        !view.reservationPending &&
+        Date.parse(view.quote.expires_at) <= now() * 1000
+      )
+        throw new Error(
+          "Quote expired. Request and review a fresh quote first."
+        );
       if (
         view.direction === "withdrawal"
           ? !bankDestination ||
@@ -533,19 +603,48 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       requestedDestination = bankDestination;
       const session = generation;
       await sameWallet(view.wallet);
-      requireActivePolicy();
-      const value = await (
-        await request(
-          "/anchor-gate/orders",
-          {
-            quote_id: view.quote.id,
-            direction: view.direction,
-            ...(bankDestination ? { bank_destination: bankDestination } : {}),
-          },
-          true,
-          { "Idempotency-Key": idempotencyKey }
-        )
-      ).json();
+      if (!view.reservationPending) requireActivePolicy();
+      if (session !== generation) throw new Error("Wallet session changed.");
+      if (
+        !view.reservationPending &&
+        Date.parse(view.quote.expires_at) <= now() * 1000
+      )
+        throw new Error(
+          "Quote expired. Request and review a fresh quote first."
+        );
+      view.reservationPending = true;
+      change(
+        "Reservation outcome pending. Retry only this exact reservation until its order is confirmed."
+      );
+      let value: unknown;
+      try {
+        value = await (
+          await request(
+            "/anchor-gate/orders",
+            {
+              quote_id: view.quote.id,
+              direction: view.direction,
+              ...(bankDestination ? { bank_destination: bankDestination } : {}),
+            },
+            true,
+            { "Idempotency-Key": idempotencyKey }
+          )
+        ).json();
+      } catch (error) {
+        if (
+          session === generation &&
+          error instanceof AnchorRequestError &&
+          error.status === 409 &&
+          error.code === "quote_expired"
+        ) {
+          view.reservationPending = false;
+          flow.clearQuote();
+          throw new Error(
+            "Quote expired before reservation. Request and review a fresh quote; no order was reserved by this request."
+          );
+        }
+        throw error;
+      }
       if (session !== generation) throw new Error("Wallet session changed.");
       const order = orderSchema.parse(value);
       if (
@@ -565,8 +664,14 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
           "Reserved order does not match the accepted quote and destination."
         );
       acceptOrder(value);
+      view.reservationPending = false;
+      deps.changed();
     },
     async refresh(id = view.order?.id) {
+      if (view.reservationPending)
+        throw new Error(
+          "Reconcile the existing reservation by retrying its exact quote before loading another order."
+        );
       if (!id || !/^[a-f0-9]{64}$/.test(id))
         throw new Error("Enter a valid order ID.");
       const session = generation;
@@ -625,11 +730,10 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
         config.external_inputs !== info.config.external_inputs
       )
         throw new Error("Phone request differs from the order policy.");
+      const currentSession = () =>
+        session === generation && phoneId === phoneGeneration;
       const active = () =>
-        session === generation &&
-        phoneId === phoneGeneration &&
-        !flow.recoveryOnly &&
-        now() < config.expires_at;
+        currentSession() && !flow.recoveryOnly && now() < config.expires_at;
       requireActivePolicy();
       let received = false;
       const created = await deps.phone.request(config, {
@@ -637,10 +741,12 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
           if (active() && !received) change(message);
         },
         rejected() {
-          if (active()) {
+          if (currentSession() && !received) {
             cancelPhone();
             change(
-              "Phone request rejected. No eligibility or payout was granted."
+              now() >= config.expires_at || flow.recoveryOnly
+                ? "Phone request expired. No eligibility or payout was granted. Reconcile the order before continuing."
+                : "Phone request rejected. No eligibility or payout was granted."
             );
           }
         },
