@@ -9,6 +9,8 @@ import { createWorkers } from "./workers.js";
 import { createSepContext } from "./sepauth.js";
 import { fmtRate, fmtUsdc } from "./money.js";
 import { createAnchorGateGateway } from "./anchor-gate-rpc.js";
+import { createSepAnchorGateway } from "./sep-anchor-rpc.js";
+import { createSepAnchorIngress } from "./sep-anchor-ingress.js";
 
 export async function main() {
   const log = createLogger();
@@ -22,6 +24,8 @@ export async function main() {
     rates,
     log,
     anchorGate: createAnchorGateGateway(config),
+    sepAnchorGateway: createSepAnchorGateway(config),
+    sepAnchorIngress: createSepAnchorIngress(config),
   };
   const sep = createSepContext(deps);
   const app = createApp(deps, sep);
@@ -66,6 +70,22 @@ export async function main() {
     );
 
   const workers = createWorkers(deps, sep);
+  let sepTickRunning = false;
+  const sepTimer = deps.sepAnchor
+    ? setInterval(async () => {
+        if (sepTickRunning) return;
+        sepTickRunning = true;
+        try {
+          await deps.sepAnchor!.tick();
+        } catch {
+          log.warn(
+            "SEP anchor reconciliation is pending; retained actions will be checked again."
+          );
+        } finally {
+          sepTickRunning = false;
+        }
+      }, 5000)
+    : undefined;
   if (config.workers) workers.start();
   else
     log.warn(
@@ -75,6 +95,7 @@ export async function main() {
   const shutdown = () => {
     log.info("shutting down");
     workers.stop();
+    if (sepTimer) clearInterval(sepTimer);
     server.close();
     db.close();
     process.exit(0);

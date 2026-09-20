@@ -19,21 +19,32 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
   const legacy = economicActionsEnabled(cfg);
   const nativeGateConfigured =
     !legacy && cfg.networkPassphrase === Networks.TESTNET && !!deps.anchorGate;
-  const strictPolicyMessage = nativeGateConfigured
-    ? "Legacy economic routes remain disabled. The native Testnet gate is configured; each order still requires its own proof, wallet authorization, and mock-bank receipt."
-    : POLICY_PENDING_MESSAGE;
+  const sepGateConfigured =
+    !legacy &&
+    cfg.networkPassphrase === Networks.TESTNET &&
+    !!deps.sepAnchorGateway;
+  const strictPolicyMessage = sepGateConfigured
+    ? "SEP-24 hosts synthetic phone verification; SEP-6 exchange transfers require confirmed native eligibility. Standard payment-and-memo custody is observed by the anchor. Legacy ungated payouts stay disabled."
+    : nativeGateConfigured
+      ? "Legacy economic routes remain disabled. The native Testnet gate is configured; each order still requires its own proof, wallet authorization, and mock-bank receipt."
+      : POLICY_PENDING_MESSAGE;
 
   if (!legacy) {
-    const title = nativeGateConfigured
-      ? "ZKPassport native gate Testnet demo"
-      : "ZKPassport anchor diagnostics";
-    const notice = nativeGateConfigured
-      ? "Use test assets only. TRY bank transfers and document identities are simulated. No real fiat moves."
-      : "Do not send funds. Deposits, withdrawals, bank simulation, and payout processing are disabled.";
-    const gateLinks = nativeGateConfigured
-      ? '<p><a href="/anchor-gate">Proof-gated deposit and withdrawal demo</a> | <a href="/anchor-gate/info">Native gate configuration and policy</a></p>'
-      : "";
-    const diagnosticPage = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title></head><body><main><h1>${title}</h1><p>${strictPolicyMessage}</p><p>${notice} SEP-12 does not grant KYC approval.</p><p>A mathematically valid proof alone does not authorize a customer or transaction. This is not a production or mainnet financial service.</p>${gateLinks}<p><a href="/zkpassport/info">Native verifier diagnostic information</a></p><p><a href="/health">Service health</a> | <a href="/.well-known/stellar.toml">SEP-1 discovery</a> | <a href="/sep6/info">Current SEP-6 capabilities</a></p></main></body></html>`;
+    const title = sepGateConfigured
+      ? "TR Anchor - native proof-gated SEP demo"
+      : nativeGateConfigured
+        ? "ZKPassport native gate Testnet demo"
+        : "ZKPassport anchor diagnostics";
+    const notice =
+      nativeGateConfigured || sepGateConfigured
+        ? "Use test assets only. TRY bank transfers and document identities are simulated. No real fiat moves."
+        : "Do not send funds. Deposits, withdrawals, bank simulation, and payout processing are disabled.";
+    const gateLinks = sepGateConfigured
+      ? '<p><a href="/anchor">Open the standard-wallet anchor demo</a> | <a href="/sep24/info">SEP-24 capabilities and native policy</a></p><p>Classic G accounts only. SEP-24 is required for first-time phone onboarding. This experimental profile is not a universal wallet conformance claim.</p>'
+      : nativeGateConfigured
+        ? '<p><a href="/anchor-gate">Proof-gated deposit and withdrawal demo</a> | <a href="/anchor-gate/info">Native gate configuration and policy</a></p>'
+        : "";
+    const diagnosticPage = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title></head><body><main><h1>${title}</h1><p>${strictPolicyMessage}</p><p>${notice} ${sepGateConfigured ? "SEP-12 reflects a confirmed, unexpired native eligibility grant." : "SEP-12 does not grant KYC approval."}</p><p>A mathematically valid proof alone does not authorize a customer or transaction. This is not a production or mainnet financial service.</p>${gateLinks}<p><a href="/zkpassport/info">Native verifier diagnostic information</a></p><p><a href="/health">Service health</a> | <a href="/.well-known/stellar.toml">SEP-1 discovery</a> | <a href="/sep6/info">Current SEP-6 capabilities</a></p></main></body></html>`;
     for (const path of ["/", "/sep", "/explorer", "/guide", "/mainnet"]) {
       app.get(path, (c) => c.html(diagnosticPage));
     }
@@ -42,10 +53,18 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
       "",
       strictPolicyMessage,
       notice,
-      "SEP-12 remains pending; proof validity alone is not KYC or transaction authorization.",
+      sepGateConfigured
+        ? "SEP-12 reflects current native eligibility, not production identity or compliance approval."
+        : "SEP-12 remains pending; proof validity alone is not KYC or transaction authorization.",
       "This service is not production-ready and provides no mainnet payout workflow.",
       "",
       `Base URL: ${cfg.publicUrl}`,
+      ...(sepGateConfigured
+        ? [
+            `- SEP-24 hosted demo: ${cfg.publicUrl}/anchor`,
+            `- SEP-24 capabilities: ${cfg.publicUrl}/sep24/info`,
+          ]
+        : []),
       ...(nativeGateConfigured
         ? [
             `- Proof-gated deposit and withdrawal demo: ${cfg.publicUrl}/anchor-gate`,
@@ -225,7 +244,8 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
       service: "tr-mock-anchor",
       environment: "sandbox",
       anchor_mode: cfg.anchorMode,
-      diagnostic_only: !legacy && !nativeGateConfigured,
+      diagnostic_only: !legacy && !nativeGateConfigured && !sepGateConfigured,
+      native_sep_configured: sepGateConfigured,
       native_gate_configured: nativeGateConfigured,
       native_gate: nativeGateConfigured
         ? {
@@ -245,6 +265,9 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
         signing_key: sep.signingKeypair.publicKey(),
         web_auth_endpoint: `${cfg.publicUrl}/auth`,
         transfer_server: `${cfg.publicUrl}/sep6`,
+        ...(sepGateConfigured
+          ? { transfer_server_sep0024: `${cfg.publicUrl}/sep24` }
+          : {}),
         kyc_server: `${cfg.publicUrl}/sep12`,
         anchor_quote_server: `${cfg.publicUrl}/sep38`,
       },
@@ -310,16 +333,21 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
         `SIGNING_KEY="${sep.signingKeypair.publicKey()}"`,
         `WEB_AUTH_ENDPOINT="${cfg.publicUrl}/auth"`,
         `TRANSFER_SERVER="${cfg.publicUrl}/sep6"`,
+        ...(sepGateConfigured
+          ? [`TRANSFER_SERVER_SEP0024="${cfg.publicUrl}/sep24"`]
+          : []),
         `KYC_SERVER="${cfg.publicUrl}/sep12"`,
         `ANCHOR_QUOTE_SERVER="${cfg.publicUrl}/sep38"`,
-        `ACCOUNTS=["${stellar.treasuryPublicKey}", "${sep.signingKeypair.publicKey()}"]`,
+        `ACCOUNTS=["${sepGateConfigured && deps.sepAnchorIngress ? deps.sepAnchorIngress.account : stellar.treasuryPublicKey}", "${sep.signingKeypair.publicKey()}"]`,
         "",
         "[DOCUMENTATION]",
         'ORG_NAME="TR Mock Anchor (testnet sandbox)"',
         `ORG_URL="${cfg.publicUrl}"`,
         legacy
           ? 'ORG_DESCRIPTION="Mock Turkish TRY <-> USDC SEP-6 anchor for Stellar testnet builders. Not a real financial service. No real money moves."'
-          : 'ORG_DESCRIPTION="Experimental Testnet anchor with SEP-10 login, SEP-38 quotes and custom proof-gated settlement. Legacy SEP-6 transfers are disabled; this is not a portable SEP-6 ramp. No real money moves."',
+          : sepGateConfigured
+            ? 'ORG_DESCRIPTION="Experimental Testnet anchor with native eligibility, SEP-24 synthetic phone onboarding and SEP-6 exchange transfers. Classic G accounts; simulated TRY and mock USDC. No real money moves."'
+            : 'ORG_DESCRIPTION="Experimental Testnet anchor with SEP-10 login, SEP-38 quotes and custom proof-gated settlement. Legacy SEP-6 transfers are disabled; this is not a portable SEP-6 ramp. No real money moves."',
         "",
         "[[CURRENCIES]]",
         `code="${stellar.assetCode}"`,
@@ -331,7 +359,9 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
         'anchor_asset="TRY"',
         legacy
           ? 'desc="USDC on Stellar testnet (Circle testnet issuer unless overridden). This anchor ramps it against TRY via SEP-6."'
-          : 'desc="Configured Testnet issuer asset exchanged for simulated TRY through a separately configured proof-gated vault. Check the exact issuer and /anchor-gate/info; an asset code alone does not establish the issuer."',
+          : sepGateConfigured
+            ? 'desc="Mock USDC exchanged for simulated TRY through native proof-gated settlement. Use SEP-24 for first-time eligibility and SEP-6 exchange transfers for accepted customers. Verify this exact issuer."'
+            : 'desc="Configured Testnet issuer asset exchanged for simulated TRY through a separately configured proof-gated vault. Check the exact issuer and /anchor-gate/info; an asset code alone does not establish the issuer."',
         "",
       ].join("\n"),
       200,
