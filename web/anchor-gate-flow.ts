@@ -612,6 +612,7 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
         throw new Error(
           "Quote expired. Request and review a fresh quote first."
         );
+      const previousOutcomeUnknown = view.reservationPending;
       view.reservationPending = true;
       change(
         "Reservation outcome pending. Retry only this exact reservation until its order is confirmed."
@@ -631,6 +632,19 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
           )
         ).json();
       } catch (error) {
+        if (
+          session === generation &&
+          error instanceof AnchorRequestError &&
+          error.status === 403 &&
+          error.code === "demo_wallet_not_admitted"
+        ) {
+          view.reservationPending = previousOutcomeUnknown;
+          const message = previousOutcomeUnknown
+            ? "Ask the demo operator to restore access for this wallet. The earlier reservation outcome is still unknown; retry only the original reservation once access is restored."
+            : "Ask the demo operator to admit this wallet to the capped Testnet demo. This request did not reserve an order.";
+          change(message);
+          throw new Error(message);
+        }
         if (
           session === generation &&
           error instanceof AnchorRequestError &&
