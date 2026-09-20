@@ -44,14 +44,22 @@ Two concrete defects were found and repaired:
   deposit cancellation accurately. Five production-entry browser regressions
   exercise the actual HTML hierarchy and recovery actions.
 
-The remaining acceptance gap is explicit: a fresh positive Count8 phone proof
-and completed exchanges in unmodified target wallets have not been demonstrated
-against this public deployment. The older Count7 evidence is not a substitute.
-API schemas, contract state-machine tests and malformed-proof rejection cannot
-establish this positive end-to-end result.
+The fresh positive Count8 phone-to-deposit acceptance passed against the public
+deployment at source revision `91fb27b` on 20 September 2026. Independent RPC
+and Horizon checks confirmed native eligibility, reservation, exact simulated
+TRY receipt and settlement: 100.00 simulated TRY for 2.0947892 mock USDC.
+The recipient's balance increased from 2.0947892 to 4.1895784. See
+[the four confirmed transactions and profile readback](SEP_ANCHOR_DEPLOYMENT.md#fresh-public-count8-deposit-acceptance).
+This evidence is distinct from the earlier Count7 runs and from state-machine
+tests that stub the external verifier.
+
+The remaining acceptance gap is explicit: a completed public withdrawal and
+completed exchanges through unmodified target-wallet SEP interfaces have not
+been demonstrated. The hosted deposit does not establish those broader claims.
 
 Spec summary: 2 concrete defects resolved, 1 remaining acceptance gap.
-The largest remaining requirement is fresh phone-to-settlement acceptance.
+The largest remaining requirement is public withdrawal and target-wallet
+end-to-end acceptance.
 
 ## Protocol validation and handoff
 
@@ -96,7 +104,7 @@ disposable or agent-owned test accounts. Updating or replacing that legacy
 harness needs a separate compatibility check; no blind audit-fix override was
 applied to the conformance evidence.
 
-See [deployment evidence and the wake-up checklist](SEP_ANCHOR_DEPLOYMENT.md)
+See [deployment evidence and the acceptance checklist](SEP_ANCHOR_DEPLOYMENT.md)
 for contract addresses, confirmed transactions, expiry and the exact remaining
 manual test. No broad wallet compatibility or production compliance claim is
 made by this review.
