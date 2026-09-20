@@ -422,6 +422,14 @@ it("refunds exact escrow before payout authorization even after eligibility expi
 it("resumes the same SEP-6 quote after a retry without creating a replacement exchange", async () => {
   const f = fixture();
   const hosted = await f.begin();
+  expect(
+    (
+      await hosted.action("proof", {
+        proof: Buffer.alloc(10240).toString("hex"),
+        public_inputs: Buffer.alloc(13 * 32).toString("hex"),
+      })
+    ).status
+  ).toBe(200);
   const quote = z
     .object({ quote: z.object({ id: z.string() }) })
     .parse(
@@ -438,7 +446,10 @@ it("resumes the same SEP-6 quote after a retry without creating a replacement ex
   const path = `/sep6/deposit-exchange?${query}`;
   const first = await f.request(path, { headers: f.auth() });
   expect(first.status).toBe(200);
-  const created = z.object({ id: z.string() }).parse(await first.json());
+  const created = z
+    .object({ id: z.string(), status: z.string() })
+    .parse(await first.json());
+  expect(created.status).toBe("pending_user_transfer_start");
   f.restart();
   const retry = await f.request(path, { headers: f.auth() });
   expect(retry.status).toBe(200);
@@ -450,6 +461,173 @@ it("resumes the same SEP-6 quote after a retry without creating a replacement ex
     (await f.request(`/sep6/deposit-exchange?${query}`, { headers: f.auth() }))
       .status
   ).toBe(409);
+});
+
+it.each(["deposit", "withdraw"] as const)(
+  "rejects first-time SEP-6 %s before consuming its quote or reserving an order",
+  async (direction) => {
+    const f = fixture();
+    const hosted = await f.begin(direction);
+    const sold = direction === "deposit" ? "100.00" : "2.0000000";
+    const quote = z
+      .object({ quote: z.object({ id: z.string() }) })
+      .parse(
+        await (await hosted.action("quote", { sell_amount: sold })).json()
+      ).quote;
+    const query = new URLSearchParams({
+      quote_id: quote.id,
+      account: f.wallet,
+      amount: sold,
+      source_asset: direction === "deposit" ? "iso4217:TRY" : "USDC",
+      destination_asset: direction === "deposit" ? "USDC" : "iso4217:TRY",
+      funding_method: "bank_account",
+      ...(direction === "withdraw" ? { bank_destination: "demo:wallet" } : {}),
+    });
+    const rejected = await f.request(`/sep6/${direction}-exchange?${query}`, {
+      headers: f.auth(),
+    });
+    expect(rejected.status).toBe(403);
+    expect(await rejected.json()).toMatchObject({
+      code: "native_eligibility_required",
+    });
+    const history = z
+      .object({
+        transactions: z.array(
+          z.object({ id: z.string(), order_id: z.string().nullable() })
+        ),
+      })
+      .parse(
+        await (
+          await f.request("/sep6/transactions?asset_code=USDC", {
+            headers: f.auth(),
+          })
+        ).json()
+      );
+    expect(history.transactions).toEqual([{ id: hosted.id, order_id: null }]);
+    expect(
+      (
+        await hosted.action("accept", {
+          quote_id: quote.id,
+          ...(direction === "withdraw"
+            ? { bank_destination: "demo:wallet" }
+            : {}),
+        })
+      ).status
+    ).toBe(200);
+    expect((await hosted.get()).transaction.order_id).toBeNull();
+  }
+);
+
+it.each(["deposit", "withdraw"] as const)(
+  "rejects an expired native grant before starting a SEP-6 %s",
+  async (direction) => {
+    const f = fixture();
+    const hosted = await f.begin(direction);
+    expect(
+      (
+        await hosted.action("proof", {
+          proof: Buffer.alloc(10240).toString("hex"),
+          public_inputs: Buffer.alloc(13 * 32).toString("hex"),
+        })
+      ).status
+    ).toBe(200);
+    expect((await hosted.get()).transaction.native.eligible).toBe(true);
+    for (const grant of f.gateway.grants.values())
+      grant.valid_until = now() - 1;
+    const sold = direction === "deposit" ? "100.00" : "2.0000000";
+    const quote = z
+      .object({ quote: z.object({ id: z.string() }) })
+      .parse(
+        await (await hosted.action("quote", { sell_amount: sold })).json()
+      ).quote;
+    const query = new URLSearchParams({
+      quote_id: quote.id,
+      account: f.wallet,
+      amount: sold,
+      source_asset: direction === "deposit" ? "iso4217:TRY" : "USDC",
+      destination_asset: direction === "deposit" ? "USDC" : "iso4217:TRY",
+      funding_method: "bank_account",
+      ...(direction === "withdraw" ? { bank_destination: "demo:wallet" } : {}),
+    });
+    const rejected = await f.request(`/sep6/${direction}-exchange?${query}`, {
+      headers: f.auth(),
+    });
+    expect(rejected.status).toBe(403);
+    expect(await rejected.json()).toMatchObject({
+      code: "native_eligibility_required",
+      onboarding_url: "http://localhost:8787/anchor",
+      transfer_server_sep0024: "http://localhost:8787/sep24",
+    });
+    const history = z
+      .object({
+        transactions: z.array(
+          z.object({ id: z.string(), order_id: z.string().nullable() })
+        ),
+      })
+      .parse(
+        await (
+          await f.request("/sep6/transactions?asset_code=USDC", {
+            headers: f.auth(),
+          })
+        ).json()
+      );
+    expect(history.transactions).toEqual([{ id: hosted.id, order_id: null }]);
+    expect(
+      (
+        await hosted.action("accept", {
+          quote_id: quote.id,
+          ...(direction === "withdraw"
+            ? { bank_destination: "demo:wallet" }
+            : {}),
+        })
+      ).status
+    ).toBe(200);
+    expect((await hosted.get()).transaction.order_id).toBeNull();
+  }
+);
+
+it("provides standard SEP-6 withdrawal instructions for a current native grant", async () => {
+  const f = fixture();
+  const hosted = await f.begin("withdraw");
+  expect(
+    (
+      await hosted.action("proof", {
+        proof: Buffer.alloc(10240).toString("hex"),
+        public_inputs: Buffer.alloc(13 * 32).toString("hex"),
+      })
+    ).status
+  ).toBe(200);
+  const quote = z
+    .object({ quote: z.object({ id: z.string() }) })
+    .parse(
+      await (await hosted.action("quote", { sell_amount: "2.0000000" })).json()
+    ).quote;
+  const query = new URLSearchParams({
+    quote_id: quote.id,
+    account: f.wallet,
+    amount: "2.0000000",
+    source_asset: "USDC",
+    destination_asset: "iso4217:TRY",
+    funding_method: "bank_account",
+    bank_destination: "demo:wallet",
+  });
+  const response = await f.request(`/sep6/withdraw-exchange?${query}`, {
+    headers: f.auth(),
+  });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    status: "pending_user_transfer_start",
+    account_id: provider,
+    memo_type: "hash",
+    memo: expect.any(String),
+  });
+  expect(await (await f.request("/sep6/info")).json()).toMatchObject({
+    profile: {
+      native_eligibility_required: true,
+      first_time_onboarding: "sep24",
+      onboarding_url: "http://localhost:8787/anchor",
+    },
+  });
 });
 
 it.each([
