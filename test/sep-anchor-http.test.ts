@@ -295,9 +295,51 @@ it("offers SEP-24 and exchange-only SEP-6 without exposing another wallet's orde
   expect(text).toContain(created.id);
   expect(text).not.toContain("token=");
   expect(
-    (await request("/sep24/transaction?id=bad", { headers: auth() })).status
+    (await request("/sep24/transaction?id=", { headers: auth() })).status
   ).toBe(400);
 });
+
+it.each(["sep6", "sep24"])(
+  "treats unknown opaque %s transaction IDs as not found without relaxing request or session validation",
+  async (protocol) => {
+    const { request, auth } = fixture();
+    const unknown = "f3087884-9ac1-4a6d-a6bc-435e4da0cad4";
+    const response = await request(`/${protocol}/transaction?id=${unknown}`, {
+      headers: auth(),
+    });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({
+      error: "Transaction not found.",
+      code: "transaction_not_found",
+    });
+    for (const query of [
+      "",
+      "?id=",
+      `?id=${"a".repeat(129)}`,
+      `?id=${unknown}&stellar_transaction_id=${"a".repeat(64)}`,
+      `?id=${unknown}&id=another-opaque-id`,
+    ])
+      expect(
+        (await request(`/${protocol}/transaction${query}`, { headers: auth() }))
+          .status
+      ).toBe(400);
+    const initiated = await request("/sep24/transactions/deposit/interactive", {
+      method: "POST",
+      headers: { ...auth(), "Content-Type": "application/json" },
+      body: '{"asset_code":"USDC"}',
+    });
+    const created = z.object({ id: z.string() }).parse(await initiated.json());
+    const foreign = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 2)).publicKey();
+    expect(
+      (
+        await request(`/${protocol}/transaction?id=${created.id}`, {
+          headers: auth(foreign),
+        })
+      ).status
+    ).toBe(404);
+    expect((await request(`/sep24/interactive/${unknown}`)).status).toBe(400);
+  }
+);
 
 it("does not advertise enabled transfers when native configuration is unavailable", async () => {
   const { request, nativeDown } = fixture();
