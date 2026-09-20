@@ -176,8 +176,23 @@
       </p>
       <p id="problem" class="problem" role="alert" hidden></p>
       <a id="resume-session" hidden>Sign in again to resume this same order</a>
-      <details id="details" hidden>
-        <summary>Order and blockchain evidence</summary>
+      <section
+        id="details"
+        class="chain-status"
+        aria-label="Onchain status"
+        hidden
+      >
+        <div class="chain-status-heading">
+          <h2>Onchain status</h2>
+          <a
+            id="wallet-explorer"
+            target="_blank"
+            rel="noopener noreferrer"
+            hidden
+            >View wallet activity</a
+          >
+        </div>
+        <p class="muted">Only confirmed transactions are shown as complete.</p>
         <dl>
           <div>
             <dt>Order</dt>
@@ -201,7 +216,7 @@
           >Submitted wallet payment</a
         >
         <p id="full-policy" class="muted"></p>
-      </details>
+      </section>
       <details>
         <summary>What stays private? What is trusted?</summary>
         <p>

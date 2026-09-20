@@ -221,6 +221,16 @@ async function action(work: () => Promise<void>) {
 }
 const unit = (asset: string) =>
   asset === "iso4217:TRY" ? "simulated TRY" : "mock USDC";
+const actionLabels: Record<string, string> = {
+  eligibility: "Proof verification",
+  create: "Order creation",
+  fund: "Withdrawal escrow",
+  authorize: "Payout authorization",
+  receipt: "Simulated TRY receipt",
+  settle: "Token settlement",
+  refund: "Token refund",
+  cancel: "Reservation cancellation",
+};
 function cancelPhone(message?: string) {
   phoneEpoch++;
   clearTimeout(phoneTimer);
@@ -259,6 +269,12 @@ function render() {
   );
   text("order-id", t.id);
   text("owner", t.wallet);
+  const walletLink = element<HTMLAnchorElement>("wallet-explorer");
+  const validWallet = StrKey.isValidEd25519PublicKey(t.wallet);
+  if (validWallet)
+    walletLink.href = `https://stellar.expert/explorer/testnet/account/${t.wallet}`;
+  else walletLink.removeAttribute("href");
+  show("wallet-explorer", validWallet);
   text(
     "eligibility",
     t.native.eligible
@@ -277,15 +293,42 @@ function render() {
   );
   const evidence = element("evidence");
   evidence.replaceChildren();
-  for (const entry of t.actions) {
-    const item = document.createElement("li");
-    const link = document.createElement("a");
-    link.href = `https://stellar.expert/explorer/testnet/tx/${entry.transaction_hash}`;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.textContent = `${entry.kind}: ${entry.status}${entry.ledger ? ` / ledger ${entry.ledger}` : ""}`;
-    item.append(link);
-    evidence.append(item);
+  const stages = new Set([
+    "eligibility",
+    "create",
+    ...(t.kind === "withdrawal" ? ["fund", "authorize"] : []),
+    "receipt",
+    "settle",
+    ...t.actions.map((entry) => entry.kind),
+  ]);
+  for (const stage of stages) {
+    const entries = t.actions.filter((entry) => entry.kind === stage);
+    if (!entries.length) {
+      const item = document.createElement("li");
+      item.textContent = `${actionLabels[stage] ?? stage}: ${stage === "eligibility" && t.native.eligible ? "Confirmed (reused eligibility)" : "Not submitted"}`;
+      evidence.append(item);
+    }
+    for (const entry of entries) {
+      const item = document.createElement("li");
+      const link = document.createElement("a");
+      link.href = `https://stellar.expert/explorer/testnet/tx/${entry.transaction_hash}`;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      const confirmed = entry.status === "success" && (entry.ledger ?? 0) > 0;
+      const label = confirmed
+        ? "Confirmed"
+        : entry.status === "failed"
+          ? "Failed"
+          : "Pending confirmation";
+      item.className = confirmed
+        ? "chain-confirmed"
+        : entry.status === "failed"
+          ? "chain-failed"
+          : "";
+      link.textContent = `${actionLabels[entry.kind] ?? entry.kind}: ${label}${confirmed ? ` / ledger ${entry.ledger}` : ""}`;
+      item.append(link);
+      evidence.append(item);
+    }
   }
   show("amount-section", !t.quote_id && !quote);
   show("quote-section", !t.quote_id && !!quote);
