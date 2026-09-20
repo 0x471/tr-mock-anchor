@@ -176,6 +176,8 @@ function render() {
     order.payout_authorized_at !== null;
   let statusMessage = message;
   element("wallet").textContent = address || "No wallet connected.";
+  element("wallet-card").hidden = !address;
+  element("session-options").hidden = !address;
   for (const choice of ["deposit", "withdrawal"] as const) {
     const control = button(`choose-${choice}`);
     control.setAttribute("aria-pressed", String(choice === direction));
@@ -200,17 +202,28 @@ function render() {
   lastQuoteId = quote?.id ?? "";
   element("amount-unit").textContent = withdrawal ? tokenName : "TRY";
   element("amount-hint").textContent = withdrawal
-    ? "Requesting or accepting a quote does not debit your wallet. The first accepted proof transaction escrows the exact quoted tokens."
-    : "Requesting a quote does not move funds. Accepting a deposit quote reserves the provider's exact tokens.";
-  element("quote-heading").textContent = withdrawal
-    ? "Get your withdrawal quote"
-    : "Get your deposit quote";
+    ? "No tokens move until you sign the proof transaction."
+    : "No funds move yet. Accepting reserves the quoted tokens.";
+  element("quote-heading").textContent = quote
+    ? "Review your quote"
+    : withdrawal
+      ? `How much ${tokenName}?`
+      : "How much TRY?";
+  element("quote-inputs").hidden = !!quote;
   element("settle-heading").textContent = withdrawal
     ? "Complete the withdrawal"
     : "Complete the deposit";
-  element("settle-subtitle").textContent = withdrawal
-    ? "Authorize the simulated payout, record it, then settle escrow."
-    : "Simulate the bank receipt. Receive tokens in your wallet.";
+  element("settle-subtitle").textContent = order?.completed
+    ? "Your exchange is confirmed on Testnet."
+    : withdrawal
+      ? order?.receipt_id
+        ? "The simulated payout is recorded. Release escrow to finish."
+        : authorized
+          ? "Record the simulated TRY payout."
+          : "Authorize the simulated TRY payout."
+      : order?.receipt_id
+        ? `The simulated deposit is recorded. Receive mock ${tokenName}.`
+        : "Record a simulated bank transfer to continue.";
   element("blueprint-heading").textContent = withdrawal
     ? `Withdraw / ${tokenName} to TRY`
     : `Deposit / TRY to ${tokenName}`;
@@ -252,7 +265,11 @@ function render() {
       : "Awaiting quote";
   element("summary-send").textContent = sent;
   element("summary-receive").textContent = received;
+  element("order-summary").hidden = !order;
+  element("order-summary").textContent = order ? `${sent} -> ${received}` : "";
   element("quote-card").hidden = !quote;
+  element("exchange-summary").hidden = !quote && !order;
+  element("exchange").setAttribute("data-summary", String(!!quote || !!order));
   if (info) {
     const policy = info.config.policy;
     element("policy-age").textContent = `${policy.min_age}+`;
@@ -260,11 +277,19 @@ function render() {
       policy.allowed_nationalities.join(", ") || "No predicate";
     element("policy-issuer").textContent =
       policy.allowed_issuers.join(", ") || "No predicate";
+    element("proof-requirements").textContent =
+      `Age ${policy.min_age}+ / Nationality: ${policy.allowed_nationalities.join(", ") || "any"} / Document issuer: ${policy.allowed_issuers.join(", ") || "any"}`;
+    element("quote-requirements").textContent =
+      element("proof-requirements").textContent;
     element("policy").textContent =
       `Age: at least ${policy.min_age}\nNationality: ${policy.allowed_nationalities.join(", ") || "No nationality predicate"}\nDocument issuer: ${policy.allowed_issuers.join(", ") || "No issuing-country predicate"}\nSynthetic documents only. Policy expires ${new Date(info.config.policy_valid_until * 1000).toLocaleString()}.${recoveryOnly ? "\nRECOVERY ONLY: policy expired. Connect to refresh or finish an already-authorized withdrawal. New quotes, orders, proofs and payout authorizations are disabled." : ""}`;
   } else {
     for (const id of ["policy-age", "policy-nationality", "policy-issuer"])
       element(id).textContent = "Unavailable";
+    element("proof-requirements").textContent =
+      "Document requirements unavailable.";
+    element("quote-requirements").textContent =
+      "Document requirements unavailable.";
     element("policy").textContent =
       message === "Loading Testnet policy."
         ? "Loading the immutable onchain policy..."
@@ -346,7 +371,37 @@ function render() {
       )
   );
   const quoteExpired = !!quote && Date.parse(quote.expires_at) <= now * 1000;
+  const orderExpired =
+    !!order && !order.completed && (order.expired || order.deadline <= now);
+  const preparedExpired = !!prepared && prepared.expires_at <= now;
+  const retryablePrepared =
+    !!prepared && !preparedExpired && live && !pendingOtherAction;
+  const expiredOrderMessage = authorized
+    ? "The proof window expired. This already-authorized simulated payout can still finish."
+    : "The order deadline passed. Held tokens are not automatically refunded. Check status before taking another action.";
+  const recoveryMessage =
+    "The policy expired. Only existing-order recovery and already-authorized payouts remain available.";
+  element("proof-instruction").textContent =
+    pending && !retryablePrepared
+      ? "Check status to confirm the previous transaction before continuing."
+      : orderExpired
+        ? expiredOrderMessage
+        : recoveryOnly
+          ? recoveryMessage
+          : preparedExpired
+            ? "This signature request expired. Show a new QR code to try again."
+            : prepared
+              ? "Sign the proof in Freighter to verify it onchain."
+              : phoneUrl
+                ? "Scan with ZKPassport, then approve on your phone. Keep this page open."
+                : wait
+                  ? `Your order is confirming. The QR code will be ready in ${wait}s.`
+                  : !live
+                    ? "This order cannot accept a new proof. Check its status below."
+                    : "Use a matching synthetic document in ZKPassport developer mode.";
   button("connect").disabled = busy || !info || !!address;
+  button("connect").hidden = !!address;
+  button("disconnect").hidden = !address;
   button("disconnect").disabled =
     flow.view.reservationPending || (!address && !busy);
   button("quote").disabled =
@@ -356,6 +411,7 @@ function render() {
     recoveryOnly ||
     flow.view.reservationPending ||
     !!quote;
+  button("quote").hidden = !!quote || !!order;
   button("edit-quote").hidden = !quote || !!order;
   button("edit-quote").disabled =
     busy || recoveryOnly || flow.view.reservationPending;
@@ -366,9 +422,10 @@ function render() {
     !!order ||
     (recoveryOnly && !flow.view.reservationPending) ||
     (quoteExpired && !flow.view.reservationPending);
+  button("reserve").hidden = !quote || !!order;
   button("reserve").textContent = flow.view.reservationPending
     ? "Retry original reservation"
-    : "Accept quote + reserve order";
+    : "Accept quote";
   button("prove").disabled =
     busy ||
     !address ||
@@ -381,7 +438,16 @@ function render() {
     !!phoneUrl ||
     !!pendingProof ||
     pending;
+  button("prove").hidden =
+    !order ||
+    !!order.completed ||
+    authorized ||
+    !!phoneUrl ||
+    (!!prepared && !preparedExpired) ||
+    pending;
   button("cancel-proof").disabled = !phoneUrl;
+  button("cancel-proof").hidden = !phoneUrl;
+  element("signature-box").hidden = !prepared;
   button("sign-proof").disabled =
     busy ||
     pendingOtherAction ||
@@ -392,9 +458,10 @@ function render() {
     pending && prepared && !pendingOtherAction
       ? "Sign or retry exact proof transaction"
       : withdrawal && !order?.escrowed
-        ? "Sign native proof + exact token escrow"
-        : "Sign native proof transaction";
-  button("authorize-payout").hidden = !withdrawal;
+        ? "Sign proof + escrow tokens"
+        : "Sign proof in Freighter";
+  button("authorize-payout").hidden =
+    !withdrawal || !eligible || order?.stage !== "eligible" || !order.escrowed;
   button("authorize-payout").disabled =
     busy ||
     pending ||
@@ -404,20 +471,28 @@ function render() {
   button("bank-action").textContent = withdrawal
     ? order?.mock_bank_credit
       ? "Reconcile simulated payout receipt"
-      : "Record simulated TRY payout"
-    : "Record simulated TRY receipt";
+      : "Simulate TRY payout"
+    : "Simulate TRY deposit";
   button("bank-action").disabled =
     busy ||
     pending ||
     (withdrawal
       ? !authorized || order?.stage !== "payout_authorized"
       : !eligible || order?.stage !== "eligible" || !order.bank_instructions);
+  button("bank-action").hidden = withdrawal
+    ? !authorized || order?.stage !== "payout_authorized"
+    : !eligible || order?.stage !== "eligible" || !order.bank_instructions;
   button("settle").textContent = withdrawal
-    ? "Settle escrow to provider"
-    : "Settle Testnet tokens to wallet";
+    ? "Release escrow to provider"
+    : `Receive mock ${tokenName}`;
   button("settle").disabled =
     busy ||
     pending ||
+    !order?.receipt_id ||
+    (withdrawal
+      ? !authorized || order.stage !== "paid"
+      : !eligible || order.stage !== "funded");
+  button("settle").hidden =
     !order?.receipt_id ||
     (withdrawal
       ? !authorized || order.stage !== "paid"
@@ -427,6 +502,7 @@ function render() {
     !address ||
     flow.view.reservationPending ||
     !/^[a-f0-9]{64}$/.test(element<HTMLInputElement>("order-id").value.trim());
+  button("refresh").hidden = !order;
   button("resume-order").disabled = button("refresh").disabled;
   const proofAccepted = !!order?.eligibility_expires_at;
   const state = (
@@ -476,8 +552,8 @@ function render() {
     ? `${sent} -> ${received}`
     : "";
   element("settlement-next").textContent = order?.completed
-    ? "No further payment is needed. Review the transaction evidence. To begin again, return to Wallet and clear the session; existing records remain unchanged."
-    : pending && prepared && !pendingOtherAction
+    ? "No further payment is needed. Your transaction records are below."
+    : pending && retryablePrepared
       ? "Return to Verify to sign or retry only the exact prepared proof transaction. Its outcome is not yet confirmed."
       : pending
         ? "The transaction outcome is not confirmed. Use Check status before attempting another action."
@@ -485,7 +561,7 @@ function render() {
           ? "This fixed payout is already authorized. Finish its receipt and settlement, even if the proof window has expired."
           : order?.expired
             ? "The order deadline passed. Held tokens are not automatically refunded. Check status; do not create a replacement payment."
-            : "Each step unlocks only after the previous onchain state is confirmed.";
+            : "";
   const progress: Step = !address
     ? "wallet"
     : !order
@@ -523,18 +599,37 @@ function render() {
     if (flow.view.reservationPending)
       statusMessage =
         "Reservation outcome unknown. Retry the original reservation with the same terms. Do not request a replacement quote or clear this session.";
-    else if (pending && prepared && !pendingOtherAction)
+    else if (pending && retryablePrepared)
       statusMessage =
         "The exact prepared proof transaction is not confirmed. Sign or retry that same transaction, or use Check status if you already submitted it.";
     else if (pending)
       statusMessage =
         "The transaction outcome is not confirmed. Select Check status to reconcile this order.";
+    else if (orderExpired) statusMessage = expiredOrderMessage;
+    else if (recoveryOnly) statusMessage = recoveryMessage;
+    else if (preparedExpired)
+      statusMessage =
+        "This signature request expired. Show a new QR code to prepare a fresh proof.";
     else if (quoteExpired && !order)
       statusMessage =
-        "This quote expired. Select Edit amount and request a fresh quote before reserving.";
+        "This quote expired. Select Change amount and request a fresh quote before reserving.";
   }
   if (element("status").textContent !== statusMessage)
     element("status").textContent = statusMessage;
+  if (element("status-announcement").textContent !== statusMessage)
+    element("status-announcement").textContent = statusMessage;
+  element("status-bar").hidden =
+    !busy &&
+    !element("status").classList.contains("error") &&
+    !pending &&
+    !flow.view.reservationPending &&
+    !recoveryOnly &&
+    !(quoteExpired && !order) &&
+    !orderExpired &&
+    !phoneUrl &&
+    !prepared &&
+    !wait &&
+    !/phone|proof|clipboard|QR|session cleared/i.test(statusMessage);
   const transactions = element("transactions");
   element("transactions-empty").hidden = !!order?.actions.length;
   const transactionState = JSON.stringify(order?.actions ?? []);
@@ -588,6 +683,7 @@ async function run(action: () => Promise<unknown>) {
   if (busy) return;
   busy = true;
   const previousStep = selectedStep;
+  const focusedControl = document.activeElement;
   element("status").classList.remove("error");
   render();
   try {
@@ -601,7 +697,7 @@ async function run(action: () => Promise<unknown>) {
   } finally {
     busy = false;
     render();
-    if (previousStep !== selectedStep)
+    if (previousStep !== selectedStep || focusedControl?.closest("[hidden]"))
       element(`${selectedStep}-heading`).focus({ preventScroll: true });
   }
 }
@@ -611,6 +707,7 @@ button("connect").onclick = () => {
 };
 button("disconnect").onclick = () => {
   flow.disconnect();
+  element("wallet-heading").focus({ preventScroll: true });
 };
 button("quote").onclick = () => {
   void run(() => flow.quote(element<HTMLInputElement>("amount").value.trim()));
@@ -648,7 +745,15 @@ element<HTMLInputElement>("order-id").oninput = () => render();
 button("prove").onclick = () => {
   void run(() => flow.requestProof());
 };
-button("cancel-proof").onclick = () => flow.cancelPhone();
+button("cancel-proof").onclick = () => {
+  flow.view.message = "Phone request cancelled. Show a new QR code when ready.";
+  flow.cancelPhone();
+  element(
+    button("prove").hidden || button("prove").disabled
+      ? "proof-heading"
+      : "prove"
+  ).focus({ preventScroll: true });
+};
 button("sign-proof").onclick = () => {
   void run(() => flow.signProof());
 };
