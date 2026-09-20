@@ -46,7 +46,11 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
         : "";
     const diagnosticPage = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title></head><body><main><h1>${title}</h1><p>${strictPolicyMessage}</p><p>${notice} ${sepGateConfigured ? "SEP-12 reflects a confirmed, unexpired native eligibility grant." : "SEP-12 does not grant KYC approval."}</p><p>A mathematically valid proof alone does not authorize a customer or transaction. This is not a production or mainnet financial service.</p>${gateLinks}<p><a href="/zkpassport/info">Native verifier diagnostic information</a></p><p><a href="/health">Service health</a> | <a href="/.well-known/stellar.toml">SEP-1 discovery</a> | <a href="/sep6/info">Current SEP-6 capabilities</a></p></main></body></html>`;
     for (const path of ["/", "/sep", "/explorer", "/guide", "/mainnet"]) {
-      app.get(path, (c) => c.html(diagnosticPage));
+      app.get(path, (c) =>
+        path === "/" && sepGateConfigured
+          ? c.redirect("/anchor", 302)
+          : c.html(diagnosticPage)
+      );
     }
     const diagnosticReference = [
       `# ${title}`,

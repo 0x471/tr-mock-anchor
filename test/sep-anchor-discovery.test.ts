@@ -49,6 +49,9 @@ it("advertises SEP-24 only when the separate native SEP gateway is configured", 
     expect(toml).toContain('TRANSFER_SERVER="http://localhost:8787/sep6"');
     expect(toml).toContain("native eligibility");
     expect(toml).not.toContain("not a portable SEP-6 ramp");
+    const home = await enabled.request("/");
+    expect(home.status).toBe(302);
+    expect(home.headers.get("location")).toBe("/anchor");
   } finally {
     db.close();
   }
