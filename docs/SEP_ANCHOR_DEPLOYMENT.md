@@ -16,9 +16,11 @@ The separate SEP reconciliation loop remains active.
 Railway waits for GitHub CI and checks `/health` before completing deployment.
 That endpoint is a process liveness check, not a positive proof or settlement test.
 
-Hosted HTTP acceptance passed without accepting a quote, reserving funds or
-requesting a phone proof. A successful container build or API check does not
-establish a completed exchange.
+The initial automated hosted HTTP checks passed without accepting a quote,
+reserving funds or requesting a phone proof. A later user-driven public Count8
+phone proof and deposit completed at source revision `91fb27b`; the distinct
+transaction evidence is recorded below. A successful container build or API
+check alone does not establish a completed exchange.
 
 ## Immutable Testnet contracts
 
@@ -78,8 +80,9 @@ reviewed deployment after policy expiry; restarting the server does not renew it
   predates the quote-cap correction and is outside the final policy. Native
   caps are enforced before quote issuance, not raised to fit that fixture.
 - SEP-12 correctly reports `NEEDS_INFO` without a native eligibility grant.
-  Legacy economic routes remain blocked. These checks do not establish
-  unmodified-wallet completed exchanges or positive phone-proof acceptance.
+  Legacy economic routes remain blocked. Those API checks alone do not
+  establish unmodified-wallet completed exchanges or positive phone-proof
+  acceptance; the later public phone-backed deposit is recorded separately.
 - 21 native and 21 compiled-Wasm SEP contract tests, including real signed
   dual-role authorization, recipient/refund binding and lifecycle races.
 - 31 native and 31 compiled-Wasm old-vault regression tests.
@@ -99,10 +102,50 @@ reviewed deployment after policy expiry; restarting the server does not renew it
   balance was restored exactly. This was not a completed deposit.
 
 State-machine tests stub the external mathematical verifier. They are not
-evidence of a fresh positive Count8 proof. The older Count7 phone acceptance
-transactions belong to a different policy and contract.
+evidence of a fresh positive Count8 proof. The positive Count8 evidence below
+comes from committed native transactions, not these stubs. The older Count7
+phone acceptance transactions belong to a different policy and contract.
 
-## Wake-up acceptance checklist
+## Fresh public Count8 deposit acceptance
+
+On 20 September 2026, the user completed a synthetic ZKPassport phone request
+and deposit through the public hosted interface at source revision `91fb27b`.
+This is a separate acceptance run against the SEP anchor and Count8 verifier
+pinned above, not reuse of the older Count7 custom-vault evidence.
+
+Order: `a22d62e716f476d52a7757ea39e567dab025a1362641d0cb82637b60dc8a3bb0`.
+Recipient: `GALG2DAWDUDXDSIQYZ33C3QWJJWIOD674FD6DTKQ3KIL5FEVXX7DVHP4`.
+Exact exchange: **100.00 simulated TRY for 2.0947892 mock USDC**.
+
+| Native action        | Confirmed transaction                                                                                                                  | Ledger  | Time (UTC) |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------- | ---------- |
+| `submit_eligibility` | [Fresh Count8 proof](https://stellar.expert/explorer/testnet/tx/08c7c414b6782886f55443c7179a2077f069561e0f5690519d8e22403a1e816e)      | 4772528 | 06:37:07   |
+| `create_order`       | [Exact token reservation](https://stellar.expert/explorer/testnet/tx/7146c9fbdde671fc1ce775ee237875cfc7170c913ff3c51fed945a2547ef65ec) | 4772529 | 06:37:12   |
+| `record_receipt`     | [Simulated TRY receipt](https://stellar.expert/explorer/testnet/tx/868b4decb806a5e208cbcdae0c0999a3b55d43bc42415f108784938d157081dd)   | 4772532 | 06:37:27   |
+| `settle`             | [Mock USDC settlement](https://stellar.expert/explorer/testnet/tx/14d7463f6cf8b176ca3f9d6d2ccd10c51e2c4fc8ecd58472fce96d2f4c2553f1)    | 4772533 | 06:37:32   |
+
+Independent Testnet RPC readback confirmed all four transactions succeeded
+against the expected SEP anchor, with the eligibility subject bound to the
+recipient. The native policy and verifier profile matched the pinned Count8
+configuration: 10,240 proof bytes, 13 external inputs, log N 23, age 18+,
+ZKR nationality, ZKR issuer and the strict pinned sanctions predicate.
+The proof timestamp was `2026-09-20T06:35:47Z`; that grant's recorded expiry
+was `2026-09-20T07:35:47Z` (10:35:47 in Europe/Istanbul).
+
+The native order recorded `try_minor=10000`, `amount=20947892`, the exact
+recipient and a bank receipt matching its immutable terms. Asset-contract
+events confirmed 2.0947892 mock USDC moved from the provider into the anchor,
+then from the anchor to the recipient. The user's issuer-specific Horizon
+balance increased from 2.0947892 at 06:33:20 UTC to 4.1895784 at 06:40:43 UTC,
+an exact 2.0947892 increase. The order was settled with no remaining escrow.
+
+This establishes a fresh public phone-to-deposit result, not a completed
+public withdrawal or end-to-end acceptance through an unmodified target
+wallet's own SEP interface. It does not establish real identity, current
+sanctions compliance or real fiat movement. No raw proof or signing key is
+included in this evidence.
+
+## Acceptance checklist
 
 The native order limit is 10 mock USDC and 500 simulated TRY. Quotes must fit
 both caps and expire no later than the immutable policy. The 100-TRY deposit
@@ -124,9 +167,11 @@ and 1-token withdrawal below are deliberately smaller than those limits.
 6. Wait for escrow confirmation, explicitly simulate the bank payout, then
    confirm settlement. Never replace a pending payment with another one.
 
-Phone proof, positive public deposit and positive public withdrawal acceptance
-remain unchecked until those steps actually finish. If proof generation fails,
-retain the order and refresh eligibility; do not change its quote or payment.
+The fresh phone proof and public deposit in steps 1-4 passed in the run above.
+Public withdrawal acceptance in steps 5-6 and completed exchanges through
+unmodified target-wallet SEP interfaces remain unchecked. If proof generation
+fails, retain the order and refresh eligibility; do not change its quote or
+payment.
 
 ## Operator safety
 

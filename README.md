@@ -2,7 +2,7 @@
 
 Experimental fork of [Kaan's TR Mock Anchor](https://github.com/kaankacar/tr-mock-anchor), based on commit `81eef8af29fa8fdc6f6596a4472c8bedb5381668`. Work lives on `feat/zkpassport-anchor` in [0x471/tr-mock-anchor](https://github.com/0x471/tr-mock-anchor/tree/feat/zkpassport-anchor).
 
-This is a Testnet-only development project, not an audited verifier or a production anchor. Upstream hosted URLs do not run this fork. Previous native phone-proof settlement evidence belongs to the older custom vault, not automatically to the new SEP deployment.
+This is a Testnet-only development project, not an audited verifier or a production anchor. Upstream hosted URLs do not run this fork. The public SEP deployment now has its own fresh Count8 phone-proof and deposit evidence, distinct from the older Count7 custom-vault runs.
 
 ## Standard-wallet anchor demo
 
@@ -36,10 +36,15 @@ ZKPassport 0.20.0 OuterCount8 verifier. The private list snapshot is from Januar
 compliance. A separate official OFAC digital-currency-address precheck runs on
 the backend. Neither check establishes real identity, residence or bank ownership.
 
-Native contract, compiled-Wasm and HTTP tests pass. The new contracts are
-deployed and the live reserve/reject/cancel smoke passed. **A fresh synthetic
-phone proof and full deposit/withdrawal acceptance against this new deployment
-remain pending.** See [deployment evidence and the wake-up checklist](docs/SEP_ANCHOR_DEPLOYMENT.md).
+Native contract, compiled-Wasm and HTTP tests pass. At public source revision
+`91fb27b`, a fresh synthetic Count8 phone proof was
+[accepted onchain](https://stellar.expert/explorer/testnet/tx/08c7c414b6782886f55443c7179a2077f069561e0f5690519d8e22403a1e816e),
+and a 100.00 simulated TRY deposit
+[settled](https://stellar.expert/explorer/testnet/tx/14d7463f6cf8b176ca3f9d6d2ccd10c51e2c4fc8ecd58472fce96d2f4c2553f1)
+for exactly 2.0947892 mock USDC to the user's wallet. The token events and
+balance increase were independently checked. **Public withdrawal acceptance
+and completed exchanges through unmodified target-wallet SEP interfaces remain
+pending.** See [deployment evidence and the acceptance checklist](docs/SEP_ANCHOR_DEPLOYMENT.md).
 The [release review](docs/SEP_ANCHOR_REVIEW.md) records resolved findings,
 remaining acceptance work and the dependency-audit boundary.
 
@@ -94,10 +99,11 @@ The notary authorized a fixed 47.26 simulated TRY payout, its paid receipt was
 confirmed, and settlement released that escrow to the provider. The synthetic
 bank credit is a local mock-bank record, not a real fiat transfer.
 
-These acceptance runs used a dedicated automated Testnet recipient through the
-authenticated HTTP API, not an end-to-end Freighter browser run. The phone
-proofs came from a separate browser-origin capture harness. Full Freighter
-browser and public-host acceptance are still pending.
+These older acceptance runs used a dedicated automated Testnet recipient through
+the authenticated HTTP API, not an end-to-end Freighter browser run. Their phone
+proofs came from a separate browser-origin capture harness. The separate public
+Count8 deposit acceptance is recorded above; it does not migrate these orders
+or establish public withdrawal acceptance.
 
 See [the implemented API and recovery model](docs/ANCHOR_GATE_INTEGRATION.md),
 [contract rules](docs/GATE_VAULT_DESIGN.md), and
