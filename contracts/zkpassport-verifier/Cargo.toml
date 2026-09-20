@@ -1,0 +1,32 @@
+[package]
+name = "zkpassport-verifier"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "MIT AND Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk = { version = "=26.0.1", default-features = false, features = ["alloc"] }
+
+[dev-dependencies]
+soroban-sdk = { version = "=26.0.1", features = ["testutils"] }
+
+[features]
+default = []
+std = []
+trace = ["std"]
+wasm-tests = ["std"]
+count6 = []
+count7 = []
+count8 = []
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+overflow-checks = true

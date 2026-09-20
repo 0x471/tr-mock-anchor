@@ -2,9 +2,10 @@ FROM node:24-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
-COPY tsconfig.json ./
+COPY tsconfig.json tsconfig.browser.json ./
 COPY src ./src
 COPY scripts ./scripts
+COPY web ./web
 COPY public ./public
 RUN npm run build && npm prune --omit=dev
 

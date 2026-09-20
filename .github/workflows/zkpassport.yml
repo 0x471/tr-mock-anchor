@@ -1,0 +1,122 @@
+name: ZKPassport checks
+
+on:
+  push:
+    paths:
+      - .github/workflows/zkpassport.yml
+      - package.json
+      - package-lock.json
+      - tsconfig.json
+      - tsconfig.browser.json
+      - vitest.config.ts
+      - web/**
+      - src/**
+      - scripts/**
+      - test/**
+      - contracts/zkpassport-verifier/**
+      - contracts/anchor-gate/**
+      - contracts/anchor-policy/**
+      - contracts/sep-anchor/**
+  pull_request:
+    paths:
+      - .github/workflows/zkpassport.yml
+      - package.json
+      - package-lock.json
+      - tsconfig.json
+      - tsconfig.browser.json
+      - vitest.config.ts
+      - web/**
+      - src/**
+      - scripts/**
+      - test/**
+      - contracts/zkpassport-verifier/**
+      - contracts/anchor-gate/**
+      - contracts/anchor-policy/**
+      - contracts/sep-anchor/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zkpassport-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    name: Node checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      HUSKY: "0"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Check types
+        run: npm run typecheck
+      - name: Run tests
+        run: npm test
+      - name: Build browser and server assets
+        run: npm run build
+
+  verifier:
+    name: Native and compiled Wasm verifier
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: contracts/zkpassport-verifier
+    env:
+      RUSTUP_TOOLCHAIN: nightly-2026-06-24
+      CARGO_TARGET_DIR: ${{ github.workspace }}/contracts/zkpassport-verifier/target
+      CARGO_BUILD_JOBS: "2"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_TERM_COLOR: always
+      PASSPORT_WASM: ${{ github.workspace }}/contracts/zkpassport-verifier/target/wasm32v1-none/release/zkpassport_verifier.wasm
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install nightly-2026-06-24 --profile minimal --target wasm32v1-none --no-self-update
+      - name: Confirm tested compiler
+        run: test "$(rustc --version)" = "rustc 1.98.0-nightly (f28ac764c 2026-06-23)"
+      - name: Test native verifier
+        run: cargo test --locked --features std
+      - name: Build contract Wasm
+        run: cargo build --locked --release --target wasm32v1-none
+      - name: Test compiled contract Wasm
+        run: |
+          test -s "$PASSPORT_WASM"
+          cargo test --locked --features wasm-tests
+      - name: Check country verifier profiles
+        run: |
+          for profile in count6 count7 count8; do
+            cargo test --locked --features "std,$profile"
+            cargo build --locked --release --target wasm32v1-none --features "$profile"
+            cargo test --locked --features "wasm-tests,$profile" --test profile
+          done
+      - name: Test gate and build its Wasm
+        working-directory: contracts/anchor-gate
+        run: |
+          cargo test --locked --features std
+          cargo build --locked --release --target wasm32v1-none
+          ANCHOR_GATE_WASM="$CARGO_TARGET_DIR/wasm32v1-none/release/anchor_gate.wasm" cargo test --locked --features std
+      - name: Test SEP settlement and compiled Wasm
+        working-directory: contracts/sep-anchor
+        run: |
+          cargo test --locked --features std
+          cargo build --locked --release --target wasm32v1-none
+          SEP_ANCHOR_WASM="$CARGO_TARGET_DIR/wasm32v1-none/release/sep_anchor.wasm" cargo test --locked --features std

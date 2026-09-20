@@ -1,8 +1,13 @@
-import type { Config } from './config.js';
-import type { DB } from './db.js';
-import type { RateService } from './rates.js';
-import type { StellarGateway } from './stellar.js';
-import type { PartnerRow } from './core/types.js';
+import type { Config } from "./config.js";
+import type { DB } from "./db.js";
+import type { RateService } from "./rates.js";
+import type { StellarGateway } from "./stellar.js";
+import type { PartnerRow } from "./core/types.js";
+import type { PassportVerifier } from "./zkpassport.js";
+import type { GateGateway } from "./anchor-gate-types.js";
+import type { OfacPrecheck } from "./ofac-precheck.js";
+import type { SepAnchorGateway, SepAnchorIngress } from "./sep-anchor-types.js";
+import type { SepAnchor } from "./sep-anchor.js";
 
 export interface Logger {
   info: (msg: string, extra?: unknown) => void;
@@ -16,6 +21,12 @@ export interface Deps {
   stellar: StellarGateway;
   rates: RateService;
   log: Logger;
+  passportVerifier?: PassportVerifier;
+  anchorGate?: GateGateway;
+  ofac?: OfacPrecheck;
+  sepAnchorGateway?: SepAnchorGateway;
+  sepAnchorIngress?: SepAnchorIngress;
+  sepAnchor?: SepAnchor;
 }
 
 export type AppEnv = { Variables: { partner: PartnerRow } };
@@ -24,12 +35,17 @@ export function createLogger(silent = false): Logger {
   const line = (level: string, msg: string, extra?: unknown) => {
     if (silent) return;
     const ts = new Date().toISOString();
-    const tail = extra === undefined ? '' : ' ' + (typeof extra === 'string' ? extra : JSON.stringify(extra));
-    (level === 'error' ? console.error : console.log)(`${ts} ${level.padEnd(5)} ${msg}${tail}`);
+    const tail =
+      extra === undefined
+        ? ""
+        : " " + (typeof extra === "string" ? extra : JSON.stringify(extra));
+    (level === "error" ? console.error : console.log)(
+      `${ts} ${level.padEnd(5)} ${msg}${tail}`
+    );
   };
   return {
-    info: (m, e) => line('info', m, e),
-    warn: (m, e) => line('warn', m, e),
-    error: (m, e) => line('error', m, e),
+    info: (m, e) => line("info", m, e),
+    warn: (m, e) => line("warn", m, e),
+    error: (m, e) => line("error", m, e),
   };
 }

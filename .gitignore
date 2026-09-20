@@ -6,3 +6,10 @@ data/
 !.env.example
 *.log
 .DS_Store
+/public/anchor-gate.html
+/public/anchor-gate.js
+/public/anchor-gate.css
+/public/anchor-gate-fonts/
+/public/sep-anchor.html
+/public/sep-anchor.js
+/public/sep-anchor.css

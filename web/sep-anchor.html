@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TR Anchor / Private eligibility</title>
+    <link rel="stylesheet" href="/static/sep-anchor.css" />
+    <script defer src="/static/sep-anchor.js"></script>
+  </head>
+  <body>
+    <header class="bar">
+      <a class="brand" href="/anchor">TR Anchor<span>.</span></a
+      ><span class="network">STELLAR TESTNET</span>
+    </header>
+    <main>
+      <p class="eyebrow">ZKPASSPORT / PRIVATE ELIGIBILITY</p>
+      <h1>TRY to tokens.<br /><em>And back.</em></h1>
+      <p class="intro">
+        An anchor with private document checks. Your wallet makes the payment.
+      </p>
+      <p class="notice">
+        Demo only: simulated TRY, mock USDC and synthetic documents. No real
+        money.
+      </p>
+      <section id="launcher" class="card" hidden>
+        <div
+          id="direction-tabs"
+          class="tabs"
+          role="group"
+          aria-label="Exchange direction"
+        >
+          <button id="deposit" type="button" aria-pressed="true">
+            Deposit <small>TRY to USDC</small></button
+          ><button id="withdraw" type="button" aria-pressed="false">
+            Withdraw <small>USDC to TRY</small>
+          </button>
+        </div>
+        <h2>Start with your wallet</h2>
+        <p id="wallet-description">
+          Select Testnet in Freighter. Login is not a payment.
+        </p>
+        <button id="connect" class="primary" type="button">
+          Connect wallet + sign login
+        </button>
+        <button id="trustline" type="button" hidden>
+          Approve mock-USDC trustline
+        </button>
+        <button id="launch" class="primary" type="button" hidden>
+          Continue to exchange
+        </button>
+      </section>
+      <section id="exchange" class="card" hidden>
+        <div class="progress">
+          <span id="step">1 / AMOUNT</span><span id="direction"></span>
+        </div>
+        <h2 id="heading">Choose your amount</h2>
+        <p id="next-action">Review a firm quote before continuing.</p>
+        <p id="extra-payment-warning" class="notice" hidden>
+          An additional or mismatched payment needs manual recovery. Do not send
+          more tokens. The original exchange is tracked separately.
+        </p>
+        <div id="trustline-section" hidden>
+          <p>
+            Your wallet needs an authorized mock-USDC trustline with enough
+            receiving capacity. Add it in your wallet, or use Freighter below.
+            This does not create a new order.
+          </p>
+          <button id="order-trustline" type="button">
+            Set up trustline in Freighter
+          </button>
+        </div>
+        <div id="amount-section">
+          <label id="amount-label" for="amount">Simulated TRY to deposit</label>
+          <input
+            id="amount"
+            inputmode="decimal"
+            value="100.00"
+            autocomplete="off"
+          />
+          <div id="destination-section" hidden>
+            <label for="destination">Made-up bank reference</label
+            ><input
+              id="destination"
+              value="demo:wallet"
+              maxlength="69"
+              pattern="demo:[A-Za-z0-9_-]{1,64}"
+            /><small
+              >Use a demo: reference. Never enter an IBAN or personal
+              data.</small
+            >
+          </div>
+          <button id="quote" class="primary" type="button">Review quote</button>
+        </div>
+        <div id="quote-section" hidden>
+          <dl>
+            <div>
+              <dt>You send</dt>
+              <dd id="quote-in"></dd>
+            </div>
+            <div>
+              <dt>You receive</dt>
+              <dd id="quote-out"></dd>
+            </div>
+            <div>
+              <dt>Included fee</dt>
+              <dd id="quote-fee"></dd>
+            </div>
+          </dl>
+          <p id="quote-expiry" class="muted"></p>
+          <button id="accept" class="primary" type="button">
+            Accept this quote</button
+          ><button id="change" type="button">Change amount</button>
+        </div>
+        <div id="proof-section" hidden>
+          <p id="policy-summary"></p>
+          <button id="prove" class="primary" type="button">
+            Verify with ZKPassport
+          </button>
+          <div id="phone" hidden>
+            <div class="qr">
+              <canvas id="qr" aria-label="ZKPassport request QR code"></canvas>
+            </div>
+            <p id="phone-status" role="status"></p>
+            <a id="phone-link" rel="noreferrer"
+              >Open ZKPassport on this device</a
+            ><button id="cancel-proof" type="button">
+              Cancel phone request
+            </button>
+          </div>
+          <small
+            >Synthetic document only, with developer mode enabled. A phone
+            success is not onchain confirmation.</small
+          >
+        </div>
+        <div id="finish-section" hidden>
+          <dl id="amounts">
+            <div>
+              <dt>You send</dt>
+              <dd id="amount-in"></dd>
+            </div>
+            <div>
+              <dt>You receive</dt>
+              <dd id="amount-out"></dd>
+            </div>
+          </dl>
+          <div id="payment-instructions" hidden>
+            <p>
+              Send the exact amount through the wallet that opened this order.
+              Its standard payment includes the destination and memo.
+            </p>
+            <label for="payment-account">Testnet destination</label
+            ><input id="payment-account" readonly /><label for="payment-memo"
+              >Memo (hash / base64)</label
+            ><input id="payment-memo" readonly /><button
+              id="send-payment"
+              class="primary"
+              type="button"
+              hidden
+            >
+              Approve Testnet USDC payment
+            </button>
+          </div>
+          <p id="payout-warning" hidden>
+            Authorizing the simulated payout is irreversible. Refunds are
+            unavailable after authorization.
+          </p>
+          <button id="mock-bank" class="primary" type="button" hidden>
+            Simulate exact TRY deposit</button
+          ><button id="refund" type="button" hidden>
+            Refund escrow before payout
+          </button>
+        </div>
+      </section>
+      <p id="status" class="status" role="status" aria-live="polite">
+        Loading the Testnet anchor...
+      </p>
+      <p id="problem" class="problem" role="alert" hidden></p>
+      <a id="resume-session" hidden>Sign in again to resume this same order</a>
+      <section
+        id="details"
+        class="chain-status"
+        aria-label="Onchain status"
+        hidden
+      >
+        <div class="chain-status-heading">
+          <h2>Onchain status</h2>
+          <a
+            id="wallet-explorer"
+            target="_blank"
+            rel="noopener noreferrer"
+            hidden
+            >View wallet activity</a
+          >
+        </div>
+        <p class="muted">Only confirmed transactions are shown as complete.</p>
+        <dl>
+          <div>
+            <dt>Order</dt>
+            <dd id="order-id"></dd>
+          </div>
+          <div>
+            <dt>Wallet</dt>
+            <dd id="owner"></dd>
+          </div>
+          <div>
+            <dt>Native eligibility</dt>
+            <dd id="eligibility"></dd>
+          </div>
+        </dl>
+        <ul id="evidence"></ul>
+        <a
+          id="submitted-payment"
+          target="_blank"
+          rel="noopener noreferrer"
+          hidden
+          >Submitted wallet payment</a
+        >
+        <p id="full-policy" class="muted"></p>
+      </section>
+      <details>
+        <summary>What stays private? What is trusted?</summary>
+        <p>
+          Age, nationality and document-issuer predicates are checked by a
+          native Soroban proof verifier. Use synthetic documents only. Wallet
+          addresses, token amounts and proof transactions are public.
+        </p>
+        <p>
+          Standard withdrawal payments go to the anchor's custodial intake
+          account, then into gated escrow. The operator and payment observer are
+          trusted during intake. Simulated bank receipts are not evidence of
+          real fiat payment.
+        </p>
+        <p>
+          The experimental contracts are not independently audited. This is not
+          production identity verification or current sanctions clearance.
+          Ordinary transfers of this asset outside the vault are not universally
+          proof-gated.
+        </p>
+      </details>
+    </main>
+    <footer>
+      SEP-24 hosted exchange / SEP-10 login / Native Soroban verification<br />Built
+      on Kaan's TR Mock Anchor.
+    </footer>
+  </body>
+</html>

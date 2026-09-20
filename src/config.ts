@@ -1,56 +1,91 @@
-import { Networks } from '@stellar/stellar-sdk';
-import { makeTrIban } from './turkey.js';
+import { Networks } from "@stellar/stellar-sdk";
+import { makeTrIban } from "./turkey.js";
 
 const env = process.env;
-const num = (v: string | undefined, d: number) => (v === undefined || v === '' ? d : Number(v));
-const str = (v: string | undefined, d: string) => (v === undefined || v === '' ? d : v);
+const num = (v: string | undefined, d: number) =>
+  v === undefined || v === "" ? d : Number(v);
+const str = (v: string | undefined, d: string) =>
+  v === undefined || v === "" ? d : v;
 const port = num(env.PORT, 8787);
+const ofacEnabled = env.ANCHOR_GATE_OFAC_ENABLED ?? "false";
+if (ofacEnabled !== "true" && ofacEnabled !== "false")
+  throw new Error("ANCHOR_GATE_OFAC_ENABLED must be true or false");
+
+export function readAnchorMode(
+  value: string | undefined
+): "zkpassport" | "legacy" {
+  if (value === undefined || value === "" || value === "zkpassport")
+    return "zkpassport";
+  if (value === "legacy") return "legacy";
+  throw new Error("ANCHOR_MODE must be zkpassport or legacy");
+}
 
 export const config = {
+  anchorMode: readAnchorMode(env.ANCHOR_MODE),
   port,
-  publicUrl: str(env.PUBLIC_URL, `http://localhost:${port}`).replace(/\/$/, ''),
-  dbPath: str(env.DB_PATH, './data/anchor.db'),
+  publicUrl: str(env.PUBLIC_URL, `http://localhost:${port}`).replace(/\/$/, ""),
+  dbPath: str(env.DB_PATH, "./data/anchor.db"),
 
   // Stellar
-  stellarMode: str(env.STELLAR_MODE, 'live') as 'live' | 'fake',
-  horizonUrl: str(env.HORIZON_URL, 'https://horizon-testnet.stellar.org'),
-  rpcUrl: str(env.RPC_URL, 'https://soroban-testnet.stellar.org'),
+  stellarMode: str(env.STELLAR_MODE, "live") as "live" | "fake",
+  horizonUrl: str(env.HORIZON_URL, "https://horizon-testnet.stellar.org"),
+  rpcUrl: str(env.RPC_URL, "https://soroban-testnet.stellar.org"),
   networkPassphrase: str(env.NETWORK_PASSPHRASE, Networks.TESTNET),
-  usdcCode: 'USDC',
+  usdcCode: "USDC",
   // Circle's USDC issuer on Stellar testnet.
-  usdcIssuer: str(env.USDC_ISSUER, 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'),
-  treasurySecret: str(env.TREASURY_SECRET, ''),
+  usdcIssuer: str(
+    env.USDC_ISSUER,
+    "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+  ),
+  treasurySecret: str(env.TREASURY_SECRET, ""),
+  anchorGateContract: str(env.ANCHOR_GATE_CONTRACT, ""),
+  sepAnchorContract: str(env.SEP_ANCHOR_CONTRACT, ""),
+  sepAnchorProviderSecret: str(env.SEP_ANCHOR_PROVIDER_SECRET, ""),
+  sepAnchorBankNotarySecret: str(env.SEP_ANCHOR_BANK_NOTARY_SECRET, ""),
+  anchorGateProviderSecret: str(env.ANCHOR_GATE_PROVIDER_SECRET, ""),
+  anchorGateBankNotarySecret: str(env.ANCHOR_GATE_BANK_NOTARY_SECRET, ""),
+  anchorGateMaxFeeStroops: str(env.ANCHOR_GATE_MAX_FEE_STROOPS, "1000000"),
+  anchorGateOfacEnabled: ofacEnabled === "true",
+  anchorGateAllowedWallets: str(env.ANCHOR_GATE_ALLOWED_WALLETS, "")
+    .split(/[\s,]+/)
+    .filter(Boolean),
 
   // Pricing
-  rateSource: str(env.RATE_SOURCE, 'reflector') as 'reflector' | 'static',
-  staticUsdTry: str(env.STATIC_USDTRY, '47.50'),
+  rateSource: str(env.RATE_SOURCE, "reflector") as "reflector" | "static",
+  staticUsdTry: str(env.STATIC_USDTRY, "47.50"),
   spreadBps: num(env.SPREAD_BPS, 50),
   quoteTtlSeconds: num(env.QUOTE_TTL_SECONDS, 120),
   offrampRateLockSeconds: num(env.OFFRAMP_RATE_LOCK_SECONDS, 1800),
   // Reflector "Foreign Exchange" feed on Stellar mainnet (base USD, 14 decimals).
-  reflectorFxContract: str(env.REFLECTOR_FX_CONTRACT, 'CBKGPWGKSKZF52CFHMTRR23TBWTPMRDIYZ4O2P5VS65BMHYH4DXMCJZC'),
+  reflectorFxContract: str(
+    env.REFLECTOR_FX_CONTRACT,
+    "CBKGPWGKSKZF52CFHMTRR23TBWTPMRDIYZ4O2P5VS65BMHYH4DXMCJZC"
+  ),
   reflectorRpcUrls: str(
     env.REFLECTOR_RPC_URLS,
-    'https://mainnet.sorobanrpc.com,https://soroban-rpc.creit.tech,https://rpc.ankr.com/stellar_soroban',
-  ).split(',').map((s) => s.trim()).filter(Boolean),
+    "https://mainnet.sorobanrpc.com,https://soroban-rpc.creit.tech,https://rpc.ankr.com/stellar_soroban"
+  )
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
   rateCacheSeconds: num(env.RATE_CACHE_SECONDS, 60),
 
   // Limits (decimal strings). Empty or '0' means no limit. Default: no per-transaction limits
   // (hackathon). Set MIN_ONRAMP_TRY / MAX_ONRAMP_TRY / MIN_OFFRAMP_USDC to re-impose caps.
-  minOnrampTry: str(env.MIN_ONRAMP_TRY, '0'),
-  maxOnrampTry: str(env.MAX_ONRAMP_TRY, ''),
-  minOfframpUsdc: str(env.MIN_OFFRAMP_USDC, '0'),
+  minOnrampTry: str(env.MIN_ONRAMP_TRY, "0"),
+  maxOnrampTry: str(env.MAX_ONRAMP_TRY, ""),
+  minOfframpUsdc: str(env.MIN_OFFRAMP_USDC, "0"),
 
   // Mock bank identity shown in deposit instructions.
-  bankName: str(env.BANK_NAME, 'TR Mock Bank A.Ş.'),
-  accountHolder: str(env.ACCOUNT_HOLDER, 'TR Mock Anchor Teknoloji A.Ş.'),
+  bankName: str(env.BANK_NAME, "TR Mock Bank A.Ş."),
+  accountHolder: str(env.ACCOUNT_HOLDER, "TR Mock Anchor Teknoloji A.Ş."),
   // Structurally valid TR IBAN with a fictional bank code (00099).
-  anchorIban: str(env.ANCHOR_IBAN, makeTrIban('00099', '0000000000000001')),
+  anchorIban: str(env.ANCHOR_IBAN, makeTrIban("00099", "0000000000000001")),
 
-  adminUser: str(env.ADMIN_USER, ''),
-  adminPassword: str(env.ADMIN_PASSWORD, ''),
+  adminUser: str(env.ADMIN_USER, ""),
+  adminPassword: str(env.ADMIN_PASSWORD, ""),
 
-  workers: str(env.WORKERS, 'true') !== 'false',
+  workers: str(env.WORKERS, "true") !== "false",
   pollMs: {
     onramp: num(env.ONRAMP_POLL_MS, 3000),
     offramp: num(env.OFFRAMP_POLL_MS, 5000),

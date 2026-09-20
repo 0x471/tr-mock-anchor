@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0a0a0a" />
+    <title>TR Anchor + ZKPassport | Testnet exchange</title>
+    <link rel="stylesheet" href="/anchor-gate/style.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#exchange">Skip to exchange</a>
+    <div class="ripple" aria-hidden="true"></div>
+    <div class="shell">
+      <header class="masthead">
+        <div>
+          <span class="wordmark">TR Anchor.</span
+          ><span class="brand-extension">/ ZKPassport</span>
+        </div>
+        <span class="network-label"
+          ><span class="network-dot"></span>STELLAR TESTNET</span
+        >
+      </header>
+      <main>
+        <div class="page-intro">
+          <h1>TRY to USDC. <em>And back.</em></h1>
+          <p>A mock anchor with private eligibility checks.</p>
+        </div>
+        <p class="demo-notice">
+          <strong>Demo only.</strong> Simulated TRY, mock USDC and synthetic
+          documents. No real money.
+        </p>
+
+        <div class="workbench" id="exchange" data-summary="false">
+          <div class="workflow">
+            <div
+              class="direction-switch"
+              role="group"
+              aria-label="Exchange direction"
+            >
+              <button id="choose-deposit" type="button" aria-pressed="true">
+                <strong>Deposit</strong
+                ><span>TRY <span aria-hidden="true">-&gt;</span> USDC</span>
+              </button>
+              <button id="choose-withdrawal" type="button" aria-pressed="false">
+                <strong>Withdraw</strong
+                ><span>USDC <span aria-hidden="true">-&gt;</span> TRY</span>
+              </button>
+            </div>
+            <nav aria-label="Exchange steps" class="step-navigation">
+              <ol>
+                <li>
+                  <button
+                    id="step-wallet"
+                    type="button"
+                    aria-current="step"
+                    aria-controls="panel-wallet"
+                  >
+                    <span>1</span> Wallet
+                  </button>
+                </li>
+                <li>
+                  <button
+                    id="step-quote"
+                    type="button"
+                    aria-controls="panel-quote"
+                    disabled
+                  >
+                    <span>2</span> Amount
+                  </button>
+                </li>
+                <li>
+                  <button
+                    id="step-proof"
+                    type="button"
+                    aria-controls="panel-proof"
+                    disabled
+                  >
+                    <span>3</span> Verify
+                  </button>
+                </li>
+                <li>
+                  <button
+                    id="step-settle"
+                    type="button"
+                    aria-controls="panel-settle"
+                    disabled
+                  >
+                    <span>4</span> Finish
+                  </button>
+                </li>
+              </ol>
+            </nav>
+            <p id="order-summary" class="order-summary" hidden></p>
+            <p
+              id="status-announcement"
+              class="sr-only"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            ></p>
+
+            <div class="status-bar" id="status-bar" hidden>
+              <div>
+                <span class="eyebrow" id="status-label">NEXT STEP</span>
+                <p id="status">Loading the Testnet anchor.</p>
+              </div>
+              <button id="refresh" type="button" class="quiet compact" disabled>
+                Refresh status
+              </button>
+            </div>
+
+            <section
+              id="panel-wallet"
+              class="flow-panel"
+              aria-labelledby="wallet-heading"
+            >
+              <h2 id="wallet-heading" tabindex="-1">Connect your wallet</h2>
+              <p class="panel-intro" id="wallet-intro">
+                Use Freighter on Stellar Testnet. Signing in does not move
+                funds.
+              </p>
+              <div id="wallet-card" class="wallet-card" hidden>
+                <p id="wallet" class="mono">No wallet connected.</p>
+                <span id="wallet-state" class="state-label">Not connected</span>
+              </div>
+              <div class="actions">
+                <button id="connect" type="button" class="primary" disabled>
+                  Connect wallet
+                </button>
+              </div>
+              <div id="wallet-setup" class="wallet-setup" hidden>
+                <div id="ofac-check" class="requirements" hidden>
+                  <p id="ofac-status"></p>
+                  <button
+                    id="check-ofac"
+                    type="button"
+                    class="quiet compact"
+                    disabled
+                  >
+                    Recheck address list
+                  </button>
+                  <details class="help">
+                    <summary>What this precheck covers</summary>
+                    <p>
+                      Exact wallet-address matching against OFAC's SDN digital
+                      currency identifiers. No name or passport data is sent. A
+                      no-match is not identity clearance. The anchor checks new
+                      reservations offchain; ZKPassport age and country
+                      verification remains onchain.
+                    </p>
+                    <p id="ofac-source" class="hint"></p>
+                  </details>
+                </div>
+                <p id="wallet-setup-status" class="panel-intro"></p>
+                <p id="wallet-asset" class="mono"></p>
+                <p class="hint">
+                  This adds the demo asset, not Circle USDC. Freighter approves
+                  a Testnet trustline, not a payment. Limit: 1,000,000 tokens.
+                  Fee: at most 0.001 test XLM, plus the account reserve.
+                </p>
+                <div class="actions">
+                  <button
+                    id="setup-wallet"
+                    type="button"
+                    class="primary"
+                    disabled
+                  >
+                    Add mock USDC in Freighter
+                  </button>
+                  <button
+                    id="check-wallet"
+                    type="button"
+                    class="quiet"
+                    disabled
+                  >
+                    Check wallet setup
+                  </button>
+                </div>
+                <a
+                  id="wallet-setup-tx"
+                  class="text-link"
+                  target="_blank"
+                  rel="noreferrer"
+                  hidden
+                >
+                  View setup transaction
+                </a>
+              </div>
+              <details class="help">
+                <summary>Wallet setup</summary>
+                <p>
+                  Install Freighter, select Stellar Testnet and use an admitted
+                  demo wallet. Free Testnet XLM is requested automatically from
+                  Friendbot when funds are low. Add this demo's mock USDC when
+                  prompted; only that step needs a transaction signature.
+                </p>
+                <p>Login uses a SEP-10 signature, not a payment.</p>
+                <a
+                  href="https://www.freighter.app/"
+                  target="_blank"
+                  rel="noreferrer"
+                  >Get Freighter</a
+                >
+              </details>
+              <div id="session-options" class="session-options" hidden>
+                <button id="disconnect" type="button" class="quiet" disabled>
+                  Clear session
+                </button>
+                <p class="hint">This does not cancel or refund an order.</p>
+              </div>
+            </section>
+
+            <section
+              id="panel-quote"
+              class="flow-panel"
+              aria-labelledby="quote-heading"
+              hidden
+            >
+              <h2 id="quote-heading" tabindex="-1">
+                How much would you like to deposit?
+              </h2>
+              <div id="destination-box" hidden>
+                <label for="bank-destination">Demo payout reference</label
+                ><input
+                  id="bank-destination"
+                  placeholder="demo:my-account"
+                  autocomplete="off"
+                  maxlength="69"
+                  spellcheck="false"
+                  aria-describedby="destination-hint"
+                />
+                <p id="destination-hint" class="hint">
+                  Made-up demo: reference only. No real IBAN, name or personal
+                  data.
+                </p>
+              </div>
+              <div id="quote-inputs">
+                <label id="amount-label" for="amount"
+                  >Simulated TRY amount</label
+                >
+                <div class="amount-field">
+                  <input
+                    id="amount"
+                    inputmode="decimal"
+                    placeholder="0.00"
+                    autocomplete="off"
+                    aria-describedby="amount-hint"
+                  /><span id="amount-unit" aria-hidden="true">TRY</span>
+                </div>
+                <p id="amount-hint" class="hint">
+                  A quote does not move funds.
+                </p>
+                <div class="actions">
+                  <button id="quote" type="button" class="primary" disabled>
+                    Get quote
+                  </button>
+                </div>
+              </div>
+              <div id="quote-card" class="receipt-card" hidden>
+                <p id="quote-result" class="result"></p>
+                <p id="quote-requirements" class="requirements"></p>
+                <button id="reserve" type="button" class="primary" disabled>
+                  Accept quote
+                </button>
+                <p class="consent">
+                  Accepting reserves the order. Expiry does not automatically
+                  release or refund held tokens.
+                </p>
+                <button id="edit-quote" type="button" class="quiet" hidden>
+                  Change amount
+                </button>
+              </div>
+            </section>
+
+            <section
+              id="panel-proof"
+              class="flow-panel"
+              aria-labelledby="proof-heading"
+              hidden
+            >
+              <h2 id="proof-heading" tabindex="-1">Verify with ZKPassport</h2>
+              <p class="proof-journey">
+                Phone proof <span aria-hidden="true">-&gt;</span> Freighter
+                signature <span aria-hidden="true">-&gt;</span> Onchain check
+              </p>
+              <p id="proof-instruction" class="panel-intro">
+                Use a synthetic document in developer mode.
+              </p>
+              <p id="proof-requirements" class="requirements">
+                Loading requirements.
+              </p>
+              <details class="help">
+                <summary>Which test document should I use?</summary>
+                <p id="proof-help" class="hint">
+                  Use a matching synthetic document. Do not use a real ID.
+                </p>
+              </details>
+              <div id="phone-box" class="phone-box" hidden>
+                <div class="qr-paper">
+                  <canvas
+                    id="qr"
+                    aria-label="Private ZKPassport request QR code"
+                  ></canvas>
+                </div>
+                <p class="hint">Private request. Do not share this QR.</p>
+                <div class="actions">
+                  <a id="phone-link" class="text-link" rel="noreferrer"
+                    >Open in ZKPassport</a
+                  ><button id="copy-link" type="button" class="quiet compact">
+                    Copy link
+                  </button>
+                </div>
+              </div>
+              <div class="actions">
+                <button id="prove" type="button" class="primary" disabled>
+                  Show QR code</button
+                ><button id="cancel-proof" type="button" class="quiet" disabled>
+                  Cancel request
+                </button>
+              </div>
+              <div class="signature-box" id="signature-box" hidden>
+                <p id="proof-consent" class="consent">
+                  A phone proof is not onchain approval. Sign the proof
+                  transaction in Freighter to continue.
+                </p>
+                <button id="sign-proof" type="button" class="primary" disabled>
+                  Sign proof transaction
+                </button>
+              </div>
+            </section>
+
+            <section
+              id="panel-settle"
+              class="flow-panel"
+              aria-labelledby="settle-heading"
+              hidden
+            >
+              <h2 id="settle-heading" tabindex="-1">Finish your deposit</h2>
+              <p id="settle-subtitle" class="panel-intro">
+                Simulate the bank receipt, then receive Testnet tokens.
+              </p>
+              <div id="completion" class="completion" hidden>
+                <span class="eyebrow">CONFIRMED ON TESTNET</span>
+                <h3>Exchange complete.</h3>
+                <p id="completion-amount"></p>
+              </div>
+              <div id="bank" class="result bank-record">
+                Verify eligibility first.
+              </div>
+              <div class="actions settlement-actions">
+                <button
+                  id="authorize-payout"
+                  type="button"
+                  class="primary"
+                  hidden
+                  disabled
+                >
+                  Authorize simulated payout</button
+                ><button
+                  id="bank-action"
+                  type="button"
+                  class="primary"
+                  disabled
+                >
+                  Simulate bank deposit</button
+                ><button id="settle" type="button" class="primary" disabled>
+                  Receive Testnet tokens
+                </button>
+              </div>
+              <p id="settlement-next" class="hint"></p>
+              <details class="help">
+                <summary>How settlement works</summary>
+                <p id="settlement-help" class="hint">
+                  The bank receipt and token settlement are separate
+                  confirmations. No real bank transfer occurs.
+                </p>
+              </details>
+            </section>
+
+            <section
+              id="testnet-activity"
+              class="testnet-activity"
+              aria-labelledby="activity-heading"
+              hidden
+            >
+              <div class="activity-header">
+                <h2 id="activity-heading">Testnet activity</h2>
+                <a
+                  id="latest-transaction"
+                  class="text-link"
+                  target="_blank"
+                  rel="noreferrer"
+                  hidden
+                >
+                  View transaction
+                </a>
+              </div>
+              <p id="transactions-empty" class="hint">
+                Transactions will appear here. Pending is not confirmed.
+              </p>
+              <ul id="transactions" class="transaction-list"></ul>
+            </section>
+
+            <details class="resume">
+              <summary>Resume an existing order</summary>
+              <p class="hint">
+                Connect the owner wallet first. A timeout does not mean a
+                payment failed.
+              </p>
+              <label for="order-id">Order ID</label
+              ><input
+                id="order-id"
+                class="mono"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="64-character order ID"
+              /><button
+                id="resume-order"
+                type="button"
+                class="quiet full-width"
+                disabled
+              >
+                Load owned order
+              </button>
+              <p class="hint">
+                Do not create a replacement for an uncertain payment.
+              </p>
+            </details>
+          </div>
+
+          <details id="exchange-summary" class="blueprint" hidden>
+            <summary>Exchange details</summary>
+            <div class="blueprint-header">
+              <span class="eyebrow">YOUR EXCHANGE</span>
+              <h2 id="blueprint-heading">Deposit / TRY to USDC</h2>
+            </div>
+            <section class="blueprint-section">
+              <dl class="facts">
+                <div>
+                  <dt>You send</dt>
+                  <dd id="summary-send">Awaiting quote</dd>
+                </div>
+                <div>
+                  <dt>You receive</dt>
+                  <dd id="summary-receive">Awaiting quote</dd>
+                </div>
+              </dl>
+            </section>
+            <section class="blueprint-section">
+              <h3 class="eyebrow">ELIGIBILITY / SYNTHETIC ONLY</h3>
+              <dl class="facts">
+                <div>
+                  <dt>Minimum age</dt>
+                  <dd id="policy-age">Loading</dd>
+                </div>
+                <div>
+                  <dt>Nationality</dt>
+                  <dd id="policy-nationality">Loading</dd>
+                </div>
+                <div>
+                  <dt>Document issuer</dt>
+                  <dd id="policy-issuer">Loading</dd>
+                </div>
+              </dl>
+              <details class="help">
+                <summary>Full policy</summary>
+                <p id="policy" class="result hint">
+                  Loading the onchain policy.
+                </p>
+              </details>
+            </section>
+            <details class="blueprint-section technical" id="evidence">
+              <summary>Order details and transactions</summary>
+              <dl class="facts">
+                <div>
+                  <dt>Wallet</dt>
+                  <dd id="summary-wallet">Not connected</dd>
+                </div>
+              </dl>
+              <ol class="verification-list">
+                <li>
+                  <span>Native proof</span
+                  ><span id="check-proof" class="state-label"
+                    >Not verified</span
+                  >
+                </li>
+                <li>
+                  <span>Bank receipt</span
+                  ><span id="check-receipt" class="state-label"
+                    >Not recorded</span
+                  >
+                </li>
+                <li>
+                  <span>Settlement</span
+                  ><span id="check-settlement" class="state-label"
+                    >Not settled</span
+                  >
+                </li>
+              </ol>
+              <p id="order-state" class="order-state">No order reserved</p>
+              <p id="order" class="result mono">No order reserved.</p>
+            </details>
+          </details>
+        </div>
+
+        <footer>
+          <details class="about" id="how-it-works">
+            <summary>How this demo works</summary>
+            <div class="about-body">
+              <p>
+                <strong>Deposit:</strong> simulated TRY in, mock USDC to your
+                wallet. <strong>Withdraw:</strong> mock USDC in, simulated TRY
+                to a made-up bank reference.
+              </p>
+              <p>
+                ZKPassport proves age, nationality and document-issuer
+                requirements. The Soroban vault checks eligibility and bank
+                receipts before releasing tokens.
+              </p>
+              <p>
+                <span id="flow-from">Simulated bank</span> / ZKPassport /
+                <span id="flow-to">Testnet wallet</span>
+              </p>
+              <p>
+                Wallet, amount, order, policy and submitted proof transactions
+                are public. Country is nationality or document issuer, not
+                residence. Synthetic documents only; this is not production
+                identity or compliance verification.
+              </p>
+              <p>
+                Built on Kaan's TR Mock Anchor. SEP-10 login and SEP-38 quotes
+                with custom settlement, not full SEP-6 conformance. Experimental
+                and not independently audited.
+              </p>
+            </div>
+          </details>
+          <a
+            href="https://github.com/0x471/tr-mock-anchor/tree/feat/zkpassport-anchor"
+            target="_blank"
+            rel="noreferrer"
+            >Source</a
+          >
+        </footer>
+      </main>
+    </div>
+    <script src="/anchor-gate/bundle.js" defer></script>
+  </body>
+</html>

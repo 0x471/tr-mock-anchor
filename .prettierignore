@@ -1,0 +1,10 @@
+node_modules/
+dist/
+data/
+**/target/
+**/build/
+**/fixtures/*.bin
+**/fixtures/*.hex
+**/*.wasm
+.husky/_/
+package-lock.json
