@@ -279,7 +279,8 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
     path: string,
     body?: unknown,
     authenticated = true,
-    extraHeaders: Record<string, string> = {}
+    extraHeaders: Record<string, string> = {},
+    signal?: AbortSignal
   ) {
     if (authenticated && !token)
       throw new Error("Connect and authenticate your wallet first.");
@@ -294,6 +295,7 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       cache: "no-store",
       credentials: "omit",
       redirect: "error",
+      ...(signal ? { signal } : {}),
     });
     if (!response.ok) {
       const error = z
@@ -321,8 +323,9 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       throw new Error("Demo access does not match this wallet.");
     return access;
   }
-  function acceptOrder(value: unknown) {
+  function acceptOrder(value: unknown, quiet = false) {
     const order = orderSchema.parse(value);
+    const stageChanged = view.order?.stage !== order.stage;
     const info = requireInfo();
     if (
       order.recipient !== view.wallet ||
@@ -337,6 +340,20 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       cancelPhone();
       view.prepared = null;
       preparedInputs = undefined;
+    }
+    if (
+      view.prepared &&
+      order.actions.some(
+        (action) =>
+          action.kind === "prove" &&
+          action.id === view.prepared?.action_id &&
+          action.transaction_hash === view.prepared?.hash &&
+          action.status === "success"
+      )
+    ) {
+      view.prepared = null;
+      preparedInputs = undefined;
+      cancelPhone();
     }
     if (
       view.quote &&
@@ -354,11 +371,13 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       view.quote = null;
     view.order = order;
     view.direction = order.direction;
-    change(
-      order.completed
-        ? "Settlement confirmed on Testnet."
-        : `Onchain order stage: ${order.stage}.`
-    );
+    if (quiet && !stageChanged) deps.changed();
+    else
+      change(
+        order.completed
+          ? "Settlement confirmed on Testnet."
+          : `Onchain order stage: ${order.stage}.`
+      );
     return order;
   }
   async function orderAction(path: string, allowAuthorizedCompletion = false) {
@@ -782,7 +801,7 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       view.reservationPending = false;
       deps.changed();
     },
-    async refresh(id = view.order?.id) {
+    async refresh(id = view.order?.id, options: { quiet?: boolean } = {}) {
       if (view.reservationPending)
         throw new Error(
           "Reconcile the existing reservation by retrying its exact quote before loading another order."
@@ -791,9 +810,19 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
         throw new Error("Enter a valid order ID.");
       const session = generation;
       await sameWallet(view.wallet);
-      const value = await (await request(`/anchor-gate/orders/${id}`)).json();
+      const value = await (
+        await request(
+          `/anchor-gate/orders/${id}`,
+          undefined,
+          true,
+          {},
+          AbortSignal.timeout(20_000)
+        )
+      ).json();
       if (session !== generation) throw new Error("Wallet session changed.");
-      return acceptOrder(value);
+      if (orderSchema.parse(value).id !== id)
+        throw new Error("The response belongs to a different order.");
+      return acceptOrder(value, options.quiet);
     },
     cancelPhone,
     async requestProof() {
