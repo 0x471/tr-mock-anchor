@@ -480,7 +480,7 @@ function render() {
     : pending && prepared && !pendingOtherAction
       ? "Return to Verify to sign or retry only the exact prepared proof transaction. Its outcome is not yet confirmed."
       : pending
-        ? "A transaction has been submitted. Use Check status before attempting another action."
+        ? "The transaction outcome is not confirmed. Use Check status before attempting another action."
         : authorized
           ? "This fixed payout is already authorized. Finish its receipt and settlement, even if the proof window has expired."
           : order?.expired
@@ -528,7 +528,7 @@ function render() {
         "The exact prepared proof transaction is not confirmed. Sign or retry that same transaction, or use Check status if you already submitted it.";
     else if (pending)
       statusMessage =
-        "Transaction submitted, not yet confirmed. Select Check status to reconcile this order.";
+        "The transaction outcome is not confirmed. Select Check status to reconcile this order.";
     else if (quoteExpired && !order)
       statusMessage =
         "This quote expired. Select Edit amount and request a fresh quote before reserving.";

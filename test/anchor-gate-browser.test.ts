@@ -1039,6 +1039,38 @@ async function browserPageHarness(
 }
 
 describe("production-built gated browser serving", () => {
+  it("does not claim submission when resuming a pending unsigned proof", async () => {
+    const test = await browserPageHarness();
+    try {
+      Object.assign(test.order, {
+        actions: [
+          {
+            id: "unsigned-prepared-proof",
+            kind: "prove",
+            transaction_hash: "44".repeat(32),
+            status: "pending",
+            ledger: null,
+            expires_at: test.order.deadline,
+          },
+        ],
+      });
+      await test.click("connect");
+      test.node("order-id").value = test.order.id;
+      test.node("order-id").oninput!();
+      await test.click("resume-order");
+      for (const id of ["status", "settlement-next"]) {
+        expect(test.node(id).textContent).not.toContain("submitted");
+        expect(test.node(id).textContent).toContain("not confirmed");
+        expect(test.node(id).textContent).toContain("Check status");
+      }
+      expect(test.node("sign-proof").disabled).toBe(true);
+      expect(test.node("bank-action").disabled).toBe(true);
+      expect(test.node("completion").hidden).toBe(true);
+    } finally {
+      test.cleanup();
+    }
+  });
+
   it("resumes an owned order beside its input without requiring the distant status button", async () => {
     const test = await browserPageHarness();
     try {
