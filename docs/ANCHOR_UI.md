@@ -32,6 +32,25 @@ configured vault. Do not change policy or contract authorization for the UI.
 - Use local fonts, visible focus, readable contrast, responsive layout and
   reduced-motion support without weakening the content security policy.
 
+## Validation on 2026-09-20
+
+- Typecheck, production build and the full Vitest suite passed.
+- Browser checks covered the live policy, direction selection, missing-wallet
+  feedback, locked unauthenticated actions, recovery input and keyboard focus.
+- Layout checks covered 1280px desktop and 390px/320px mobile widths. Inert,
+  clearly labelled visual fixtures covered quote, QR and settled layouts;
+  those fixtures did not call the anchor or submit transactions.
+- Regression tests cover exact reservation recovery, expiry, phone-session
+  cleanup, order switching, pending proof signing and honest pending labels.
+- Real Freighter signing and a fresh phone-to-settlement run were not repeated
+  for this visual pass. The earlier Testnet settlement evidence remains
+  separate. Contracts, policy and settlement authorization were not changed.
+
+The focused UI standards/spec review uses `389ed8c`, the pre-redesign
+checkpoint, not the original upstream baseline used by the broader project
+review. Its pending-status wording and duplicate-test-helper findings were
+resolved before delivery.
+
 ## Design reference
 
 Inkognito: <https://github.com/trionlabs/inkognito>
