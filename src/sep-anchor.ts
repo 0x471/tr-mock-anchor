@@ -415,7 +415,9 @@ export function createSepAnchor(deps: Deps, gateway: SepAnchorGateway) {
     });
   }
   async function advance(row: SepIntent) {
-    for (const action of store.actions(row.id)) await reconcileAction(action);
+    const actions = store.actions(row.id);
+    if (!row.terms && !row.chain && actions.length === 0) return;
+    for (const action of actions) await reconcileAction(action);
     await sync(row);
     if (terminal(row) || row.recovery_reason || !row.terms) return;
     const grant = await eligibility(row.subject);
