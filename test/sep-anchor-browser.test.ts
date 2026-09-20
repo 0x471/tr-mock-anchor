@@ -80,6 +80,9 @@ async function page(
     initialStateFailures?: number;
     initialInfoFailures?: number;
     refundFailure?: boolean;
+    acceptResponseLost?: boolean;
+    acceptedQuote?: string | null;
+    acceptedDestination?: string;
     launcher?: boolean;
   } = {}
 ) {
@@ -121,7 +124,7 @@ async function page(
     }
     return true;
   };
-  let transaction = {
+  let transaction: Record<string, unknown> = {
     id: orderId,
     kind: "withdrawal",
     status: "pending_user",
@@ -155,6 +158,17 @@ async function page(
   let infoFailures = faults.initialInfoFailures ?? 0;
   let nextState: Promise<void> | undefined;
   let nextRefund: Promise<void> | undefined;
+  let nextAcceptance: Promise<void> | undefined;
+  const acceptRequests: unknown[] = [];
+  const firmQuote = {
+    id: "qt_browser",
+    sell_amount: "100.00",
+    sell_asset: "iso4217:TRY",
+    buy_amount: "2.4875621",
+    buy_asset: `stellar:USDC:${issuer}`,
+    expires_at: new Date(Date.now() + 600000).toISOString(),
+    fee: { total: "0.50", asset: "iso4217:TRY" },
+  };
   const fetcher: typeof fetch = async (input, init) => {
     const url = new URL(String(input), location.origin);
     if (url.pathname === `/sep24/interactive/${orderId}/state`) {
@@ -190,6 +204,28 @@ async function page(
           policy_valid_until: Math.floor(Date.now() / 1000) + 600,
         },
       });
+    }
+    if (url.pathname === `/sep24/interactive/${orderId}/quote`)
+      return Response.json({ quote: firmQuote });
+    if (
+      url.pathname === `/sep24/interactive/${orderId}/accept` &&
+      init?.method === "POST"
+    ) {
+      acceptRequests.push(JSON.parse(String(init.body)));
+      transaction = {
+        ...transaction,
+        quote_id:
+          faults.acceptedQuote === undefined
+            ? firmQuote.id
+            : faults.acceptedQuote,
+        status: "pending_stellar",
+        to: faults.acceptedDestination ?? "demo:test",
+      };
+      const wait = nextAcceptance;
+      nextAcceptance = undefined;
+      await wait;
+      if (faults.acceptResponseLost) throw new TypeError("Failed to fetch");
+      return Response.json({ transaction });
     }
     if (
       url.pathname === `/sep24/interactive/${orderId}/refund` &&
@@ -247,6 +283,14 @@ async function page(
   return {
     get,
     visible,
+    acceptRequests,
+    holdAcceptanceResponse() {
+      let release!: () => void;
+      nextAcceptance = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return release;
+    },
     async holdNextStatus(changes: Record<string, unknown> = {}, fail = false) {
       transaction = { ...transaction, ...changes };
       let release!: () => void;
@@ -284,6 +328,99 @@ async function page(
     },
   };
 }
+
+it("reconciles a lost quote acceptance response from status without repeating acceptance", async () => {
+  const browser = await page(
+    {
+      kind: "deposit",
+      quote_id: null,
+      escrowed: false,
+      can_refund: false,
+      native: {
+        eligible: true,
+        valid_until: Math.floor(Date.now() / 1000) + 600,
+        confirmed_ledger: 123,
+      },
+    },
+    { acceptResponseLost: true }
+  );
+  browser.get("amount").value = "100";
+  await browser.click("quote");
+  await browser.click("accept");
+  expect(browser.get("problem").textContent).toContain("response was lost");
+  await browser.update({});
+  expect(browser.visible("quote-section")).toBe(false);
+  expect(browser.get("heading").textContent).toBe("Finish your exchange");
+  expect(browser.acceptRequests).toEqual([{ quote_id: "qt_browser" }]);
+  expect(browser.visible("problem")).toBe(false);
+});
+
+it.each([null, "qt_different"])(
+  "does not acknowledge lost acceptance from an unrelated quote state: %j",
+  async (acceptedQuote) => {
+    const browser = await page(
+      {
+        kind: "deposit",
+        quote_id: null,
+        escrowed: false,
+        can_refund: false,
+      },
+      { acceptResponseLost: true, acceptedQuote, initialInfoFailures: 3 }
+    );
+    browser.get("amount").value = "100";
+    await browser.click("quote");
+    await browser.click("accept");
+    await browser.update({});
+    await browser.update({});
+    expect(browser.visible("problem")).toBe(true);
+    expect(browser.get("problem").textContent).toContain("response was lost");
+    expect(browser.acceptRequests).toEqual([{ quote_id: "qt_browser" }]);
+    await browser.update({ status: "completed" });
+    expect(browser.visible("problem")).toBe(true);
+  }
+);
+
+it.each(["demo:test", "demo:other"])(
+  "matches the frozen withdrawal destination before clearing lost acceptance: %s",
+  async (acceptedDestination) => {
+    const browser = await page(
+      { quote_id: null, escrowed: false, can_refund: false },
+      { acceptResponseLost: true, acceptedDestination }
+    );
+    browser.get("amount").value = "2";
+    browser.get("destination").value = "demo:test";
+    await browser.click("quote");
+    await browser.click("accept");
+    browser.get("destination").value = "demo:edited";
+    await browser.update({});
+    expect(browser.visible("problem")).toBe(
+      acceptedDestination !== "demo:test"
+    );
+    expect(browser.acceptRequests).toEqual([
+      { quote_id: "qt_browser", bank_destination: "demo:test" },
+    ]);
+  }
+);
+
+it("does not restore a lost acceptance warning after its exact acknowledgement arrived", async () => {
+  const browser = await page(
+    { kind: "deposit", quote_id: null, escrowed: false, can_refund: false },
+    { acceptResponseLost: true }
+  );
+  browser.get("amount").value = "100";
+  await browser.click("quote");
+  const releaseStatus = await browser.holdNextStatus({
+    quote_id: "qt_browser",
+    status: "pending_stellar",
+  });
+  const releaseAcceptance = browser.holdAcceptanceResponse();
+  const clicked = browser.click("accept");
+  await releaseStatus();
+  releaseAcceptance();
+  await clicked;
+  expect(browser.visible("problem")).toBe(false);
+  expect(browser.acceptRequests).toEqual([{ quote_id: "qt_browser" }]);
+});
 
 it("does not replace a confirmed refund with an older pending status response", async () => {
   const browser = await page();

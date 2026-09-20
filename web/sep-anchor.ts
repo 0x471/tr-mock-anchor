@@ -60,6 +60,7 @@ const transactionSchema = z.object({
   amount_out: z.string().nullable(),
   amount_in_asset: z.string(),
   amount_out_asset: z.string(),
+  to: z.string().nullable().optional(),
   message: z.string(),
   policy: policySchema,
   native: z.object({
@@ -98,6 +99,11 @@ const quoteSchema = z.object({
 });
 type TransactionView = z.infer<typeof transactionSchema>;
 type Quote = z.infer<typeof quoteSchema>;
+type Acceptance = {
+  quoteId: string;
+  bankDestination: string | undefined;
+  afterSequence: number;
+};
 const element = <T extends HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 const show = (id: string, visible: boolean) => {
@@ -135,11 +141,13 @@ let failures = 0;
 let refreshSequence = 0;
 let appliedRefreshSequence = 0;
 let queuedProof: (() => Promise<void>) | undefined;
-let problemSource: "action" | "status" | "configuration" | undefined;
+let uncertainAcceptance: Acceptance | undefined;
+let problemSource:
+  "action" | "acceptance" | "status" | "configuration" | undefined;
 
 function problem(
   message = "",
-  source: "action" | "status" | "configuration" = "action"
+  source: "action" | "acceptance" | "status" | "configuration" = "action"
 ) {
   problemSource = message ? source : undefined;
   text("problem", message);
@@ -610,8 +618,28 @@ async function refresh() {
             ? "Waiting for native Testnet confirmation. Keep this order open."
             : "Status updates automatically. No need to check manually."
     );
-  if (problemSource === "status" || pollingComplete()) problem();
+  if (
+    problemSource === "acceptance" &&
+    uncertainAcceptance &&
+    acceptanceAcknowledged(uncertainAcceptance)
+  ) {
+    uncertainAcceptance = undefined;
+    quote = undefined;
+    problem();
+  } else if (
+    problemSource === "status" ||
+    (problemSource !== "acceptance" && pollingComplete())
+  )
+    problem();
   render();
+}
+function acceptanceAcknowledged(acceptance: Acceptance) {
+  return (
+    appliedRefreshSequence > acceptance.afterSequence &&
+    transaction?.quote_id === acceptance.quoteId &&
+    (acceptance.bankDestination === undefined ||
+      transaction.to === acceptance.bankDestination)
+  );
 }
 async function prove() {
   if (activePhone) return;
@@ -969,12 +997,33 @@ element("accept").addEventListener(
   () =>
     void action(async () => {
       if (!quote) throw new Error("Get a quote first.");
-      await json(`${base}/accept`, {
-        quote_id: quote.id,
-        ...(transaction?.kind === "withdrawal"
-          ? { bank_destination: element<HTMLInputElement>("destination").value }
-          : {}),
-      });
+      const acceptance: Acceptance = {
+        quoteId: quote.id,
+        bankDestination:
+          transaction?.kind === "withdrawal"
+            ? element<HTMLInputElement>("destination").value
+            : undefined,
+        afterSequence: appliedRefreshSequence,
+      };
+      try {
+        await json(`${base}/accept`, {
+          quote_id: acceptance.quoteId,
+          ...(acceptance.bankDestination === undefined
+            ? {}
+            : { bank_destination: acceptance.bankDestination }),
+        });
+      } catch (error) {
+        if (!(error instanceof AnchorNetworkError)) throw error;
+        if (acceptanceAcknowledged(acceptance)) {
+          uncertainAcceptance = undefined;
+          quote = undefined;
+        } else {
+          uncertainAcceptance = acceptance;
+          problem(error.message, "acceptance");
+        }
+        return;
+      }
+      uncertainAcceptance = undefined;
       quote = undefined;
       await refresh();
     })
@@ -1077,7 +1126,7 @@ async function recoverConfiguration() {
     await loadInfo();
     if (problemSource === "configuration") problem();
   } catch {
-    if (problemSource !== "action")
+    if (problemSource !== "action" && problemSource !== "acceptance")
       problem(
         "New transfers are unavailable while the anchor configuration reconnects. This same order will continue reconciling.",
         "configuration"
