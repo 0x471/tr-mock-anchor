@@ -205,7 +205,16 @@ export function createSepAnchorRoutes(
       );
     if (error instanceof ApiError)
       return c.json(
-        { error: error.message, code: error.code },
+        {
+          error: error.message,
+          code: error.code,
+          ...(error.code === "native_eligibility_required"
+            ? {
+                onboarding_url: `${deps.cfg.publicUrl}/anchor`,
+                transfer_server_sep0024: `${deps.cfg.publicUrl}/sep24`,
+              }
+            : {}),
+        },
         error.status as 400
       );
     deps.log.error("SEP anchor request failed.");
@@ -381,6 +390,13 @@ export function createSepAnchorRoutes(
       transactions: { enabled: true, authentication_required: true },
       transaction: { enabled: true, authentication_required: true },
       features: { account_creation: false, claimable_balances: false },
+      profile: {
+        accounts: "plain_g_only",
+        native_eligibility_required: true,
+        first_time_onboarding: "sep24",
+        onboarding_url: `${deps.cfg.publicUrl}/anchor`,
+        transfer_server_sep0024: `${deps.cfg.publicUrl}/sep24`,
+      },
     });
   });
   for (const protocol of ["sep6", "sep24"] as const)
@@ -719,6 +735,15 @@ export function createSepAnchorRoutes(
           "invalid_asset",
           "The exchange asset pair does not match this Testnet anchor."
         );
+      const requireEligibility = async () => {
+        if ((await engine.customer(c.get("sepSub"))).status !== "ACCEPTED")
+          throw new ApiError(
+            403,
+            "native_eligibility_required",
+            "First-time or expired eligibility must be verified through the separately advertised SEP-24 hosted flow. Programmatic SEP-6 requires a current native grant; no automatic popup is provided."
+          );
+      };
+      await requireEligibility();
       const created = await engine.begin(
         c.get("sepSub"),
         c.get("sepCustomer").id,
@@ -726,6 +751,7 @@ export function createSepAnchorRoutes(
         direction,
         input
       );
+      await requireEligibility();
       const view = await engine.accept(
         c.get("sepSub"),
         created.id,
@@ -736,7 +762,7 @@ export function createSepAnchorRoutes(
         id: view.id,
         ...(direction === "deposit"
           ? {
-              how: "Complete native eligibility through the hosted page before using simulated bank instructions.",
+              how: "Use these simulated bank instructions only while the exact transaction is ready for payment. Status must be confirmed before proceeding.",
               instructions: view.instructions ?? {},
             }
           : {

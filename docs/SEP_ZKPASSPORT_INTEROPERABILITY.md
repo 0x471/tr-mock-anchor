@@ -225,3 +225,33 @@ bypassed.
 No public deployment, application mutation, phone request, or capture activation
 was performed for this research. The separate localhost:8797 diagnostic was not
 started by this task.
+
+## Implementation addendum: SEP-6 admission boundary
+
+The implemented Testnet profile deliberately supports programmatic SEP-6
+exchanges only for admitted, self-custodial plain G accounts with a current native
+eligibility grant. First-time users and users whose grant has expired use the
+separately advertised SEP-24 hosted flow. This is a limited integration profile,
+not universal SEP-6 onboarding or automatic wallet-popup support.
+
+Both exchange routes read current native eligibility before creating an intent
+and again before accepting a firm quote. A missing or expired grant returns
+HTTP 403 with `error` and the application code `native_eligibility_required`.
+The additional `onboarding_url` and `transfer_server_sep0024` fields, and the
+`/sep6/info` profile object, are explanatory extensions. Generic clients are not
+assumed to understand or navigate them. A request rejected at the first check
+does not consume its quote, create a transfer intent or reserve tokens. Existing
+transactions remain available through authenticated transaction lookup and their
+hosted resume flow; an expired grant does not erase an order or refund escrow.
+
+SEP-6 4.3.0 deprecates the old `non_interactive_customer_info_needed` error and
+requires its field names to come from SEP-9. `zkpassport_proof` is not such a
+field, so this implementation does not misuse that response. The specification's
+recommended `pending_customer_info_update` transaction flow remains distinct
+from this profile's pre-initiation rejection.
+[Current SEP-6 shared responses](https://github.com/stellar/stellar-protocol/blob/265d64edc87627707941a31bd12798b7fdeb47d1/ecosystem/sep-0006.md#deposit-and-withdraw-shared-responses)
+
+HTTP tests cover both missing and expired grants, unconsumed quotes after
+rejection, and successful deposit/withdrawal initiation with a current native
+grant. Their external native-gateway test double does not establish proof
+cryptography or completion of a fresh phone-to-Testnet run.
