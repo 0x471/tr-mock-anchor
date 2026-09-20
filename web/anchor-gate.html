@@ -105,7 +105,7 @@
                 <p id="status">Loading the Testnet anchor.</p>
               </div>
               <button id="refresh" type="button" class="quiet compact" disabled>
-                Check status
+                Refresh status
               </button>
             </div>
 
@@ -279,6 +279,10 @@
               hidden
             >
               <h2 id="proof-heading" tabindex="-1">Verify with ZKPassport</h2>
+              <p class="proof-journey">
+                Phone proof <span aria-hidden="true">-&gt;</span> Freighter
+                signature <span aria-hidden="true">-&gt;</span> Onchain check
+              </p>
               <p id="proof-instruction" class="panel-intro">
                 Use a synthetic document in developer mode.
               </p>
@@ -371,6 +375,30 @@
                   confirmations. No real bank transfer occurs.
                 </p>
               </details>
+            </section>
+
+            <section
+              id="testnet-activity"
+              class="testnet-activity"
+              aria-labelledby="activity-heading"
+              hidden
+            >
+              <div class="activity-header">
+                <h2 id="activity-heading">Testnet activity</h2>
+                <a
+                  id="latest-transaction"
+                  class="text-link"
+                  target="_blank"
+                  rel="noreferrer"
+                  hidden
+                >
+                  View transaction
+                </a>
+              </div>
+              <p id="transactions-empty" class="hint">
+                Transactions will appear here. Pending is not confirmed.
+              </p>
+              <ul id="transactions" class="transaction-list"></ul>
             </section>
 
             <details class="resume">
@@ -470,10 +498,6 @@
                 </li>
               </ol>
               <p id="order-state" class="order-state">No order reserved</p>
-              <p id="transactions-empty" class="hint">
-                Prepared or pending is not confirmed.
-              </p>
-              <ul id="transactions" class="transaction-list"></ul>
               <p id="order" class="result mono">No order reserved.</p>
             </details>
           </details>
