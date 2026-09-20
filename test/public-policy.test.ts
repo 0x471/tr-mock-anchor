@@ -109,7 +109,18 @@ describe("public diagnostic-mode presentation", () => {
     expect(quote).not.toHaveBeenCalled();
     const strictDiscovery = await strict.request("/.well-known/stellar.toml");
     const legacyDiscovery = await legacy.request("/.well-known/stellar.toml");
-    expect(await strictDiscovery.text()).toBe(await legacyDiscovery.text());
+    const strictToml = await strictDiscovery.text();
+    const legacyToml = await legacyDiscovery.text();
+    const protocolLines = (toml: string) =>
+      toml
+        .split("\n")
+        .filter((line) =>
+          /^(NETWORK_PASSPHRASE|SIGNING_KEY|WEB_AUTH_ENDPOINT|TRANSFER_SERVER|KYC_SERVER|ANCHOR_QUOTE_SERVER|code|issuer)=/.test(
+            line
+          )
+        );
+    expect(protocolLines(strictToml)).toEqual(protocolLines(legacyToml));
+    expect(strictToml).toContain("not a portable SEP-6 ramp");
     const legacyReference = await legacy.request("/llms-full.txt");
     expect(await legacyReference.text()).toContain(
       "wallet user is auto-approved"

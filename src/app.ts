@@ -20,10 +20,6 @@ import { anchorGateRoutes } from "./routes/anchor-gate.js";
 import { anchorGateBrowserRoutes } from "./anchor-gate-browser.js";
 import { createSepContext, type SepContext } from "./sepauth.js";
 
-// This mock exposes a single, standard door: SEP-1 discovery, SEP-10 auth, SEP-6 deposit/withdraw,
-// SEP-12 (simulated) KYC, SEP-38 quotes (TRY <-> USDC). That is the surface a real Turkish anchor
-// (BiLira) will expose, so an integration built here moves to production by changing only the
-// network and the home domain.
 export function createApp(
   deps: Deps,
   sep: SepContext = createSepContext(deps)
@@ -83,7 +79,6 @@ export function createApp(
 
   app.route("/", adminRoutes(deps));
   app.route("/", publicRoutes(deps, sep));
-  // SEP door: wallets authenticate with SEP-10 and use SEP-6 / SEP-12 / SEP-38.
   app.route("/", sep10Routes(deps, sep));
   app.route("/", sep6Routes(deps, sep) as unknown as Hono<AppEnv>);
   app.route("/", sep12Routes(deps, sep) as unknown as Hono<AppEnv>);
