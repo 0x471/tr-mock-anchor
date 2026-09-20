@@ -56,6 +56,7 @@ Every route below requires the admitted owner wallet's SEP-10 token:
 
 | Route under /anchor-gate          | Input and effect                                                                                                      |
 | --------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| GET /orders/access                | Authenticated wallet admission and optional OFAC listed-address precheck; does not reserve an order.                  |
 | POST /orders                      | `{quote_id,direction,bank_destination?}` plus `Idempotency-Key`; direction is deposit or withdrawal, default deposit. |
 | GET /orders/:id                   | Reconcile known transactions and return confirmed contract state and fixed terms.                                     |
 | GET /orders/:id/proof-request     | Domain, scope, exact policy, custom_data digest, created_at, expiry and binary profile.                               |
@@ -216,6 +217,42 @@ Otherwise it returns bank_clock_pending without crediting or storing receipt
 data. The adapter also waits boundedly for the ledger to reach a frozen
 received_at before simulating its notary call. Neither retry rewrites the
 receipt time, amount, destination or event ID.
+
+## Wallet setup and address precheck
+
+The browser checks wallet admission through authenticated
+`GET /anchor-gate/orders/access` before offering quotes. An explicit first
+admission rejection is not an unknown reservation. A rejection after a lost
+earlier response still retains the original terms and idempotency key.
+
+Wallet setup uses only Stellar Testnet Horizon and Friendbot. It requests free
+XLM when the account is absent or has less than 10 spendable XLM after classic
+reserve and selling-liability accounting. Requests are coalesced with a
+60-second retry cooldown. A failed optional top-up does not block an existing
+funded wallet; creating a trustline still requires 0.501 spendable Testnet XLM
+for its reserve and fee. No mainnet faucet or paid funding path exists.
+
+The user signs one exact `changeTrust` for the configured mock asset, with a
+1,000,000-token limit, 0.001-XLM fee cap and 180-second validity. The client
+checks wallet, network, asset contract and the signed transaction hash before
+submission. It re-reads the account before allowing a new reservation. The
+trustline is not Circle USDC unless that exact issuer was configured. Deposit
+capacity and withdrawal spendable balance are checked before new reservations.
+Missing setup does not block loading an existing owned order.
+
+Uncertain trustline submissions retain their hash and are reconciled without
+a new signature. This client-only pending state lasts for the page lifetime;
+a reload first reads current account state, but does not restore an earlier
+pending hash. It must not be presented as durable payment recovery.
+
+Set `ANCHOR_GATE_OFAC_ENABLED=true` to enable the server's official SDN
+digital-currency-address precheck. The access response includes its result
+and source metadata. A match or unavailable feed blocks new reservations
+before the quote/key is consumed. Existing owned-order reads and same-key
+reservation recovery remain available. This is a new-reservation precheck,
+not ongoing screening, identity clearance or an onchain sanctions proof.
+The native ZKPassport age and country constraints are unchanged. See
+`OFAC_PRECHECK_RESEARCH.md` for source coverage and freshness limits.
 
 ## Verification boundaries
 

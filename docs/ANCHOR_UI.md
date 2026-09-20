@@ -74,6 +74,32 @@ visual status card is hidden. Mobile checks found no horizontal overflow at
 390px and 320px; an inert fixture checks quote and QR layouts without creating
 orders or sending transactions.
 
+## Wallet setup and admission pass
+
+Wallet login now checks demo admission before enabling quotes. A known initial
+403 is not displayed as an unknown reservation; an earlier uncertain attempt
+retains its original key and terms. Free Testnet XLM is requested automatically
+when needed. Users approve the exact mock-USDC trustline in Freighter; the
+browser checks receiving capacity or spendable token balance before reserving.
+Existing owned orders can still be resumed without completing new-wallet setup.
+
+When enabled, the official SDN wallet-address precheck runs on the backend
+before new reservations. Match and unavailable are distinct blocking states;
+source metadata and scope details live in a disclosure. No passport attributes
+are sent to OFAC. A no-match is not identity or sanctions clearance, and this
+does not add onchain sanctions enforcement to the native ZKPassport gate.
+
+The 290-test suite, typecheck and production build passed. Synthetic fixtures
+exercise match, no-match, unavailable and recovery without using real listed
+identities. The restarted local service returned admitted/no-match for the
+dedicated test wallet using the official feed, without creating an order.
+Desktop and 390px/320px visual checks found no horizontal overflow in wallet
+setup, including expanded source metadata. Those setup screenshots used inert,
+labelled fixtures, not a Freighter approval or a settled exchange.
+
+The user's trustline approval and a fresh user-wallet settlement are still
+pending; this validation does not claim either has occurred.
+
 ## Design reference
 
 Inkognito: <https://github.com/trionlabs/inkognito>
