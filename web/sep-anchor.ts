@@ -133,14 +133,20 @@ let prefetched = false;
 let amountSide: "sell_amount" | "buy_amount" = "sell_amount";
 let failures = 0;
 let queuedProof: (() => Promise<void>) | undefined;
+let problemSource: "action" | "status" | "configuration" | undefined;
 
-function problem(message = "") {
+function problem(
+  message = "",
+  source: "action" | "status" | "configuration" = "action"
+) {
+  problemSource = message ? source : undefined;
   text("problem", message);
   show("problem", !!message);
 }
 function status(message: string) {
   text("status", message);
 }
+class AnchorNetworkError extends Error {}
 async function json(
   path: string,
   body?: unknown,
@@ -161,6 +167,12 @@ async function json(
     },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(45000),
+  }).catch(() => {
+    throw new AnchorNetworkError(
+      body === undefined
+        ? "Connection interrupted while reading anchor status. Keep this order open."
+        : "The anchor response was lost. This request may have reached the server. Keep this order open for reconciliation; do not send another payment."
+    );
   });
   const value: unknown = await response.json().catch(() => null);
   if (!response.ok) {
@@ -513,7 +525,6 @@ async function refresh() {
   )
     cancelPhone();
   if (!prefetched) {
-    prefetched = true;
     if (transaction.kind === "withdrawal" && !transaction.requested_amount)
       element<HTMLInputElement>("amount").value = "1.0000000";
     if (transaction.requested_amount && !transaction.quote_id) {
@@ -537,6 +548,7 @@ async function refresh() {
           )
         ).quote;
     }
+    prefetched = true;
   }
   if (!activePhone)
     status(
@@ -548,6 +560,13 @@ async function refresh() {
             ? "Waiting for native Testnet confirmation. Keep this order open."
             : "Status updates automatically. No need to check manually."
     );
+  if (
+    problemSource === "status" ||
+    (["completed", "refunded"].includes(transaction.status) &&
+      !transaction.recovery_required &&
+      !transaction.payment_recovery_required)
+  )
+    problem();
   render();
 }
 async function prove() {
@@ -958,59 +977,112 @@ window.addEventListener("pagehide", () => {
   token = "";
 });
 async function poll() {
-  if (closed || !id) return;
+  if (closed || !id || pollingComplete()) return;
   if (!busy)
     try {
       await refresh();
       failures = 0;
+      if (!info && !pollingComplete()) await recoverConfiguration();
     } catch (error) {
       failures++;
-      problem(
-        error instanceof Error
-          ? error.message
-          : "Status unavailable. Keep the same order."
-      );
+      if (!problemSource || problemSource === "status")
+        problem(
+          error instanceof AnchorNetworkError
+            ? "Connection interrupted. Reconnecting to this same order automatically. Do not send another payment."
+            : error instanceof Error
+              ? error.message
+              : "Status unavailable. Keep this order open.",
+          "status"
+        );
     }
+  if (closed || pollingComplete()) return;
   setTimeout(
     () => void poll(),
     Math.min(30000, 2500 * 2 ** Math.min(failures, 3))
   );
 }
+function pollingComplete() {
+  return (
+    !!transaction &&
+    ["completed", "refunded"].includes(transaction.status) &&
+    !transaction.recovery_required &&
+    !transaction.payment_recovery_required &&
+    !transaction.actions.some((entry) =>
+      ["prepared", "pending"].includes(entry.status)
+    )
+  );
+}
 async function loadInfo() {
-  info = infoSchema.parse(await json("/sep24/info"));
+  const candidate = infoSchema.parse(await json("/sep24/info"));
   if (
-    !StrKey.isValidEd25519PublicKey(info.asset.issuer) ||
-    !StrKey.isValidContract(info.config.contract) ||
-    new Asset(info.asset.code, info.asset.issuer).contractId(
+    !StrKey.isValidEd25519PublicKey(candidate.asset.issuer) ||
+    !StrKey.isValidContract(candidate.config.contract) ||
+    new Asset(candidate.asset.code, candidate.asset.issuer).contractId(
       Networks.TESTNET
-    ) !== info.asset.contract ||
-    info.config.domain !== location.hostname
+    ) !== candidate.asset.contract ||
+    candidate.config.domain !== location.hostname
   )
     throw new Error("The native policy does not match this Testnet anchor.");
+  info = candidate;
+}
+async function recoverConfiguration() {
+  try {
+    await loadInfo();
+    if (problemSource === "configuration") problem();
+  } catch {
+    if (problemSource !== "action")
+      problem(
+        "New transfers are unavailable while the anchor configuration reconnects. This same order will continue reconciling.",
+        "configuration"
+      );
+  }
+}
+async function loadLauncher() {
+  if (closed) return;
+  try {
+    if (!resume.success) await loadInfo();
+  } catch (error) {
+    if (!(error instanceof AnchorNetworkError)) throw error;
+    failures++;
+    problem(
+      "Connection interrupted. Reconnecting to the Testnet anchor automatically.",
+      "configuration"
+    );
+    setTimeout(
+      () => void action(loadLauncher),
+      Math.min(30000, 2500 * 2 ** Math.min(failures - 1, 3))
+    );
+    return;
+  }
+  failures = 0;
+  if (problemSource === "configuration") problem();
+  show("launcher", true);
+  if (resume.success) {
+    show("direction-tabs", false);
+    text("launch", "Resume this exact order");
+    status(
+      "Sign in with the original wallet. This will not create a replacement order."
+    );
+  } else
+    status(
+      "Select Testnet in Freighter to begin. Testnet XLM funding is automatic when needed."
+    );
 }
 void action(async () => {
   if (id) {
-    await refresh();
     try {
-      await loadInfo();
-    } catch {
+      await refresh();
+    } catch (error) {
       problem(
-        "New transfers are unavailable. This existing order can still be reconciled or refunded when eligible."
+        error instanceof Error
+          ? error.message
+          : "Status unavailable. Reconnecting to this same order.",
+        "status"
       );
     }
+    if (!pollingComplete()) await recoverConfiguration();
     void poll();
   } else {
-    if (!resume.success) await loadInfo();
-    show("launcher", true);
-    if (resume.success) {
-      show("direction-tabs", false);
-      text("launch", "Resume this exact order");
-      status(
-        "Sign in with the original wallet. This will not create a replacement order."
-      );
-    } else
-      status(
-        "Select Testnet in Freighter to begin. Testnet XLM funding is automatic when needed."
-      );
+    await loadLauncher();
   }
 });
