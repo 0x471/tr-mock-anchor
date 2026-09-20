@@ -2,7 +2,7 @@
 
 Experimental fork of [Kaan's TR Mock Anchor](https://github.com/kaankacar/tr-mock-anchor), based on commit `81eef8af29fa8fdc6f6596a4472c8bedb5381668`. Work lives on `feat/zkpassport-anchor` in [0x471/tr-mock-anchor](https://github.com/0x471/tr-mock-anchor/tree/feat/zkpassport-anchor).
 
-This is a Testnet-only development project. It is not an audited verifier or a production anchor. One fresh synthetic ZKR country proof and an authenticated HTTP deposit have completed native onchain acceptance and settlement. Live withdrawal acceptance, the full Freighter browser run and public hosting remain pending. Upstream hosted URLs do not run this fork.
+This is a Testnet-only development project. It is not an audited verifier or a production anchor. Fresh synthetic ZKR country proofs and authenticated HTTP deposit and withdrawal runs have completed native onchain acceptance and settlement. The full Freighter browser run and public hosting remain pending. Upstream hosted URLs do not run this fork.
 
 ## Current deposit and withdrawal demo
 
@@ -40,10 +40,15 @@ then completed exactly 100.00 simulated TRY for 2.0947892 mock USDC.
 The recipient balance increased by that exact amount and the ZKR vault's
 reservation was released; the original TUR vault remained unchanged.
 
-This acceptance run used a dedicated automated Testnet recipient through the
+A separate fresh withdrawal proof then escrowed exactly 1.0000000 mock USDC.
+The notary authorized a fixed 47.26 simulated TRY payout, its paid receipt was
+confirmed, and settlement released that escrow to the provider. The synthetic
+bank credit is a local mock-bank record, not a real fiat transfer.
+
+These acceptance runs used a dedicated automated Testnet recipient through the
 authenticated HTTP API, not an end-to-end Freighter browser run. The phone
-proof came from a separate browser-origin capture harness. Withdrawal and
-public-host acceptance are still pending.
+proofs came from a separate browser-origin capture harness. Full Freighter
+browser and public-host acceptance are still pending.
 
 See [the implemented API and recovery model](docs/ANCHOR_GATE_INTEGRATION.md),
 [contract rules](docs/GATE_VAULT_DESIGN.md), and
@@ -58,8 +63,9 @@ its own immutable-domain deployment, not reuse of the localhost vault.
 - Default `ANCHOR_MODE=zkpassport` holds legacy orders, bank simulation, queued settlement and treasury payments. The separately configured native gate uses its own constrained path. SEP-12 does not approve identity.
 - An earlier age-only browser-origin synthetic phone request completed and its supported proof returned `math_valid` in native Testnet simulation at ledger 4766664.
 - A fresh ZKPassport 0.20.0 `OuterCount7` phone proof satisfied the order-bound age >=18, ZKR nationality and ZKR issuer policy in a [committed gate transaction](https://stellar.expert/explorer/testnet/tx/4a0e7e262c842241d16e81d45f5f969e8179f425ac8e5b9604c6488e26710d4e), ledger 4767724. The deposit [settled](https://stellar.expert/explorer/testnet/tx/b298032e175360003245750a06fce003789bfd4decb85d5dce87316a90d9a41e) at ledger 4767765 after a separate simulated-bank receipt.
+- A separate fresh Count7 withdrawal [proof transaction](https://stellar.expert/explorer/testnet/tx/c53b5d37fcb830346b514fbd0b164c342e0930819bdca1bdac80e5c152b7b499), ledger 4767860, atomically escrowed 1.0000000 mock USDC. After notary payout authorization and a simulated-bank paid receipt, its [settlement](https://stellar.expert/explorer/testnet/tx/51ffbb7c5f207778949f4ff3c7f0b406f41fc19b7faf0f6a1bde6691b45250b1) succeeded at ledger 4767875.
 
-The earlier OuterCount5 committed verification uses an official historical synthetic-document fixture from July 2026. The age-only phone diagnostic used read-only RPC simulation, not a committed transaction. The later OuterCount7 ZKR deposit is a separate committed policy-and-settlement acceptance run. None proves real identity or real fiat movement, and successful phone runs do not establish compatibility with every app build.
+The earlier OuterCount5 committed verification uses an official historical synthetic-document fixture from July 2026. The age-only phone diagnostic used read-only RPC simulation, not a committed transaction. The later OuterCount7 ZKR deposit and withdrawal are separate committed policy-and-settlement acceptance runs. None proves real identity or real fiat movement, and successful phone runs do not establish compatibility with every app build.
 
 ## Trust boundary
 
@@ -73,7 +79,7 @@ Phone proof -> SEP-10 authenticated submission -> native Soroban simulation
                                                 -> no KYC approval
                                                 -> no payout
 
-Gate deposit path (committed ZKR acceptance; live withdrawal pending):
+Gate deposit path (committed ZKR acceptance; withdrawal recorded above):
 Order + wallet authorization -> on-chain policy + native verifier
                             -> single-use order authorization
 Mock bank receipt + authorized order -> contract-controlled asset transfer

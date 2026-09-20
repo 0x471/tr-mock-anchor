@@ -1,10 +1,16 @@
 # Native proof-gated anchor integration
 
 Updated 20 September 2026. This describes implemented v2 interfaces and local
-tests, not completion of fresh-phone, hosted or live Testnet acceptance tests.
+tests. Fresh synthetic phone proofs and authenticated HTTP deposit and
+withdrawal runs have also completed native Testnet acceptance and settlement.
+The full Freighter browser run and public hosting remain pending. See the
+[deployment record](TESTNET_GATE_DEPLOYMENT.md) for the current evidence.
+
 The configured policy is immutable onchain. The selected demo requires age
-18+, TUR nationality and TUR issuing country, synthetic ZKPassport developer
+18+, ZKR nationality and ZKR issuing country, synthetic ZKPassport developer
 documents, a matching Outer7 verifier, simulated TRY and Testnet tokens.
+ZKR is a mock jurisdiction, not Turkish eligibility. The original TUR-policy
+vault is a separate, unchanged deployment with its initial reservation held.
 A browser callback alone grants no eligibility or payout permission.
 
 The approved age, bind, nationality and issuer predicates require Outer7:

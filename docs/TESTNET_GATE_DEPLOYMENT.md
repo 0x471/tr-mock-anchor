@@ -1,9 +1,9 @@
 # Testnet gate deployment record
 
-Status: one fresh synthetic ZKR country proof and authenticated HTTP deposit
-completed native onchain acceptance, a mock-bank receipt and exact settlement.
-Live withdrawal acceptance, the full Freighter browser run and public hosting
-remain pending. The original TUR reservation remains held.
+Status: fresh synthetic ZKR country proofs and authenticated HTTP deposit and
+withdrawal runs completed native onchain acceptance, separate mock-bank receipts
+and exact settlements. The full Freighter browser run and public hosting remain
+pending. The original TUR reservation remains held.
 All amounts are synthetic Testnet assets. None of these contracts are audited.
 
 ## Country verifier deployments
@@ -155,9 +155,66 @@ Values below are integer token base units, with 7 decimal places:
 This was an authenticated HTTP acceptance run with the dedicated automated
 Testnet recipient. The synthetic proof was captured in a genuine browser-origin
 phone session; the separate operator signed through the dedicated wallet.
-It was not a completed Freighter browser click-through. Live withdrawal and
-public-host acceptance remain pending. No real document, TRY transfer, Circle
-USDC or mainnet operation is implied.
+It was not a completed Freighter browser click-through. Full Freighter browser
+and public-host acceptance remain pending. No real document, TRY transfer,
+Circle USDC or mainnet operation is implied.
+
+### Fresh Count7 proof and completed ZKR withdrawal
+
+A separate authenticated withdrawal order,
+`2de40a60ece360bef1748c8ee7887e3c0634421d6d37eb52227c6e846ba5c0d5`,
+exchanged exactly 1.0000000 mock USDC for 47.26 simulated TRY. Its beneficiary
+was the synthetic label `demo:synthetic-zkr-wallet`, not a real bank account.
+The create transaction did not debit the recipient or reserve provider tokens.
+
+The second fresh browser-origin Count7 phone capture was separately checked
+against both the native verifier and the exact deployed `1075edf6...9045f`
+Wasm. Each passed the same 18 capture checks described above, including all
+17 explicit rejection cases. The independent proof receipt checked the
+recipient signature, the exact private proof/input bytes, and the nested
+recipient-authorized transfer of 10000000 token base units into the vault.
+
+All five action receipts were confirmed SUCCESS:
+
+| Gate action                               | Confirmed Testnet transaction                                                                                             | Ledger  |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------- |
+| Create immutable withdrawal               | [Create](https://stellar.expert/explorer/testnet/tx/b32540361d119c5516101f4314437bcb504e845b7c61769d098a74d5fcf269e4)     | 4767774 |
+| Native proof, eligibility and user escrow | [Proof](https://stellar.expert/explorer/testnet/tx/c53b5d37fcb830346b514fbd0b164c342e0930819bdca1bdac80e5c152b7b499)      | 4767860 |
+| Separate notary payout authorization      | [Authorize](https://stellar.expert/explorer/testnet/tx/12e60e19a40bd549c0e49cb498d14dfc75a2aab1edf8789dfe9c0f1975bc0f98)  | 4767870 |
+| Simulated TRY paid receipt                | [Receipt](https://stellar.expert/explorer/testnet/tx/3edc7e13ee419faacbb4664c897afdd4620a86b8c689b30df93db82ff8dffcfc)    | 4767873 |
+| Exact escrow settlement to provider       | [Settlement](https://stellar.expert/explorer/testnet/tx/51ffbb7c5f207778949f4ff3c7f0b406f41fc19b7faf0f6a1bde6691b45250b1) | 4767875 |
+
+Independent receipt checks confirmed role signatures, exact quote terms and
+beneficiary, authorization before the paid receipt, and one exact vault-to-
+provider settlement transfer. A read-only settle replay at ledger 4767896
+returned the settled order without another token transfer; no replay transaction
+was submitted. These checks are not a global token-issuance or security audit.
+
+Proof acceptance initially returned eligibility and escrow without payout
+authorization, a bank receipt or settlement. The later confirmed HTTP order
+at ledger 4767877 reported `stage: settled`, `completed: true`, a paid receipt
+and `escrowed: false`. Its local mock-bank record credits exactly 47.26
+simulated TRY to the fixed synthetic beneficiary; the notary's onchain paid
+receipt attests that record, not real bank movement. A separate local database
+check confirmed exactly one such credit.
+
+Read-only SAC balance snapshots show the two distinct token movements. Values
+are integer base units with 7 decimal places; snapshots were taken after
+creation at ledger 4767785, after proof at 4767864, and after settlement at
+4767876 (provider) and 4767877 (the other accounts):
+
+| Account             | After creation | After proof | After settlement |
+| ------------------- | -------------: | ----------: | ---------------: |
+| Dedicated recipient |       20947892 |    10947892 |         10947892 |
+| ZKR vault           |              0 |    10000000 |                0 |
+| Provider            |      958104216 |   958104216 |        968104216 |
+| Original TUR vault  |       20947892 |    20947892 |         20947892 |
+
+This withdrawal used the same dedicated Testnet wallet and authenticated HTTP
+seam, with a separate browser-origin phone capture. It does not complete the
+Freighter browser or public-host acceptance tests. The original TUR reservation
+remained untouched; no refund, real fiat transfer or production approval is
+implied.
 
 ## Isolated demo accounts and asset
 
