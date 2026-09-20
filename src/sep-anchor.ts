@@ -513,7 +513,7 @@ export function createSepAnchor(deps: Deps, gateway: SepAnchorGateway) {
       .payments(row.id)
       .find((item) => item.status === "accepted");
     const recipient = await recipientReady(row);
-    const ready =
+    const paymentCandidate =
       !!chain &&
       !!grant &&
       recipient &&
@@ -523,7 +523,14 @@ export function createSepAnchor(deps: Deps, gateway: SepAnchorGateway) {
       !chain.receipt &&
       !store.bankEvent(row.id) &&
       (row.direction === "deposit" || (!chain.escrowed && !received));
-    if (ready && row.direction === "withdrawal") validateIngress(row);
+    const receiverReady =
+      !paymentCandidate ||
+      row.direction !== "withdrawal" ||
+      (await validateIngress(row).recipientStatus(
+        row.config.provider,
+        chain.amount
+      )) === "ready";
+    const ready = paymentCandidate && receiverReady;
     const actions = store.actions(row.id);
     const pending = actions.some(
       (action) => action.status === "pending" || action.status === "prepared"
@@ -554,37 +561,41 @@ export function createSepAnchor(deps: Deps, gateway: SepAnchorGateway) {
                   ? "expired"
                   : !recipient
                     ? "pending_trust"
-                    : ready
-                      ? "pending_user_transfer_start"
-                      : chain?.escrowed &&
-                          (row.direction === "withdrawal" || expired)
-                        ? "pending_user"
-                        : row.protocol === "sep6" && !grant
-                          ? "pending_customer_info_update"
-                          : row.terms && grant && !chain
-                            ? "pending_anchor"
-                            : "incomplete";
+                    : !receiverReady
+                      ? "pending_anchor"
+                      : ready
+                        ? "pending_user_transfer_start"
+                        : chain?.escrowed &&
+                            (row.direction === "withdrawal" || expired)
+                          ? "pending_user"
+                          : row.protocol === "sep6" && !grant
+                            ? "pending_customer_info_update"
+                            : row.terms && grant && !chain
+                              ? "pending_anchor"
+                              : "incomplete";
     const message =
       row.recovery_reason ??
-      (lateDeposit
-        ? "The funded deposit deadline passed before native settlement. Operator recovery is required; no automatic refund or replacement is available."
-        : status === "completed"
-          ? "The exact exchange is confirmed on Testnet."
-          : status === "refunded"
-            ? "The exact token refund is confirmed on Testnet."
-            : status === "expired"
-              ? "This order cannot accept payment. No expiry is an automatic refund."
-              : status === "pending_trust"
-                ? "Your Testnet account needs the exact demo token trustline, authorization and enough receiving capacity before any simulated bank deposit."
-                : status === "pending_user"
-                  ? expired
-                    ? "The payment window is closed. Exact escrow may be refunded or the unused deposit reservation cancelled before any bank obligation."
-                    : "Tokens are escrowed. Authorize the simulated TRY payout, or request an exact token refund before authorization."
-                  : status === "pending_user_transfer_start"
-                    ? "Native eligibility and exact payment instructions are confirmed. Send only the stated demo amount."
-                    : pending
-                      ? "A native transaction is pending. Reconciliation will check its exact hash; do not send another payment."
-                      : "Accept a firm quote and prove eligibility with a synthetic document.");
+      (!receiverReady
+        ? "The anchor's Testnet receiving account cannot accept this amount yet. Do not send tokens; status updates automatically."
+        : lateDeposit
+          ? "The funded deposit deadline passed before native settlement. Operator recovery is required; no automatic refund or replacement is available."
+          : status === "completed"
+            ? "The exact exchange is confirmed on Testnet."
+            : status === "refunded"
+              ? "The exact token refund is confirmed on Testnet."
+              : status === "expired"
+                ? "This order cannot accept payment. No expiry is an automatic refund."
+                : status === "pending_trust"
+                  ? "Your Testnet account needs the exact demo token trustline, authorization and enough receiving capacity before any simulated bank deposit."
+                  : status === "pending_user"
+                    ? expired
+                      ? "The payment window is closed. Exact escrow may be refunded or the unused deposit reservation cancelled before any bank obligation."
+                      : "Tokens are escrowed. Authorize the simulated TRY payout, or request an exact token refund before authorization."
+                    : status === "pending_user_transfer_start"
+                      ? "Native eligibility and exact payment instructions are confirmed. Send only the stated demo amount."
+                      : pending
+                        ? "A native transaction is pending. Reconciliation will check its exact hash; do not send another payment."
+                        : "Accept a firm quote and prove eligibility with a synthetic document.");
     return {
       id: row.id,
       kind: row.direction,

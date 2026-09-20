@@ -39,6 +39,12 @@ class NativeTestnet implements SepAnchorGateway {
   expectedSubject: string | null = null;
   rejectAuthorization = false;
   recipientState: "ready" | "missing_trustline" = "ready";
+  providerState:
+    | "ready"
+    | "missing_account"
+    | "missing_trustline"
+    | "unauthorized"
+    | "insufficient_limit" = "ready";
   ingressUnavailable = false;
   policyExpiry = now() + 3600;
   async configuration() {
@@ -179,8 +185,10 @@ function fixture(walletOverride?: string) {
     sepAnchorIngress: {
       account: provider,
       asset: `stellar:${cfg.usdcCode}:${cfg.usdcIssuer}`,
-      async recipientStatus() {
-        return gateway.recipientState;
+      async recipientStatus(account) {
+        return account === provider
+          ? gateway.providerState
+          : gateway.recipientState;
       },
       async payments() {
         if (gateway.ingressUnavailable) throw new Error("Horizon unavailable");
@@ -360,6 +368,7 @@ it("funds exact classic withdrawal payment once and waits for explicit simulated
   expect(held.ready_for_payment).toBe(false);
   expect(held.external_transaction_id).toBeNull();
   expect(held.stellar_transaction_id).toBe("56".repeat(32));
+  f.gateway.providerState = "insufficient_limit";
   f.restart();
   await f.tick();
   const paid = await order.action("mock-bank");
@@ -890,6 +899,51 @@ it("waits for the exact token trustline before accepting a simulated bank deposi
   expect((await order.action("mock-bank")).status).toBe(200);
   expect((await order.get()).transaction.status).toBe("completed");
 });
+
+it.each([
+  "missing_account",
+  "missing_trustline",
+  "unauthorized",
+  "insufficient_limit",
+] as const)(
+  "withholds withdrawal instructions when the provider is %s",
+  async (state) => {
+    const f = fixture();
+    const order = await f.begin("withdraw");
+    const quote = z
+      .object({ quote: z.object({ id: z.string() }) })
+      .parse(
+        await (await order.action("quote", { sell_amount: "2.0000000" })).json()
+      ).quote;
+    await order.action("accept", {
+      quote_id: quote.id,
+      bank_destination: "demo:capacity",
+    });
+    f.gateway.providerState = state;
+    expect(
+      (
+        await order.action("proof", {
+          proof: Buffer.alloc(10240).toString("hex"),
+          public_inputs: Buffer.alloc(13 * 32).toString("hex"),
+        })
+      ).status
+    ).toBe(200);
+    const held = (await order.get()).transaction;
+    expect(held.native.eligible).toBe(true);
+    expect(held.ready_for_payment).toBe(false);
+    expect(held.status).toBe("pending_anchor");
+    expect(held.withdraw_anchor_account).toBeNull();
+    expect(held.withdraw_memo).toBeNull();
+    expect(held.message).toContain("Do not send tokens");
+    f.gateway.providerState = "ready";
+    const ready = (await order.get()).transaction;
+    expect(ready.id).toBe(held.id);
+    expect(ready.quote_id).toBe(quote.id);
+    expect(ready.ready_for_payment).toBe(true);
+    expect(ready.withdraw_anchor_account).toBe(provider);
+    expect(ready.amount_in).toBe("2.0000000");
+  }
+);
 
 it("interprets a quote-bound SEP-24 deposit amount as the source TRY amount", async () => {
   const f = fixture();
