@@ -944,6 +944,9 @@ function makeBrowserNode() {
       attributes.delete(name);
     },
     focus() {},
+    closest(selector: string): object | null {
+      return selector === "[hidden]" && this.hidden ? this : null;
+    },
     append() {},
     getContext() {
       return { clearRect() {} };
@@ -952,15 +955,28 @@ function makeBrowserNode() {
 }
 
 async function browserPageHarness(
-  options: { walletAvailable?: boolean; walletUnresponsive?: boolean } = {}
+  options: {
+    walletAvailable?: boolean;
+    walletUnresponsive?: boolean;
+    direction?: "deposit" | "withdrawal";
+  } = {}
 ) {
-  const test = browserHarness();
+  const test = browserHarness(options.direction);
   const nodes = new Map<string, ReturnType<typeof makeBrowserNode>>();
+  let activeNode: ReturnType<typeof makeBrowserNode> | null = null;
   const node = (id: string) => {
-    if (!nodes.has(id)) nodes.set(id, makeBrowserNode());
+    if (!nodes.has(id)) {
+      const value = makeBrowserNode();
+      value.focus = () => {
+        activeNode = value;
+      };
+      nodes.set(id, value);
+    }
     return nodes.get(id)!;
   };
   let receiveProof: ((proof: unknown) => void) | undefined;
+  let rejectProof: (() => void) | undefined;
+  let tick: (() => void) | undefined;
   const walletAccess = vi.fn(async () => ({ address: test.order.recipient }));
   vi.resetModules();
   vi.doMock("@stellar/freighter-api", () => ({
@@ -1004,7 +1020,9 @@ async function browserPageHarness(
               onGeneratingProof() {},
               onBridgeConnectionLost() {},
               onError() {},
-              onReject() {},
+              onReject(callback: () => void) {
+                rejectProof = callback;
+              },
               onProofGenerated(callback: (proof: unknown) => void) {
                 receiveProof = callback;
               },
@@ -1023,20 +1041,36 @@ async function browserPageHarness(
   vi.stubGlobal("document", {
     getElementById: node,
     createElement: makeBrowserNode,
+    get activeElement() {
+      return activeNode;
+    },
   });
-  vi.stubGlobal("setInterval", () => 0);
+  vi.stubGlobal("setInterval", (callback: () => void) => {
+    tick = callback;
+    return 0;
+  });
   const browserEntry = "../web/anchor-gate.js";
   await import(browserEntry);
   await vi.waitFor(() => expect(node("connect").disabled).toBe(false));
   return {
     ...test,
     node,
+    focusedId() {
+      return [...nodes].find(([, value]) => value === activeNode)?.[0];
+    },
     walletAccess,
     receiveProof() {
       receiveProof!(test.proof);
     },
+    rejectProof() {
+      rejectProof!();
+    },
+    tick() {
+      tick!();
+    },
     async click(id: string) {
       expect(node(id).disabled).toBe(false);
+      node(id).focus();
       node(id).onclick!();
       await vi.waitFor(
         () => expect(node("status-label").textContent).not.toBe("WORKING"),
@@ -1054,6 +1088,153 @@ async function browserPageHarness(
 }
 
 describe("production-built gated browser serving", () => {
+  it("keeps a rejected phone request visible after its QR is removed", async () => {
+    const test = await browserPageHarness();
+    try {
+      await test.click("connect");
+      test.node("amount").value = "100.00";
+      await test.click("quote");
+      expect(test.focusedId()).toBe("quote-heading");
+      await test.click("reserve");
+      await test.click("prove");
+      expect(test.focusedId()).toBe("proof-heading");
+      await test.click("cancel-proof");
+      expect(test.focusedId()).toBe("prove");
+      expect(test.node("phone-box").hidden).toBe(true);
+      expect(test.node("status").textContent).toContain(
+        "Phone request cancelled"
+      );
+      await test.click("prove");
+      test.rejectProof();
+      expect(test.node("phone-box").hidden).toBe(true);
+      expect(test.node("cancel-proof").hidden).toBe(true);
+      expect(test.node("prove").hidden).toBe(false);
+      expect(test.node("status-bar").hidden).toBe(false);
+      expect(test.node("status").textContent).toContain(
+        "Phone request rejected"
+      );
+      expect(test.node("status").textContent).toContain(
+        "No eligibility or payout was granted"
+      );
+      expect(test.node("status-announcement").textContent).toBe(
+        test.node("status").textContent
+      );
+    } finally {
+      test.cleanup();
+    }
+  });
+
+  it("offers withdrawal settlement actions one confirmed stage at a time", async () => {
+    const test = await browserPageHarness({ direction: "withdrawal" });
+    try {
+      await test.click("choose-withdrawal");
+      await test.click("connect");
+      test.node("amount").value = "2.5";
+      test.node("bank-destination").value = "demo:synthetic-account";
+      await test.click("quote");
+      await test.click("reserve");
+      for (const id of ["authorize-payout", "bank-action", "settle"])
+        expect(test.node(id).hidden, id).toBe(true);
+      Object.assign(test.order, {
+        stage: "eligible",
+        escrowed: true,
+        eligibility_expires_at: test.order.deadline,
+      });
+      await test.click("refresh");
+      expect(test.node("authorize-payout").hidden).toBe(false);
+      expect(test.node("bank-action").hidden).toBe(true);
+      expect(test.node("settle").hidden).toBe(true);
+      await test.click("authorize-payout");
+      expect(test.focusedId()).toBe("settle-heading");
+      expect(test.node("authorize-payout").hidden).toBe(true);
+      expect(test.node("bank-action").hidden).toBe(false);
+      expect(test.node("settle").hidden).toBe(true);
+      await test.click("bank-action");
+      expect(test.focusedId()).toBe("settle-heading");
+      expect(test.node("bank-action").hidden).toBe(true);
+      expect(test.node("settle").hidden).toBe(false);
+      await test.click("settle");
+      for (const id of [
+        "authorize-payout",
+        "bank-action",
+        "settle",
+        "prove",
+        "signature-box",
+      ])
+        expect(test.node(id).hidden, id).toBe(true);
+      expect(test.node("completion").hidden).toBe(false);
+      expect(test.node("completion-amount").textContent).toBe(
+        "2.5000000 mock USDC -> 100.00 simulated TRY"
+      );
+    } finally {
+      test.cleanup();
+    }
+  });
+
+  it("shows only the current wallet and quote actions before an order exists", async () => {
+    const test = await browserPageHarness();
+    try {
+      expect(test.node("connect").hidden).toBe(false);
+      for (const id of [
+        "disconnect",
+        "wallet-card",
+        "session-options",
+        "exchange-summary",
+        "reserve",
+        "refresh",
+        "status-bar",
+      ])
+        expect(test.node(id).hidden, id).toBe(true);
+      await test.click("connect");
+      expect(test.node("connect").hidden).toBe(true);
+      expect(test.node("wallet-card").hidden).toBe(false);
+      expect(test.node("session-options").hidden).toBe(false);
+      expect(test.node("quote").hidden).toBe(false);
+      expect(test.node("quote-inputs").hidden).toBe(false);
+      test.node("amount").focus();
+      test.tick();
+      expect(test.focusedId()).toBe("amount");
+      test.node("amount").value = "100.00";
+      await test.click("quote");
+      expect(test.node("quote").hidden).toBe(true);
+      expect(test.node("quote-inputs").hidden).toBe(true);
+      expect(test.node("quote-heading").textContent).toBe("Review your quote");
+      expect(test.node("reserve").hidden).toBe(false);
+      expect(test.node("reserve").disabled).toBe(false);
+      expect(test.node("exchange-summary").hidden).toBe(false);
+      expect(test.node("quote-requirements").textContent).toBe(
+        "Age 18+ / Nationality: GBR, USA / Document issuer: any"
+      );
+      expect(test.node("order-summary").hidden).toBe(true);
+      await test.click("reserve");
+      expect(test.node("reserve").hidden).toBe(true);
+      expect(test.node("refresh").hidden).toBe(false);
+      expect(test.node("order-summary").hidden).toBe(false);
+      expect(test.node("order-summary").textContent).toBe(
+        "100.00 simulated TRY -> 2.5000000 mock USDC"
+      );
+      const expiredClock = vi
+        .spyOn(Date, "now")
+        .mockReturnValue((test.order.deadline + 1) * 1000);
+      try {
+        test.tick();
+        expect(test.node("status-bar").hidden).toBe(false);
+        expect(test.node("status").textContent).toContain(
+          "order deadline passed"
+        );
+        expect(test.node("status").textContent).toContain(
+          "not automatically refunded"
+        );
+      } finally {
+        expiredClock.mockRestore();
+      }
+      await test.click("disconnect");
+      expect(test.focusedId()).toBe("wallet-heading");
+    } finally {
+      test.cleanup();
+    }
+  });
+
   it("does not claim submission when resuming a pending unsigned proof", async () => {
     const test = await browserPageHarness();
     try {
@@ -1081,6 +1262,9 @@ describe("production-built gated browser serving", () => {
       expect(test.node("sign-proof").disabled).toBe(true);
       expect(test.node("bank-action").disabled).toBe(true);
       expect(test.node("completion").hidden).toBe(true);
+      expect(test.node("status-bar").hidden).toBe(false);
+      expect(test.node("refresh").hidden).toBe(false);
+      expect(test.node("signature-box").hidden).toBe(true);
     } finally {
       test.cleanup();
     }
@@ -1118,6 +1302,10 @@ describe("production-built gated browser serving", () => {
         );
         expect(test.node("connect").disabled).toBe(false);
         expect(test.node("wallet-state").textContent).toBe("Not connected");
+        expect(test.focusedId()).toBe("connect");
+        expect(test.node("status-announcement").textContent).toBe(
+          test.node("status").textContent
+        );
         expect(test.walletAccess).not.toHaveBeenCalled();
       } finally {
         test.cleanup();
@@ -1132,6 +1320,9 @@ describe("production-built gated browser serving", () => {
       test.node("amount").value = "100.00";
       await test.click("quote");
       await test.click("reserve");
+      expect(test.node("prove").hidden).toBe(false);
+      expect(test.node("cancel-proof").hidden).toBe(true);
+      expect(test.node("signature-box").hidden).toBe(true);
       const transaction = new TransactionBuilder(
         new Account(test.order.recipient, "1"),
         { fee: "100", networkPassphrase: Networks.TESTNET }
@@ -1157,10 +1348,46 @@ describe("production-built gated browser serving", () => {
         network_passphrase: Networks.TESTNET,
       });
       await test.click("prove");
+      expect(test.node("prove").hidden).toBe(true);
+      expect(test.node("phone-box").hidden).toBe(false);
+      expect(test.node("cancel-proof").hidden).toBe(false);
+      expect(test.node("status-bar").hidden).toBe(false);
       test.receiveProof();
       await vi.waitFor(() =>
         expect(test.node("sign-proof").disabled).toBe(false)
       );
+      expect(test.node("signature-box").hidden).toBe(false);
+      expect(test.node("prove").hidden).toBe(true);
+      expect(test.node("proof-instruction").textContent).toContain("Sign");
+      expect(test.node("proof-requirements").textContent).toContain("18+");
+      const expiredClock = vi
+        .spyOn(Date, "now")
+        .mockReturnValue((Number(transaction.timeBounds!.maxTime) + 1) * 1000);
+      try {
+        test.tick();
+        expect(test.node("sign-proof").disabled).toBe(true);
+        expect(test.node("signature-box").hidden).toBe(false);
+        expect(test.node("prove").hidden).toBe(false);
+        expect(test.node("proof-instruction").textContent).toContain("expired");
+        expect(test.node("status").textContent).toContain(
+          "signature request expired"
+        );
+        expiredClock.mockReturnValue((test.order.deadline + 1) * 1000);
+        test.tick();
+        expect(test.node("prove").disabled).toBe(true);
+        expect(test.node("sign-proof").disabled).toBe(true);
+        for (const id of ["proof-instruction", "status"]) {
+          expect(test.node(id).textContent).toContain("order deadline passed");
+          expect(test.node(id).textContent).toContain(
+            "not automatically refunded"
+          );
+          expect(test.node(id).textContent).toContain("Check status");
+          expect(test.node(id).textContent).not.toContain("new QR");
+        }
+      } finally {
+        expiredClock.mockRestore();
+        test.tick();
+      }
       Object.assign(test.order, {
         actions: [
           {
