@@ -46,6 +46,7 @@ class NativeTestnet implements SepAnchorGateway {
     | "unauthorized"
     | "insufficient_limit" = "ready";
   ingressUnavailable = false;
+  orderReadsUnavailable = false;
   policyExpiry = now() + 3600;
   async configuration() {
     return {
@@ -79,6 +80,8 @@ class NativeTestnet implements SepAnchorGateway {
     return this.grants.get(subject) ?? null;
   }
   async order(id: string) {
+    if (this.orderReadsUnavailable)
+      throw new Error("Native order lookup timed out");
     return this.orders.get(id) ?? null;
   }
   async prepare(action: SepChainAction) {
@@ -268,6 +271,63 @@ function fixture(walletOverride?: string) {
     tick: () => engine.tick(),
   };
 }
+
+it("keeps unaccepted history readable when native order lookups time out", async () => {
+  const f = fixture();
+  const order = await f.begin();
+  f.gateway.orderReadsUnavailable = true;
+  const response = await f.request("/sep24/transactions?asset_code=USDC", {
+    headers: f.auth(),
+  });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    transactions: [{ id: order.id, status: "incomplete", order_id: null }],
+  });
+});
+
+it("reconciles an uncertain proof submitted before quote acceptance", async () => {
+  const f = fixture();
+  const order = await f.begin();
+  f.gateway.pending = true;
+  const response = await order.action("proof", {
+    proof: Buffer.alloc(10240).toString("hex"),
+    public_inputs: Buffer.alloc(13 * 32).toString("hex"),
+  });
+  expect(response.status).toBe(200);
+  const pending = (await order.get()).transaction;
+  expect(pending.status).toBe("pending_stellar");
+  expect(pending.native.eligible).toBe(false);
+  const original = pending.actions[0]!.transaction_hash;
+  f.restart();
+  f.gateway.pending = false;
+  await f.tick();
+  const confirmed = (await order.get()).transaction;
+  expect(confirmed).toMatchObject({
+    status: "incomplete",
+    order_id: null,
+    ready_for_payment: false,
+    native: { eligible: true },
+    actions: [{ transaction_hash: original, status: "success" }],
+  });
+});
+
+it("fails closed on native order lookup timeouts after accepting a quote", async () => {
+  const f = fixture();
+  const order = await f.begin();
+  const quote = z
+    .object({ quote: z.object({ id: z.string() }) })
+    .parse(
+      await (await order.action("quote", { sell_amount: "100.00" })).json()
+    ).quote;
+  expect((await order.action("accept", { quote_id: quote.id })).status).toBe(
+    200
+  );
+  f.gateway.orderReadsUnavailable = true;
+  const response = await f.request(`/sep24/transaction?id=${order.id}`, {
+    headers: f.auth(),
+  });
+  expect(response.status).toBe(500);
+});
 
 it("holds a fixed quote until native eligibility is confirmed before advertising payment", async () => {
   const f = fixture();
