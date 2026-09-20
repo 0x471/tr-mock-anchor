@@ -118,7 +118,7 @@ function fixture(
     };
   }
   const request = (path: string, init?: RequestInit) =>
-    app.request(`${cfg.publicUrl}${path}`, init);
+    app.request(new URL(path, cfg.publicUrl).href, init);
   return {
     request,
     auth,
@@ -473,6 +473,118 @@ it("protects hosted mutations from cross-origin requests and keeps expired order
   expect((await request(resume.pathname + resume.search)).status).toBe(303);
   expect((await request(resume.pathname + resume.search)).status).toBe(403);
 });
+
+it.each(["missing", "expired"])(
+  "resumes a history link through wallet authentication when its hosted session is %s",
+  async (sessionState) => {
+    const { request, auth, cfg } = fixture();
+    const initiated = await request("/sep24/transactions/deposit/interactive", {
+      method: "POST",
+      headers: { ...auth(), "Content-Type": "application/json" },
+      body: '{"asset_code":"USDC"}',
+    });
+    const created = z
+      .object({ id: z.string(), url: z.string() })
+      .parse(await initiated.json());
+    const opened = await request(created.url);
+    const cookie = opened.headers.get("Set-Cookie")!.split(";")[0]!;
+    const initialHistory = z
+      .object({
+        transactions: z.array(
+          z.object({ id: z.string(), more_info_url: z.string() })
+        ),
+      })
+      .parse(
+        await (
+          await request("/sep24/transactions?asset_code=USDC", {
+            headers: auth(),
+          })
+        ).json()
+      );
+    expect(initialHistory.transactions).toHaveLength(1);
+    const historyUrl = initialHistory.transactions[0]!.more_info_url;
+    expect(historyUrl).toBe(`${cfg.publicUrl}/sep24/interactive/${created.id}`);
+    if (sessionState === "expired") {
+      vi.useFakeTimers();
+      vi.setSystemTime(Date.now() + 1801000);
+    }
+    const headers = sessionState === "expired" ? { Cookie: cookie } : undefined;
+    const recovery = await request(historyUrl, { headers });
+    expect(recovery.status).toBe(303);
+    expect(recovery.headers.get("Location")).toBe(
+      `/anchor?resume=${created.id}`
+    );
+    expect(recovery.headers.get("Set-Cookie")).toBeNull();
+    expect(recovery.headers.get("Cache-Control")).toBe("no-store");
+    expect(recovery.headers.get("Referrer-Policy")).toBe("no-referrer");
+    expect((await request(`${historyUrl}/state`, { headers })).status).toBe(
+      403
+    );
+    expect(
+      (
+        await request(`${historyUrl}/quote`, {
+          method: "POST",
+          headers: {
+            ...headers,
+            Origin: cfg.publicUrl,
+            "Content-Type": "application/json",
+          },
+          body: '{"sell_amount":"100.00"}',
+        })
+      ).status
+    ).toBe(403);
+    expect(
+      (await request(`${historyUrl}?token=invalid`, { headers })).status
+    ).toBe(403);
+    expect((await request(created.url, { headers })).status).toBe(403);
+    const wrongHost = new URL(historyUrl);
+    wrongHost.host = "untrusted.example";
+    expect((await request(wrongHost.href, { headers })).status).toBe(403);
+    const foreign = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 2)).publicKey();
+    expect(
+      (
+        await request(`/sep24/transaction?id=${created.id}`, {
+          headers: auth(foreign),
+        })
+      ).status
+    ).toBe(404);
+    const resumed = z
+      .object({
+        transaction: z.object({ id: z.string(), more_info_url: z.string() }),
+      })
+      .parse(
+        await (
+          await request(`/sep24/transaction?id=${created.id}`, {
+            headers: auth(),
+          })
+        ).json()
+      );
+    expect(resumed.transaction.id).toBe(created.id);
+    const reopened = await request(resumed.transaction.more_info_url);
+    expect(reopened.status).toBe(303);
+    expect(reopened.headers.get("Location")).toBe(new URL(historyUrl).pathname);
+    const resumedCookie = reopened.headers.get("Set-Cookie")!.split(";")[0]!;
+    expect(
+      await (
+        await request(`${historyUrl}/state`, {
+          headers: { Cookie: resumedCookie },
+        })
+      ).json()
+    ).toMatchObject({
+      transaction: { id: created.id, status: "incomplete", quote_id: null },
+    });
+    const finalHistory = z
+      .object({ transactions: z.array(z.object({ id: z.string() })) })
+      .parse(
+        await (
+          await request("/sep24/transactions?asset_code=USDC", {
+            headers: auth(),
+          })
+        ).json()
+      );
+    expect(finalHistory.transactions).toEqual([{ id: created.id }]);
+  }
+);
 
 it("rejects unsupported callbacks and oversized proof requests with SEP error bodies", async () => {
   const { request, auth } = fixture();

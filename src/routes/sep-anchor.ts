@@ -577,7 +577,17 @@ export function createSepAnchorRoutes(
       });
       return c.redirect(`/sep24/interactive/${id}`, 303);
     }
-    const owner = session(c, id);
+    let owner: WebSession;
+    try {
+      owner = session(c, id);
+    } catch (error) {
+      if (
+        error instanceof ApiError &&
+        (error.code === "session_required" || error.code === "session_expired")
+      )
+        return c.redirect(`/anchor?resume=${id}`, 303);
+      throw error;
+    }
     await engine.get(owner.subject, id);
     return c.html(
       await readFile(join(process.cwd(), "public", "sep-anchor.html"), "utf8")
