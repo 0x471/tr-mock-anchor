@@ -2,9 +2,53 @@
 
 Experimental fork of [Kaan's TR Mock Anchor](https://github.com/kaankacar/tr-mock-anchor), based on commit `81eef8af29fa8fdc6f6596a4472c8bedb5381668`. Work lives on `feat/zkpassport-anchor` in [0x471/tr-mock-anchor](https://github.com/0x471/tr-mock-anchor/tree/feat/zkpassport-anchor).
 
-This is a Testnet-only development project. It is not an audited verifier or a production anchor. Fresh synthetic ZKR country proofs and authenticated HTTP deposit and withdrawal runs have completed native onchain acceptance and settlement. The full Freighter browser run and public hosting remain pending. Upstream hosted URLs do not run this fork.
+This is a Testnet-only development project, not an audited verifier or a production anchor. Upstream hosted URLs do not run this fork. Previous native phone-proof settlement evidence belongs to the older custom vault, not automatically to the new SEP deployment.
 
-## Current deposit and withdrawal demo
+## Standard-wallet anchor demo
+
+The new `/anchor` interface uses SEP-1 discovery, SEP-10 login, SEP-38 firm
+quotes, SEP-24 hosted onboarding and exchange-only SEP-6 transfers. First-time
+users prove eligibility in the hosted ZKPassport interaction. Supported accounts
+are admitted, self-custodial classic G accounts; muxed, omnibus and contract
+wallets are explicitly outside this demo profile. This is not a claim that all
+optional SEP features or every wallet are supported.
+
+- Deposit: accept an exact TRY-to-mock-USDC quote, prove eligibility, then
+  record simulated TRY receipt. The vault releases the reserved tokens only
+  with current native eligibility and the exact receipt.
+- Withdraw: prove eligibility, then send an ordinary Stellar payment with the
+  provided memo. The anchor observes it and moves the exact tokens into the
+  vault. A separate explicit mock-bank action authorizes and records payout.
+- Native eligibility is wallet-, domain-, contract-, network- and policy-bound.
+  It can be reused until its original proof timestamp plus one hour, bounded by
+  the immutable policy expiry. Old proofs cannot extend the grant.
+- Withdrawal escrow can be refunded to its fixed owner before payout
+  authorization, including after eligibility expiry. An unknown outcome must
+  reconcile against the original hash, not create a replacement payment.
+
+The public profile requires age >=18, synthetic nationality ZKR, synthetic
+issuer ZKR and strict private sanctions-list non-membership. It uses the pinned
+ZKPassport 0.20.0 OuterCount8 verifier. The private list snapshot is from January
+2026, is an exact normalized match, and is **not** current production sanctions
+compliance. A separate official OFAC digital-currency-address precheck runs on
+the backend. Neither check establishes real identity, residence or bank ownership.
+
+Native contract, compiled-Wasm and HTTP tests pass. The new contracts are
+deployed and the live reserve/reject/cancel smoke passed. **A fresh synthetic
+phone proof and full deposit/withdrawal acceptance against this new deployment
+remain pending.** See [deployment evidence and the wake-up checklist](docs/SEP_ANCHOR_DEPLOYMENT.md).
+
+Standard custody is a deliberate trust boundary: the provider controls tokens
+before they enter the vault, and the watcher/notary attests which classic
+payment funded an order. Soroban constrains vault release; it does not inspect
+historical Horizon payments or cryptographically prove real fiat movement.
+Keep one server replica with a persistent database and preserve all journals.
+
+See [the interoperability profile](docs/SEP_ZKPASSPORT_INTEROPERABILITY.md) and
+[the SEP contract](contracts/sep-anchor/README.md). The older contracts and their
+orders are not migrated or modified by this deployment.
+
+## Earlier custom-vault demo and evidence
 
 The `/anchor-gate` browser interface implements real SEP-10 wallet authentication,
 exact SEP-38 quotes and wallet-signed native proof calls. It requires Freighter

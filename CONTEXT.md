@@ -26,14 +26,24 @@ Nationality and document-issuing country are different policy attributes.
 _Avoid_: KYC approval, country check without an attribute
 
 **Proof**:
-Cryptographic evidence for a document statement bound to a specific order.
+Cryptographic evidence for a document statement bound to an explicit request.
 A mathematically valid proof need not satisfy the order's policy.
 _Avoid_: Approval
 
 **Eligibility**:
-Satisfaction of an order's document policy by its bound proof.
+Satisfaction of the document policy by a correctly bound proof.
 Eligibility alone does not establish that a bank transfer was received.
 _Avoid_: Settlement, identity approval
+
+**Eligibility grant**:
+A time-limited eligibility decision for one wallet and one policy, reusable
+across that wallet's orders while it remains current.
+_Avoid_: Permanent approval, bank-account ownership
+
+**Custody payment**:
+The customer's token transfer to the anchor, attributed to an exact withdrawal.
+Receipt by the anchor is distinct from reserving those tokens for settlement.
+_Avoid_: Proof, completed withdrawal
 
 **Mock-bank receipt**:
 A uniquely identified attestation that an order's simulated TRY was received
