@@ -100,6 +100,40 @@ labelled fixtures, not a Freighter approval or a settled exchange.
 The user's trustline approval and a fresh user-wallet settlement are still
 pending; this validation does not claim either has occurred.
 
+## Automatic confirmation pass
+
+Known orders and pending wallet trustlines now reconcile in the background.
+Successful checks run at five-second intervals; interrupted checks back off to
+at most 30 seconds and retain the last confirmed state. Order reads time out
+after 20 seconds and read-only Freighter account/network queries after three
+seconds. Signing remains user-controlled. Hidden pages pause checks; page exit
+clears the session, and a restored back/forward-cache page reloads safely.
+
+Polling never signs, creates a reservation, records a bank transfer, authorizes
+a payout or settles tokens. A lost reservation response without an order ID
+still requires the original same-key retry. A known failed reservation directs
+the user to exact-order recovery rather than promising endless confirmation.
+
+The 30-second proof freshness delay remains, with an explanatory countdown.
+Phone proof, Freighter signature and onchain confirmation are visibly separate.
+Testnet activity and human-readable explorer links are outside the technical
+details. A bank receipt ID is explicitly not a transaction hash. Settled orders
+stay complete while any remaining transaction evidence is reconciled.
+
+Validation: 303 tests, typecheck and production build passed. Added coverage
+includes automatic registration and trustline confirmation, uncertain outcomes,
+backoff, stale sessions, bounded wallet reads, completed-but-pending evidence,
+proof retirement and keyboard focus. Inert mobile previews of waiting and
+completion fit 390px/320px without horizontal overflow. No new financial action
+or phone proof was submitted for this UI pass.
+
+Read-only Testnet verification confirmed the user's existing native proof in
+transaction `6d672ca27815a0ae13eb91801aa73ecba2a8eb6d36b1065d65e369a37276ea89`
+and settlement in `9f9f064a0bbc9613be7be7a25c638a38f7a640eb97e2de98313d84cd235bd1ed`.
+The settled deposit delivered 2.0947892 mock USDC. Its simulated bank receipt
+ID `179db87e6c41c429ce6979ea863c6a863f1ffddbf80f2bf0be35687fd66da0c1`
+is distinct from all transaction hashes.
+
 ## Design reference
 
 Inkognito: <https://github.com/trionlabs/inkognito>
