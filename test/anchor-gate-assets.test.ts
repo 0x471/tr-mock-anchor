@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -48,6 +48,12 @@ describe("production-built native gate stylesheet and fonts", () => {
 
   afterAll(async () => {
     if (directory) await rm(directory, { recursive: true, force: true });
+  });
+
+  it("preserves the approved TR Anchor branding in the hosted exchange", async () => {
+    const html = await readFile(join(directory, "sep-anchor.html"), "utf8");
+    expect(html).toContain('href="/anchor">TR Anchor<span>.</span>');
+    expect(html).not.toContain(">tr anchor<span>");
   });
 
   it("serves the built stylesheet with same-origin font references and security headers", async () => {
