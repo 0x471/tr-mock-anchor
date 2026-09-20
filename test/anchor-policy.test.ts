@@ -82,6 +82,19 @@ function economicSnapshot(db: DB) {
 const rate = { rateMicro: 40_000000n, midMicro: 40_000000n, quoteId: null };
 
 describe("strict legacy-route anchor policy", () => {
+  it("describes custom settlement honestly in discovery without changing legacy metadata", async () => {
+    const strict = await (
+      await fixture().app.request("/.well-known/stellar.toml")
+    ).text();
+    expect(strict).toContain("custom proof-gated settlement");
+    expect(strict).toContain("not a portable SEP-6 ramp");
+    expect(strict).not.toContain("ramps it against TRY via SEP-6");
+    expect(strict).not.toContain("Circle testnet issuer");
+    const legacy = await (
+      await fixture("legacy").app.request("/.well-known/stellar.toml")
+    ).text();
+    expect(legacy).toContain("ramps it against TRY via SEP-6");
+  });
   it("fails closed by default and requires explicit legacy mode", () => {
     expect(economicActionsEnabled({})).toBe(false);
     expect(economicActionsEnabled({ anchorMode: "zkpassport" })).toBe(false);

@@ -317,7 +317,9 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
         "[DOCUMENTATION]",
         'ORG_NAME="TR Mock Anchor (testnet sandbox)"',
         `ORG_URL="${cfg.publicUrl}"`,
-        'ORG_DESCRIPTION="Mock Turkish TRY <-> USDC SEP-6 anchor for Stellar testnet builders. Not a real financial service. No real money moves."',
+        legacy
+          ? 'ORG_DESCRIPTION="Mock Turkish TRY <-> USDC SEP-6 anchor for Stellar testnet builders. Not a real financial service. No real money moves."'
+          : 'ORG_DESCRIPTION="Experimental Testnet anchor with SEP-10 login, SEP-38 quotes and custom proof-gated settlement. Legacy SEP-6 transfers are disabled; this is not a portable SEP-6 ramp. No real money moves."',
         "",
         "[[CURRENCIES]]",
         `code="${stellar.assetCode}"`,
@@ -327,7 +329,9 @@ export function publicRoutes(deps: Deps, sep: SepContext) {
         "is_asset_anchored=true",
         'anchor_asset_type="fiat"',
         'anchor_asset="TRY"',
-        'desc="USDC on Stellar testnet (Circle testnet issuer unless overridden). This anchor ramps it against TRY via SEP-6."',
+        legacy
+          ? 'desc="USDC on Stellar testnet (Circle testnet issuer unless overridden). This anchor ramps it against TRY via SEP-6."'
+          : 'desc="Configured Testnet issuer asset exchanged for simulated TRY through a separately configured proof-gated vault. Check the exact issuer and /anchor-gate/info; an asset code alone does not establish the issuer."',
         "",
       ].join("\n"),
       200,
