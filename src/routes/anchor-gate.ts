@@ -7,6 +7,7 @@ import { ApiError } from "../errors.js";
 import { sepJwtAuth, type SepContext, type SepEnv } from "../sepauth.js";
 import { verifyJwt } from "../jwt.js";
 import { createGatedAnchor } from "../anchor-gate.js";
+import { createOfacPrecheck } from "../ofac-precheck.js";
 
 export function anchorGateRoutes(deps: Deps, sep: SepContext) {
   const app = new Hono<SepEnv>();
@@ -15,6 +16,7 @@ export function anchorGateRoutes(deps: Deps, sep: SepContext) {
     deps.cfg.networkPassphrase === Networks.TESTNET
       ? deps.anchorGate
       : undefined;
+  if (gate && !deps.ofac) deps.ofac = createOfacPrecheck();
   const anchor = gate ? createGatedAnchor(deps, gate) : undefined;
   app.use("/anchor-gate/*", async (c, next) => {
     c.header("Cache-Control", "no-store");
@@ -146,6 +148,16 @@ export function anchorGateRoutes(deps: Deps, sep: SepContext) {
       ),
       201
     );
+  });
+  app.get("/anchor-gate/orders/access", async (c) => {
+    const screening = deps.cfg.anchorGateOfacEnabled
+      ? await deps.ofac!.check(c.get("sepSub"))
+      : undefined;
+    return c.json({
+      wallet: c.get("sepSub"),
+      admitted: true,
+      ...(screening ? { screening } : {}),
+    });
   });
   app.get("/anchor-gate/orders/:id", async (c) =>
     c.json(await anchor!.get(c.req.param("id"), c.get("sepSub")))

@@ -399,6 +399,21 @@ export function createGatedAnchor(deps: Deps, gate: GateGateway) {
           "This idempotency key already describes a different order."
         );
       if (!row) {
+        if (cfg.anchorGateOfacEnabled) {
+          const screening = await deps.ofac?.check(subject);
+          if (screening?.status === "match")
+            throw new ApiError(
+              403,
+              "ofac_precheck_match",
+              "This wallet matches an OFAC SDN digital-currency address. New demo reservations are blocked."
+            );
+          if (screening?.status !== "no_match")
+            throw new ApiError(
+              503,
+              "ofac_precheck_unavailable",
+              "The OFAC address list could not be checked. New reservations are paused; existing orders remain recoverable."
+            );
+        }
         const contract = await gate.configuration().catch(() => {
           throw unavailable();
         });
