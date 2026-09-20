@@ -391,6 +391,44 @@ function browserHarness(
 }
 
 describe("gated browser wallet authentication", () => {
+  it("retires an exact prepared proof after reconciliation confirms it", async () => {
+    const test = browserHarness();
+    await test.flow.initialize();
+    await test.flow.connect();
+    await test.flow.quote("100.00");
+    await test.flow.createOrder();
+    const hash = "cd".repeat(32);
+    test.prepare({
+      action_id: "prepared-proof-confirmed",
+      transaction: "This fixture is never offered for signing.",
+      hash,
+      expires_at: test.order.deadline,
+      network_passphrase: Networks.TESTNET,
+    });
+    await test.flow.requestProof();
+    await test.events().proof(test.proof);
+    expect(test.flow.view.prepared?.hash).toBe(hash);
+    Object.assign(test.order, {
+      stage: "eligible",
+      eligibility_expires_at: test.order.deadline,
+      actions: [
+        {
+          id: "prepared-proof-confirmed",
+          kind: "prove",
+          transaction_hash: hash,
+          status: "success",
+          ledger: 42,
+          expires_at: test.order.deadline,
+        },
+      ],
+    });
+    await test.flow.refresh(test.order.id, { quiet: true });
+    expect(test.flow.view.prepared).toBeNull();
+    await expect(test.flow.signProof()).rejects.toThrow(
+      "fresh proof transaction"
+    );
+  });
+
   it("discards an address recheck completed after disconnect", async () => {
     let releaseAccess!: () => void;
     let reportAccessStarted!: () => void;
@@ -1221,6 +1259,7 @@ function makeBrowserNode() {
   const attributes = new Map<string, string>();
   return {
     textContent: "",
+    href: "",
     value: "",
     disabled: false,
     hidden: false,
@@ -1268,10 +1307,12 @@ async function browserPageHarness(
     admitted?: boolean;
     screening?: "no_match" | "match" | "unavailable";
     missingTrustline?: boolean;
+    pendingTrustline?: boolean;
     loseFirstReservationResponse?: boolean;
     tokenBalance?: string;
     trustlineLimit?: string;
     direction?: "deposit" | "withdrawal";
+    onOrderRead?(): Promise<Response | void>;
   } = {}
 ) {
   const test = browserHarness(options.direction, {
@@ -1279,17 +1320,27 @@ async function browserPageHarness(
     screening: options.screening,
   });
   let trustlinePresent = !options.missingTrustline;
+  let trustlineIndexed = !options.pendingTrustline;
   let lostReservationResponse = false;
   let tokenBalance = options.tokenBalance ?? "10.0000000";
   let trustlineLimit = options.trustlineLimit ?? "1000000.0000000";
   const trustlineTransactions: Transaction[] = [];
   const browserReservationRequests: { key: string | null; body: unknown }[] =
     [];
+  const httpRequests: { path: string; method: string }[] = [];
   const browserFetch = async (
     input: Parameters<typeof fetch>[0],
     init?: RequestInit
   ) => {
     const url = new URL(String(input));
+    httpRequests.push({ path: url.pathname, method: init?.method ?? "GET" });
+    if (
+      /^\/anchor-gate\/orders\/[a-f0-9]{64}$/.test(url.pathname) &&
+      (init?.method ?? "GET") === "GET"
+    ) {
+      const response = await options.onOrderRead?.();
+      if (response) return response;
+    }
     if (url.origin !== "https://horizon-testnet.stellar.org") {
       if (url.pathname === "/anchor-gate/orders" && init?.method === "POST")
         browserReservationRequests.push({
@@ -1366,6 +1417,8 @@ async function browserPageHarness(
       ).toBe(true);
       trustlineTransactions.push(transaction);
       trustlinePresent = true;
+      if (!trustlineIndexed)
+        throw new Error("Trustline response lost after submission.");
       return Response.json({
         hash: Buffer.from(transaction.hash()).toString("hex"),
         successful: true,
@@ -1376,7 +1429,7 @@ async function browserPageHarness(
         url.pathname ===
         `/transactions/${Buffer.from(value.hash()).toString("hex")}`
     );
-    if (transaction)
+    if (transaction && trustlineIndexed)
       return Response.json({
         hash: Buffer.from(transaction.hash()).toString("hex"),
         successful: true,
@@ -1391,6 +1444,16 @@ async function browserPageHarness(
       value.focus = () => {
         activeNode = value;
       };
+      value.closest = (selector: string) => {
+        if (selector !== "[hidden]") return null;
+        if (value.hidden) return value;
+        if (
+          ["prove", "sign-proof", "cancel-proof"].includes(id) &&
+          nodes.get("panel-proof")?.hidden
+        )
+          return nodes.get("panel-proof")!;
+        return null;
+      };
       nodes.set(id, value);
     }
     return nodes.get(id)!;
@@ -1398,6 +1461,7 @@ async function browserPageHarness(
   let receiveProof: ((proof: unknown) => void) | undefined;
   let rejectProof: (() => void) | undefined;
   let tick: (() => void) | undefined;
+  let walletReadsResponsive = true;
   const walletAccess = vi.fn(async () => ({ address: test.order.recipient }));
   vi.resetModules();
   vi.doMock("@stellar/freighter-api", () => ({
@@ -1405,7 +1469,10 @@ async function browserPageHarness(
       options.walletUnresponsive
         ? new Promise<{ isConnected: boolean }>(() => {})
         : { isConnected: options.walletAvailable ?? true },
-    getAddress: async () => ({ address: test.order.recipient }),
+    getAddress: async () =>
+      walletReadsResponsive
+        ? { address: test.order.recipient }
+        : new Promise<{ address: string }>(() => {}),
     getNetworkDetails: async () => ({ networkPassphrase: Networks.TESTNET }),
     requestAccess: walletAccess,
     signTransaction: async (transaction: string) => ({
@@ -1454,12 +1521,27 @@ async function browserPageHarness(
       }
     },
   }));
+  const pageEvents = new Map<
+    string,
+    (event: { persisted?: boolean }) => void
+  >();
+  const reloadPage = vi.fn();
   vi.stubGlobal("window", {
-    location: { origin: "http://localhost:8787", hostname: "localhost" },
+    location: {
+      origin: "http://localhost:8787",
+      hostname: "localhost",
+      reload: reloadPage,
+    },
     fetch: browserFetch,
-    addEventListener() {},
+    addEventListener(
+      name: string,
+      callback: (event: { persisted?: boolean }) => void
+    ) {
+      pageEvents.set(name, callback);
+    },
   });
   vi.stubGlobal("document", {
+    visibilityState: "visible",
     getElementById: node,
     createElement: makeBrowserNode,
     get activeElement() {
@@ -1477,7 +1559,18 @@ async function browserPageHarness(
     ...test,
     node,
     trustlineTransactions: () => trustlineTransactions,
+    confirmTrustline() {
+      trustlineIndexed = true;
+    },
     browserReservationRequests,
+    httpRequests,
+    closePage() {
+      pageEvents.get("pagehide")?.({});
+    },
+    restorePage() {
+      pageEvents.get("pageshow")?.({ persisted: true });
+    },
+    reloadPage,
     setTokenCapacity(balance: string, limit: string) {
       tokenBalance = balance;
       trustlineLimit = limit;
@@ -1489,6 +1582,9 @@ async function browserPageHarness(
       return [...nodes].find(([, value]) => value === activeNode)?.[0];
     },
     walletAccess,
+    setWalletReadsResponsive(value: boolean) {
+      walletReadsResponsive = value;
+    },
     receiveProof() {
       receiveProof!(test.proof);
     },
@@ -1508,6 +1604,7 @@ async function browserPageHarness(
       );
     },
     cleanup() {
+      pageEvents.get("pagehide")?.({});
       vi.unstubAllGlobals();
       vi.doUnmock("@stellar/freighter-api");
       vi.doUnmock("@zkpassport/sdk");
@@ -1518,6 +1615,373 @@ async function browserPageHarness(
 }
 
 describe("production-built gated browser serving", () => {
+  it("clears an interrupted-check warning after manual reconciliation confirms settlement", async () => {
+    let offline = true;
+    const test = await browserPageHarness({
+      onOrderRead: async () =>
+        offline
+          ? Response.json({ error: { code: "unavailable" } }, { status: 503 })
+          : undefined,
+    });
+    try {
+      await test.click("connect");
+      test.node("amount").value = "100.00";
+      await test.click("quote");
+      await test.click("reserve");
+      const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 6000);
+      try {
+        test.tick();
+        await vi.waitFor(() =>
+          expect(test.node("status").textContent).toContain("interrupted")
+        );
+        offline = false;
+        Object.assign(test.order, {
+          stage: "settled",
+          completed: true,
+          eligibility_expires_at: test.order.deadline,
+          receipt_id: "mock-receipt",
+        });
+        await test.click("refresh");
+        expect(test.node("completion").hidden).toBe(false);
+        expect(test.node("status").textContent).not.toContain("interrupted");
+      } finally {
+        clock.mockRestore();
+      }
+    } finally {
+      test.cleanup();
+    }
+  });
+
+  it.each(["prove", "order-id"])(
+    "keeps keyboard focus usable after automatic advancement from %s",
+    async (focused) => {
+      const test = await browserPageHarness();
+      try {
+        await test.click("connect");
+        test.node("amount").value = "100.00";
+        await test.click("quote");
+        await test.click("reserve");
+        test.node(focused).focus();
+        Object.assign(test.order, {
+          stage: "eligible",
+          eligibility_expires_at: test.order.deadline,
+        });
+        const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 6000);
+        try {
+          test.tick();
+          await vi.waitFor(() =>
+            expect(test.node("panel-settle").hidden).toBe(false)
+          );
+          expect(test.focusedId()).toBe(
+            focused === "prove" ? "settle-heading" : focused
+          );
+        } finally {
+          clock.mockRestore();
+        }
+      } finally {
+        test.cleanup();
+      }
+    }
+  );
+
+  it("does not strand foreground actions behind an unresponsive wallet read", async () => {
+    const test = await browserPageHarness();
+    try {
+      await test.click("connect");
+      test.node("amount").value = "100.00";
+      await test.click("quote");
+      await test.click("reserve");
+      const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 6000);
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        test.setWalletReadsResponsive(false);
+        test.tick();
+        test.node("refresh").onclick!();
+        test.setWalletReadsResponsive(true);
+        await vi.advanceTimersByTimeAsync(3500);
+        expect(test.node("status-label").textContent).not.toBe("WORKING");
+        expect(test.node("order").textContent).toContain(test.order.id);
+      } finally {
+        vi.useRealTimers();
+        clock.mockRestore();
+      }
+    } finally {
+      test.cleanup();
+    }
+  });
+
+  it("backs off interrupted checks without losing state or repeating financial actions", async () => {
+    let offline = true;
+    const test = await browserPageHarness({
+      onOrderRead: async () =>
+        offline
+          ? Response.json({ error: { code: "unavailable" } }, { status: 503 })
+          : undefined,
+    });
+    try {
+      await test.click("connect");
+      test.node("amount").value = "100.00";
+      await test.click("quote");
+      await test.click("reserve");
+      const writes = test.httpRequests.filter(
+        (request) => request.method === "POST"
+      ).length;
+      const initialTime = Date.now();
+      const clock = vi.spyOn(Date, "now").mockReturnValue(initialTime + 6000);
+      try {
+        test.tick();
+        await vi.waitFor(() =>
+          expect(test.node("status").textContent).toContain(
+            "Status check interrupted"
+          )
+        );
+        expect(test.node("completion").hidden).toBe(true);
+        const reads = test.httpRequests.filter((request) =>
+          request.path.endsWith(test.order.id)
+        ).length;
+        clock.mockReturnValue(initialTime + 12000);
+        test.tick();
+        expect(
+          test.httpRequests.filter((request) =>
+            request.path.endsWith(test.order.id)
+          )
+        ).toHaveLength(reads);
+        offline = false;
+        Object.assign(test.order, {
+          stage: "eligible",
+          eligibility_expires_at: test.order.deadline,
+        });
+        clock.mockReturnValue(initialTime + 17000);
+        test.tick();
+        await vi.waitFor(() =>
+          expect(test.node("check-proof").textContent).toBe("Eligible")
+        );
+        expect(test.node("status").textContent).not.toContain("interrupted");
+        expect(
+          test.httpRequests.filter((request) => request.method === "POST")
+        ).toHaveLength(writes);
+      } finally {
+        clock.mockRestore();
+      }
+    } finally {
+      test.cleanup();
+    }
+  });
+
+  it("finishes pending transaction evidence even when settlement is already confirmed", async () => {
+    const test = await browserPageHarness();
+    const action = {
+      id: "settlement-pending",
+      kind: "settle",
+      transaction_hash: "ac".repeat(32),
+      status: "pending",
+      ledger: null as number | null,
+      expires_at: test.order.deadline,
+    };
+    try {
+      Object.assign(test.order, {
+        stage: "settled",
+        completed: true,
+        eligibility_expires_at: test.order.deadline,
+        receipt_id: "mock-receipt",
+        actions: [action],
+      });
+      await test.click("connect");
+      test.node("order-id").value = test.order.id;
+      test.node("order-id").oninput!();
+      await test.click("resume-order");
+      expect(test.node("completion").hidden).toBe(false);
+      Object.assign(action, { status: "success", ledger: 44 });
+      const initialTime = Date.now();
+      const clock = vi.spyOn(Date, "now").mockReturnValue(initialTime + 6000);
+      try {
+        test.tick();
+        await vi.waitFor(() => expect(test.node("refresh").hidden).toBe(true));
+        const requests = test.httpRequests.length;
+        clock.mockReturnValue(initialTime + 40000);
+        test.tick();
+        expect(test.httpRequests).toHaveLength(requests);
+      } finally {
+        clock.mockRestore();
+      }
+    } finally {
+      test.cleanup();
+    }
+  });
+
+  it("restarts a restored page rather than leaving its stopped status checker inert", async () => {
+    const test = await browserPageHarness();
+    try {
+      test.closePage();
+      test.restorePage();
+      expect(test.reloadPage).toHaveBeenCalledTimes(1);
+    } finally {
+      test.cleanup();
+    }
+  });
+
+  it("confirms pending wallet setup automatically without another signature", async () => {
+    const test = await browserPageHarness({
+      missingTrustline: true,
+      pendingTrustline: true,
+    });
+    try {
+      await test.click("connect");
+      await test.click("setup-wallet");
+      expect(test.node("quote").disabled).toBe(true);
+      expect(test.trustlineTransactions()).toHaveLength(1);
+      test.confirmTrustline();
+      const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 6_000);
+      try {
+        test.tick();
+        await vi.waitFor(() => expect(test.node("quote").disabled).toBe(false));
+        expect(test.trustlineTransactions()).toHaveLength(1);
+        expect(test.node("panel-quote").hidden).toBe(false);
+      } finally {
+        clock.mockRestore();
+      }
+    } finally {
+      test.cleanup();
+    }
+  });
+
+  it("shows a failed reservation as requiring recovery rather than endless confirmation", async () => {
+    const test = await browserPageHarness();
+    try {
+      Object.assign(test.order, {
+        stage: "registering",
+        created_at: null,
+        actions: [
+          {
+            id: "failed-create",
+            kind: "create",
+            transaction_hash: "ef".repeat(32),
+            status: "failed",
+            ledger: 42,
+            expires_at: test.order.deadline,
+          },
+        ],
+      });
+      await test.click("connect");
+      test.node("amount").value = "100.00";
+      await test.click("quote");
+      await test.click("reserve");
+      expect(test.node("status").textContent).toContain(
+        "Reservation transaction failed"
+      );
+      expect(test.node("proof-instruction").textContent).toContain(
+        "demo operator"
+      );
+      expect(test.node("prove").disabled).toBe(true);
+      expect(test.node("quote").disabled).toBe(true);
+    } finally {
+      test.cleanup();
+    }
+  });
+
+  it("does not reopen Freighter after a queued action outlives the page", async () => {
+    let release!: () => void;
+    const response = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const test = await browserPageHarness({ onOrderRead: () => response });
+    try {
+      await test.click("connect");
+      test.node("amount").value = "100.00";
+      await test.click("quote");
+      await test.click("reserve");
+      const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 6_000);
+      try {
+        test.tick();
+        await vi.waitFor(() =>
+          expect(
+            test.httpRequests.some((request) =>
+              request.path.endsWith(test.order.id)
+            )
+          ).toBe(true)
+        );
+        await test.click("disconnect");
+        test.node("connect").onclick!();
+        test.closePage();
+        release();
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        expect(test.walletAccess).toHaveBeenCalledTimes(1);
+        expect(test.node("wallet-state").textContent).toBe("Not connected");
+      } finally {
+        release();
+        clock.mockRestore();
+      }
+    } finally {
+      test.cleanup();
+    }
+  });
+
+  it("shows confirmed proof evidence without treating a bank receipt ID as a transaction", async () => {
+    const test = await browserPageHarness();
+    const proofHash = "a1".repeat(32);
+    try {
+      Object.assign(test.order, {
+        stage: "funded",
+        eligibility_expires_at: test.order.deadline,
+        receipt_id: "b2".repeat(32),
+        actions: [
+          {
+            id: "proof-confirmed",
+            kind: "prove",
+            transaction_hash: proofHash,
+            status: "success",
+            ledger: 42,
+            expires_at: test.order.deadline,
+          },
+        ],
+      });
+      await test.click("connect");
+      test.node("order-id").value = test.order.id;
+      test.node("order-id").oninput!();
+      await test.click("resume-order");
+      expect(test.node("testnet-activity").hidden).toBe(false);
+      expect(test.node("latest-transaction").href).toBe(
+        `https://stellar.expert/explorer/testnet/tx/${proofHash}`
+      );
+      expect(test.node("latest-transaction").textContent).toContain("proof");
+      expect(test.node("bank").textContent).not.toContain("b2".repeat(32));
+      expect(test.node("order").textContent).toContain(
+        "not a transaction hash"
+      );
+    } finally {
+      test.cleanup();
+    }
+  });
+
+  it("advances a confirmed reservation without asking the user to check status", async () => {
+    const test = await browserPageHarness();
+    try {
+      await test.click("connect");
+      test.node("amount").value = "100.00";
+      await test.click("quote");
+      Object.assign(test.order, { stage: "registering", created_at: null });
+      await test.click("reserve");
+      expect(test.node("prove").disabled).toBe(true);
+      Object.assign(test.order, {
+        stage: "created",
+        created_at: Math.floor(Date.now() / 1000) - 31,
+      });
+      const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 6_000);
+      try {
+        test.tick();
+        await vi.waitFor(() => expect(test.node("prove").disabled).toBe(false));
+        expect(test.node("proof-instruction").textContent).toContain(
+          "ZKPassport"
+        );
+        expect(test.browserReservationRequests).toHaveLength(1);
+      } finally {
+        clock.mockRestore();
+      }
+    } finally {
+      test.cleanup();
+    }
+  });
+
   it.each(["match", "unavailable"] as const)(
     "keeps existing-order recovery available after a %s address precheck",
     async (screening) => {
@@ -1911,7 +2375,7 @@ describe("production-built gated browser serving", () => {
       for (const id of ["status", "settlement-next"]) {
         expect(test.node(id).textContent).not.toContain("submitted");
         expect(test.node(id).textContent).toContain("not confirmed");
-        expect(test.node(id).textContent).toContain("Check status");
+        expect(test.node(id).textContent).toContain("automatically");
       }
       expect(test.node("sign-proof").disabled).toBe(true);
       expect(test.node("bank-action").disabled).toBe(true);
@@ -2035,7 +2499,7 @@ describe("production-built gated browser serving", () => {
           expect(test.node(id).textContent).toContain(
             "not automatically refunded"
           );
-          expect(test.node(id).textContent).toContain("Check status");
+          expect(test.node(id).textContent).toContain("automatically");
           expect(test.node(id).textContent).not.toContain("new QR");
         }
       } finally {
