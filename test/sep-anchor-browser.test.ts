@@ -23,12 +23,13 @@ interface PageNode {
   textContent: string;
   value: string;
   href: string;
+  children: PageNode[];
   addEventListener(name: string, callback: () => void): void;
   trigger(name: string): void;
   setAttribute(): void;
   removeAttribute(): void;
   replaceChildren(): void;
-  append(): void;
+  append(...children: PageNode[]): void;
   getContext(): { clearRect(): void };
 }
 function node(tag: string, parent?: PageNode): PageNode {
@@ -41,6 +42,7 @@ function node(tag: string, parent?: PageNode): PageNode {
     textContent: "",
     value: "",
     href: "",
+    children: [],
     addEventListener(name: string, callback: () => void) {
       events.set(name, callback);
     },
@@ -49,8 +51,12 @@ function node(tag: string, parent?: PageNode): PageNode {
     },
     setAttribute() {},
     removeAttribute() {},
-    replaceChildren() {},
-    append() {},
+    replaceChildren() {
+      this.children = [];
+    },
+    append(...children) {
+      this.children.push(...children);
+    },
     getContext() {
       return { clearRect() {} };
     },
@@ -315,6 +321,71 @@ it("continues reconciliation when a completed order has payment recovery outstan
   await browser.failNextStatus();
   expect(browser.visible("extra-payment-warning")).toBe(true);
   expect(browser.visible("problem")).toBe(true);
+});
+
+it("always exposes confirmed onchain evidence and wallet links outside a disclosure", async () => {
+  const proofHash = "12".repeat(32);
+  const settleHash = "34".repeat(32);
+  const browser = await page({
+    kind: "deposit",
+    status: "completed",
+    escrowed: false,
+    can_refund: false,
+    actions: [
+      {
+        kind: "eligibility",
+        status: "success",
+        transaction_hash: proofHash,
+        ledger: 101,
+      },
+      {
+        kind: "settle",
+        status: "success",
+        transaction_hash: settleHash,
+        ledger: 104,
+      },
+    ],
+  });
+  expect(browser.visible("details")).toBe(true);
+  expect(browser.get("details").tag).toBe("section");
+  expect(browser.visible("wallet-explorer")).toBe(true);
+  expect(browser.get("wallet-explorer").href).toBe(
+    `https://stellar.expert/explorer/testnet/account/${wallet}`
+  );
+  const links = browser
+    .get("evidence")
+    .children.flatMap((row) => row.children)
+    .filter((child) => child.tag === "a");
+  expect(links.map((link) => [link.textContent, link.href])).toEqual([
+    [
+      "Proof verification: Confirmed / ledger 101",
+      `https://stellar.expert/explorer/testnet/tx/${proofHash}`,
+    ],
+    [
+      "Token settlement: Confirmed / ledger 104",
+      `https://stellar.expert/explorer/testnet/tx/${settleHash}`,
+    ],
+  ]);
+});
+
+it("distinguishes unsubmitted and pending proof stages from confirmed transactions", async () => {
+  const browser = await page({
+    actions: [
+      {
+        kind: "eligibility",
+        status: "success",
+        transaction_hash: "56".repeat(32),
+        ledger: null,
+      },
+    ],
+  });
+  const rows = browser.get("evidence").children;
+  expect(
+    rows.flatMap((row) => row.children).map((link) => link.textContent)
+  ).toEqual(["Proof verification: Pending confirmation"]);
+  expect(
+    rows.some((row) => row.textContent === "Token settlement: Not submitted")
+  ).toBe(true);
 });
 
 it("keeps an expired-grant escrow refund visible and submits it from the production page", async () => {

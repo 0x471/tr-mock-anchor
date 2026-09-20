@@ -263,13 +263,56 @@ summary {
 details p {
   margin: 16px 0;
 }
+.chain-status {
+  border: 1px solid #303b33;
+  background: #101310;
+  margin: 24px 0;
+  padding: 24px;
+}
+.chain-status-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px 20px;
+}
+.chain-status-heading h2 {
+  margin: 0;
+  font-size: 24px;
+}
+.chain-status a {
+  color: #b4d8c1;
+  font-size: 13px;
+}
+.chain-status dt {
+  flex-shrink: 0;
+}
+.chain-status > .muted {
+  margin: 10px 0 0;
+}
 #evidence {
   list-style: none;
+  margin: 16px 0;
   padding: 0;
 }
+#evidence:empty {
+  display: none;
+}
 #evidence li {
-  margin: 9px 0;
+  border-left: 2px solid #555;
+  background: #171717;
+  padding: 9px 12px;
+  margin: 8px 0;
+  font-size: 13px;
   overflow-wrap: anywhere;
+}
+#evidence .chain-confirmed {
+  border-color: #52745f;
+  background: #161c17;
+}
+#evidence .chain-failed {
+  border-color: #bd7878;
+  background: #231919;
 }
 #order-id,
 #owner {
@@ -295,7 +338,8 @@ footer {
   .network {
     font-size: 9px;
   }
-  .card {
+  .card,
+  .chain-status {
     padding: 20px;
   }
   main {
