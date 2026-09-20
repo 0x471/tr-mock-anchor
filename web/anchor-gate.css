@@ -381,6 +381,19 @@ h2 {
   gap: 12px;
   margin-top: 20px;
 }
+.wallet-setup {
+  margin-top: 20px;
+}
+#ofac-source {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.wallet-setup .mono,
+.wallet-setup > .hint,
+.wallet-setup > a {
+  display: block;
+  margin-top: 12px;
+}
 .help {
   margin-top: 18px;
 }

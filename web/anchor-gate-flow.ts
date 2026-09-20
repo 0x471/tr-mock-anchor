@@ -133,6 +133,22 @@ const preparedSchema = z.object({
   expires_at: z.number().int(),
   network_passphrase: z.literal(Networks.TESTNET),
 });
+const screeningSchema = z.object({
+  status: z.enum(["no_match", "match", "unavailable"]),
+  checked_at: z.string().min(1).max(100),
+  fetched_at: z.string().min(1).max(100).nullable(),
+  published_at: z.string().min(1).max(100).nullable(),
+  source: z.string().min(1).max(2000),
+  digest: hashString.nullable(),
+  address_count: z.number().int().nonnegative(),
+  stellar_address_count: z.number().int().nonnegative(),
+  reason: z.string().max(1000).optional(),
+});
+const accessSchema = z.object({
+  wallet: z.string(),
+  admitted: z.literal(true),
+  screening: screeningSchema.optional(),
+});
 export type PhoneRequest = z.infer<typeof phoneSchema>;
 export interface PhoneEvents {
   event(message: string): void;
@@ -152,6 +168,7 @@ export interface GateView {
   order: z.infer<typeof orderSchema> | null;
   phoneUrl: string;
   prepared: z.infer<typeof preparedSchema> | null;
+  screening: z.infer<typeof screeningSchema> | null;
   reservationPending: boolean;
   message: string;
   direction: "deposit" | "withdrawal";
@@ -189,6 +206,7 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
     order: null,
     phoneUrl: "",
     prepared: null,
+    screening: null,
     reservationPending: false,
     message: "Loading Testnet policy.",
     direction: "deposit",
@@ -292,6 +310,16 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
     const current = await deps.wallet.current();
     if (current.network !== Networks.TESTNET || current.address !== address)
       throw new Error("Select the same wallet on Stellar Testnet.");
+  }
+  async function readAccess(address: string, session: number) {
+    const access = accessSchema.parse(
+      await (await request("/anchor-gate/orders/access")).json()
+    );
+    await sameWallet(address);
+    if (session !== generation) throw new Error("Wallet session changed.");
+    if (access.wallet !== address)
+      throw new Error("Demo access does not match this wallet.");
+    return access;
   }
   function acceptOrder(value: unknown) {
     const order = orderSchema.parse(value);
@@ -458,8 +486,61 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       if (session !== generation)
         throw new Error("Wallet authentication was not confirmed.");
       token = authenticated.token;
+      change(
+        "Checking demo access and the OFAC address list. No order is being reserved."
+      );
+      try {
+        const access = await readAccess(address, session);
+        view.screening = access.screening ?? null;
+      } catch (error) {
+        if (session === generation) {
+          token = "";
+          if (
+            error instanceof AnchorRequestError &&
+            error.status === 403 &&
+            error.code === "demo_wallet_not_admitted"
+          ) {
+            const message =
+              "Ask the demo operator to admit this wallet to the capped Testnet demo, then connect again. No order was requested.";
+            change(message);
+            throw new Error(message);
+          }
+        }
+        throw error;
+      }
       view.wallet = address;
-      change("Wallet authenticated. Login does not approve a transfer.");
+      change(
+        "Wallet authenticated and admitted. Login does not approve a transfer."
+      );
+    },
+    async checkAccess() {
+      const address = view.wallet;
+      if (!address || !token)
+        throw new Error("Connect and authenticate your wallet first.");
+      const session = generation;
+      await sameWallet(address);
+      if (session !== generation) throw new Error("Wallet session changed.");
+      change(
+        "Checking demo access and the OFAC address list. No order is being reserved."
+      );
+      try {
+        const access = await readAccess(address, session);
+        view.screening = access.screening ?? null;
+        change(
+          "Address precheck refreshed. Existing orders remain recoverable."
+        );
+      } catch (error) {
+        if (session === generation && view.screening) {
+          view.screening = {
+            ...view.screening,
+            status: "unavailable",
+            checked_at: new Date(now() * 1000).toISOString(),
+            reason: "The address precheck could not be refreshed.",
+          };
+          deps.changed();
+        }
+        throw error;
+      }
     },
     disconnect() {
       generation++;
@@ -469,6 +550,7 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       view.quote = null;
       view.order = null;
       view.prepared = null;
+      view.screening = null;
       view.reservationPending = false;
       preparedInputs = undefined;
       idempotencyKey = "";
@@ -632,6 +714,25 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
           )
         ).json();
       } catch (error) {
+        if (
+          session === generation &&
+          error instanceof AnchorRequestError &&
+          ((error.status === 403 && error.code === "ofac_precheck_match") ||
+            (error.status === 503 &&
+              error.code === "ofac_precheck_unavailable"))
+        ) {
+          const matched = error.code === "ofac_precheck_match";
+          view.reservationPending = previousOutcomeUnknown;
+          if (view.screening)
+            view.screening = {
+              ...view.screening,
+              status: matched ? "match" : "unavailable",
+              checked_at: new Date(now() * 1000).toISOString(),
+            };
+          const message = `${matched ? "Listed-address match. New orders are blocked." : "Address precheck unavailable. Recheck before starting a new order."} ${previousOutcomeUnknown ? "The earlier reservation outcome is still unknown; retry only the original reservation to recover it." : "This request did not reserve an order."}`;
+          change(message);
+          throw new Error(message);
+        }
         if (
           session === generation &&
           error instanceof AnchorRequestError &&

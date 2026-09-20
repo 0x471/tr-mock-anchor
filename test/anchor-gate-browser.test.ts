@@ -7,6 +7,7 @@ import {
   Networks,
   Operation,
   StrKey,
+  Transaction,
   TransactionBuilder,
   WebAuth,
   nativeToScVal,
@@ -28,8 +29,12 @@ function browserHarness(
     clockOffset?: number;
     policyLifetime?: number;
     externalInputs?: number;
+    admitted?: boolean;
+    accessWallet?: string;
+    screening?: "no_match" | "match" | "unavailable";
+    beforeAccessResponse?(): Promise<void>;
     loseFirstReservationResponse?: boolean;
-    reservationRejection?: { status: 400 | 409 | 503; code: string };
+    reservationRejection?: { status: 400 | 403 | 409 | 503; code: string };
   } = {}
 ) {
   const now = Math.floor(Date.now() / 1000);
@@ -86,6 +91,9 @@ function browserHarness(
   let uploads = 0;
   let prepared: unknown;
   let lostReservationResponse = false;
+  let reservationRejection = options.reservationRejection;
+  let screening = options.screening;
+  let accessUnavailable = false;
   const reservationRequests: { key: string | null; body: unknown }[] = [];
   app.get("/.well-known/stellar.toml", (c) =>
     c.text(
@@ -115,6 +123,35 @@ function browserHarness(
       "localhost:8787"
     );
     return c.json({ token: "synthetic-http-session-token" });
+  });
+  app.get("/anchor-gate/orders/access", async (c) => {
+    await options.beforeAccessResponse?.();
+    if (accessUnavailable)
+      return c.json({ error: { code: "unavailable" } }, 503);
+    if (options.admitted === false)
+      return c.json({ error: { code: "demo_wallet_not_admitted" } }, 403);
+    return c.json({
+      wallet: options.accessWallet ?? wallet.publicKey(),
+      admitted: true,
+      ...(screening
+        ? {
+            screening: {
+              status: screening,
+              checked_at: new Date(now * 1000).toISOString(),
+              fetched_at:
+                screening === "unavailable"
+                  ? null
+                  : new Date(now * 1000).toISOString(),
+              published_at:
+                screening === "unavailable" ? null : "2026-09-19T12:00:00.000Z",
+              source: "Synthetic OFAC fixture - no live list",
+              digest: screening === "unavailable" ? null : "ab".repeat(32),
+              address_count: screening === "unavailable" ? 0 : 2,
+              stellar_address_count: screening === "match" ? 1 : 0,
+            },
+          }
+        : {}),
+    });
   });
   app.get("/anchor-gate/info", (c) =>
     c.json({
@@ -174,10 +211,10 @@ function browserHarness(
     });
   });
   app.post("/anchor-gate/orders", async (c) => {
-    if (options.reservationRejection)
+    if (reservationRejection)
       return c.json(
-        { error: { code: options.reservationRejection.code } },
-        options.reservationRejection.status
+        { error: { code: reservationRejection.code } },
+        reservationRejection.status
       );
     const request = await c.req.json();
     if (
@@ -313,6 +350,7 @@ function browserHarness(
     flow,
     order,
     policy,
+    assetIssuer: anchor.publicKey(),
     browserFetch: async (
       input: Parameters<typeof fetch>[0],
       init?: RequestInit
@@ -320,6 +358,15 @@ function browserHarness(
     events: () => events!,
     uploads: () => uploads,
     reservationRequests,
+    rejectReservations(value: typeof reservationRejection) {
+      reservationRejection = value;
+    },
+    screenWallet(value: typeof screening) {
+      screening = value;
+    },
+    failAccess(value: boolean) {
+      accessUnavailable = value;
+    },
     sign(transaction: string) {
       const tx = TransactionBuilder.fromXdr(transaction, Networks.TESTNET);
       tx.sign(wallet);
@@ -344,6 +391,131 @@ function browserHarness(
 }
 
 describe("gated browser wallet authentication", () => {
+  it("discards an address recheck completed after disconnect", async () => {
+    let releaseAccess!: () => void;
+    let reportAccessStarted!: () => void;
+    let accessCalls = 0;
+    const accessStarted = new Promise<void>((resolve) => {
+      reportAccessStarted = resolve;
+    });
+    const accessReleased = new Promise<void>((resolve) => {
+      releaseAccess = resolve;
+    });
+    const test = browserHarness("deposit", {
+      screening: "no_match",
+      beforeAccessResponse: async () => {
+        if (++accessCalls === 2) {
+          reportAccessStarted();
+          await accessReleased;
+        }
+      },
+    });
+    await test.flow.initialize();
+    await test.flow.connect();
+    const rechecking = test.flow.checkAccess();
+    await accessStarted;
+    test.flow.disconnect();
+    releaseAccess();
+    await expect(rechecking).rejects.toThrow("Wallet session changed");
+    expect(test.flow.view.wallet).toBe("");
+    expect(test.flow.view.screening).toBeNull();
+    expect(test.flow.view.message).toContain("Wallet session cleared");
+  });
+
+  it("retains wallet recovery but invalidates a previous no-match when rechecking fails", async () => {
+    const test = browserHarness("deposit", { screening: "no_match" });
+    await test.flow.initialize();
+    await test.flow.connect();
+    expect(test.flow.view.screening?.status).toBe("no_match");
+    test.failAccess(true);
+    await expect(test.flow.checkAccess()).rejects.toThrow(
+      "Anchor request failed (503)"
+    );
+    expect(test.flow.view.screening?.status).toBe("unavailable");
+    expect(test.flow.view.wallet).toBe(test.order.recipient);
+    await test.flow.refresh(test.order.id);
+    expect(test.flow.view.order?.id).toBe(test.order.id);
+  });
+
+  it("blocks quote access with an actionable admission denial after wallet login", async () => {
+    const test = browserHarness("deposit", { admitted: false });
+    await test.flow.initialize();
+    await expect(test.flow.connect()).rejects.toThrow(
+      "Ask the demo operator to admit this wallet"
+    );
+    expect(test.flow.view.wallet).toBe("");
+    await expect(test.flow.quote("100.00")).rejects.toThrow();
+    expect(test.reservationRequests).toHaveLength(0);
+  });
+
+  it("rejects admission returned for another wallet", async () => {
+    const test = browserHarness("deposit", {
+      accessWallet: Keypair.random().publicKey(),
+    });
+    await test.flow.initialize();
+    await expect(test.flow.connect()).rejects.toThrow(
+      "Demo access does not match this wallet"
+    );
+    expect(test.flow.view.wallet).toBe("");
+    await expect(test.flow.quote("100.00")).rejects.toThrow();
+  });
+
+  it("does not restore a disconnected session after delayed admission", async () => {
+    let releaseAccess!: () => void;
+    let reportAccessStarted!: () => void;
+    const accessStarted = new Promise<void>((resolve) => {
+      reportAccessStarted = resolve;
+    });
+    const accessReleased = new Promise<void>((resolve) => {
+      releaseAccess = resolve;
+    });
+    const test = browserHarness("deposit", {
+      beforeAccessResponse: async () => {
+        reportAccessStarted();
+        await accessReleased;
+      },
+    });
+    await test.flow.initialize();
+    const connecting = test.flow.connect();
+    await accessStarted;
+    expect(test.flow.view.wallet).toBe("");
+    test.flow.disconnect();
+    releaseAccess();
+    await expect(connecting).rejects.toThrow("Wallet session changed");
+    expect(test.flow.view.wallet).toBe("");
+    expect(test.flow.view.message).toContain("Wallet session cleared");
+  });
+
+  it("keeps a newer wallet session when an older admission request completes", async () => {
+    let releaseAccess!: () => void;
+    let reportAccessStarted!: () => void;
+    let accessCalls = 0;
+    const accessStarted = new Promise<void>((resolve) => {
+      reportAccessStarted = resolve;
+    });
+    const accessReleased = new Promise<void>((resolve) => {
+      releaseAccess = resolve;
+    });
+    const test = browserHarness("deposit", {
+      beforeAccessResponse: async () => {
+        if (++accessCalls === 1) {
+          reportAccessStarted();
+          await accessReleased;
+        }
+      },
+    });
+    await test.flow.initialize();
+    const olderConnection = test.flow.connect();
+    await accessStarted;
+    test.flow.disconnect();
+    await test.flow.connect();
+    releaseAccess();
+    await expect(olderConnection).rejects.toThrow("Wallet session changed");
+    expect(test.flow.view.wallet).toBe(test.order.recipient);
+    await test.flow.quote("100.00");
+    expect(test.flow.view.quote?.id).toBe("qt_demo");
+  });
+
   it("does not offer a signature or authenticate a wallet on Mainnet", async () => {
     const wallet = Keypair.random();
     const app = new Hono();
@@ -379,6 +551,9 @@ describe("gated browser wallet authentication", () => {
     const anchor = Keypair.random();
     const app = new Hono();
     let authenticated = false;
+    app.get("/anchor-gate/orders/access", (c) =>
+      c.json({ wallet: wallet.publicKey(), admitted: true })
+    );
     app.get("/.well-known/stellar.toml", (c) =>
       c.text(
         `NETWORK_PASSPHRASE="${Networks.TESTNET}"\nSIGNING_KEY="${anchor.publicKey()}"\nWEB_AUTH_ENDPOINT="http://localhost:8787/auth"`
@@ -445,6 +620,133 @@ describe("gated browser wallet authentication", () => {
 });
 
 describe("gated browser order and phone lifecycle", () => {
+  it.each([
+    { status: 403 as const, code: "ofac_precheck_match" },
+    { status: 503 as const, code: "ofac_precheck_unavailable" },
+  ])(
+    "preserves an earlier unknown reservation after $code",
+    async (rejection) => {
+      const test = browserHarness("withdrawal", {
+        screening: "no_match",
+        loseFirstReservationResponse: true,
+      });
+      await test.flow.initialize();
+      await test.flow.connect();
+      await test.flow.quote("2.5", "withdrawal");
+      await expect(
+        test.flow.createOrder("demo:synthetic-account")
+      ).rejects.toThrow("response was lost");
+      test.rejectReservations(rejection);
+      await expect(
+        test.flow.createOrder("demo:synthetic-account")
+      ).rejects.toThrow("earlier reservation outcome is still unknown");
+      expect(test.flow.view.reservationPending).toBe(true);
+      expect(() => test.flow.clearQuote()).toThrow(
+        "Reconcile the existing reservation"
+      );
+      await expect(test.flow.createOrder("demo:different")).rejects.toThrow(
+        "Do not change the destination"
+      );
+      test.rejectReservations(undefined);
+      await test.flow.createOrder("demo:synthetic-account");
+      expect(test.reservationRequests).toHaveLength(3);
+      expect(test.reservationRequests[1]).toEqual(test.reservationRequests[0]);
+      expect(test.reservationRequests[2]).toEqual(test.reservationRequests[0]);
+      expect(test.flow.view.order?.id).toBe(test.order.id);
+    }
+  );
+
+  it.each([
+    {
+      status: 403 as const,
+      code: "ofac_precheck_match",
+      message: "Listed-address match",
+    },
+    {
+      status: 503 as const,
+      code: "ofac_precheck_unavailable",
+      message: "Address precheck unavailable",
+    },
+  ])(
+    "does not mark a first $code rejection as an unknown reservation",
+    async ({ message, ...reservationRejection }) => {
+      const test = browserHarness("deposit", {
+        screening: "no_match",
+        reservationRejection,
+      });
+      await test.flow.initialize();
+      await test.flow.connect();
+      await test.flow.quote("100.00");
+      await expect(test.flow.createOrder()).rejects.toThrow(message);
+      expect(test.flow.view.reservationPending).toBe(false);
+      expect(test.flow.view.quote?.id).toBe("qt_demo");
+      expect(test.flow.view.message).toContain(
+        "This request did not reserve an order"
+      );
+      expect(test.flow.view.screening?.status).toBe(
+        reservationRejection.code === "ofac_precheck_match"
+          ? "match"
+          : "unavailable"
+      );
+      test.flow.clearQuote();
+      expect(test.flow.view.quote).toBeNull();
+    }
+  );
+
+  it("explains admission denial without locking a first reservation as unknown", async () => {
+    const test = browserHarness("deposit", {
+      reservationRejection: { status: 403, code: "demo_wallet_not_admitted" },
+    });
+    await test.flow.initialize();
+    await test.flow.connect();
+    await test.flow.quote("100.00");
+    await expect(test.flow.createOrder()).rejects.toThrow(
+      "Ask the demo operator to admit this wallet"
+    );
+    expect(test.flow.view.reservationPending).toBe(false);
+    expect(test.flow.view.order).toBeNull();
+    expect(test.flow.view.quote?.id).toBe("qt_demo");
+    expect(test.flow.view.message).not.toContain("outcome pending");
+    test.flow.clearQuote();
+    expect(test.flow.view.quote).toBeNull();
+  });
+
+  it("preserves a lost reservation when a later retry is denied admission", async () => {
+    const test = browserHarness("withdrawal", {
+      loseFirstReservationResponse: true,
+    });
+    await test.flow.initialize();
+    await test.flow.connect();
+    await test.flow.quote("2.5", "withdrawal");
+    await expect(
+      test.flow.createOrder("demo:synthetic-account")
+    ).rejects.toThrow("response was lost");
+    test.rejectReservations({ status: 403, code: "demo_wallet_not_admitted" });
+    await expect(
+      test.flow.createOrder("demo:synthetic-account")
+    ).rejects.toThrow("Ask the demo operator to restore access");
+    expect(test.flow.view.reservationPending).toBe(true);
+    expect(test.flow.view.quote?.id).toBe("qt_demo");
+    expect(test.flow.view.message).toContain(
+      "The earlier reservation outcome is still unknown"
+    );
+    expect(test.flow.view.message).not.toContain("did not reserve");
+    expect(() => test.flow.clearQuote()).toThrow(
+      "Reconcile the existing reservation"
+    );
+    await expect(test.flow.createOrder("demo:different")).rejects.toThrow(
+      "Do not change the destination"
+    );
+    test.advance(601);
+    test.rejectReservations(undefined);
+    await test.flow.createOrder("demo:synthetic-account");
+    expect(test.reservationRequests).toHaveLength(3);
+    expect(test.reservationRequests[1]).toEqual(test.reservationRequests[0]);
+    expect(test.reservationRequests[2]).toEqual(test.reservationRequests[0]);
+    expect(test.flow.view.reservationPending).toBe(false);
+    expect(test.flow.view.order?.id).toBe(test.order.id);
+  });
+
   it("retains exact reservation terms and idempotency after an unknown HTTP outcome", async () => {
     const test = browserHarness("withdrawal", {
       loseFirstReservationResponse: true,
@@ -536,8 +838,13 @@ describe("gated browser order and phone lifecycle", () => {
 
   it.each([
     { status: 400 as const, code: "quote_expired" },
+    { status: 403 as const, code: "authentication_required" },
+    { status: 403 as const, code: "unknown_denial" },
     { status: 409 as const, code: "unknown_conflict" },
     { status: 503 as const, code: "unavailable" },
+    { status: 503 as const, code: "demo_wallet_not_admitted" },
+    { status: 403 as const, code: "ofac_precheck_unavailable" },
+    { status: 503 as const, code: "ofac_precheck_match" },
   ])(
     "preserves unknown reservation recovery for HTTP $status / $code",
     async (reservationRejection) => {
@@ -958,10 +1265,124 @@ async function browserPageHarness(
   options: {
     walletAvailable?: boolean;
     walletUnresponsive?: boolean;
+    admitted?: boolean;
+    screening?: "no_match" | "match" | "unavailable";
+    missingTrustline?: boolean;
+    loseFirstReservationResponse?: boolean;
+    tokenBalance?: string;
+    trustlineLimit?: string;
     direction?: "deposit" | "withdrawal";
   } = {}
 ) {
-  const test = browserHarness(options.direction);
+  const test = browserHarness(options.direction, {
+    admitted: options.admitted,
+    screening: options.screening,
+  });
+  let trustlinePresent = !options.missingTrustline;
+  let lostReservationResponse = false;
+  let tokenBalance = options.tokenBalance ?? "10.0000000";
+  let trustlineLimit = options.trustlineLimit ?? "1000000.0000000";
+  const trustlineTransactions: Transaction[] = [];
+  const browserReservationRequests: { key: string | null; body: unknown }[] =
+    [];
+  const browserFetch = async (
+    input: Parameters<typeof fetch>[0],
+    init?: RequestInit
+  ) => {
+    const url = new URL(String(input));
+    if (url.origin !== "https://horizon-testnet.stellar.org") {
+      if (url.pathname === "/anchor-gate/orders" && init?.method === "POST")
+        browserReservationRequests.push({
+          key: new Headers(init.headers).get("Idempotency-Key"),
+          body: JSON.parse(String(init.body)),
+        });
+      const response = await test.browserFetch(input, init);
+      if (
+        url.pathname === "/anchor-gate/orders" &&
+        init?.method === "POST" &&
+        options.loseFirstReservationResponse &&
+        !lostReservationResponse
+      ) {
+        lostReservationResponse = true;
+        throw new Error(
+          "Reservation response was lost after server acceptance."
+        );
+      }
+      return response;
+    }
+    if (url.pathname === `/accounts/${test.order.recipient}`)
+      return Response.json({
+        account_id: test.order.recipient,
+        sequence: String(1 + trustlineTransactions.length),
+        subentry_count: Number(trustlinePresent),
+        num_sponsoring: 0,
+        num_sponsored: 0,
+        balances: [
+          {
+            asset_type: "native",
+            balance: "10000.0000000",
+            buying_liabilities: "0.0000000",
+            selling_liabilities: "0.0000000",
+          },
+          ...(trustlinePresent
+            ? [
+                {
+                  asset_type: "credit_alphanum4",
+                  asset_code: "USDC",
+                  asset_issuer: test.assetIssuer,
+                  balance: tokenBalance,
+                  limit: trustlineLimit,
+                  buying_liabilities: "0.0000000",
+                  selling_liabilities: "0.0000000",
+                  is_authorized: true,
+                },
+              ]
+            : []),
+        ],
+      });
+    if (url.pathname === "/transactions" && init?.method === "POST") {
+      const body = new URLSearchParams(String(init.body));
+      const transaction = TransactionBuilder.fromXdr(
+        body.get("tx")!,
+        Networks.TESTNET
+      );
+      if (!(transaction instanceof Transaction))
+        throw new Error("Only a normal trustline transaction is accepted");
+      expect(transaction.source).toBe(test.order.recipient);
+      expect(transaction.operations).toHaveLength(1);
+      const operation = transaction.operations[0]!;
+      expect(operation.type).toBe("changeTrust");
+      if (operation.type !== "changeTrust")
+        throw new Error("Only a trustline is accepted");
+      expect(operation.line).toEqual(new Asset("USDC", test.assetIssuer));
+      expect(operation.limit).toBe("1000000.0000000");
+      expect(
+        transaction.signatures.some((signature) =>
+          Keypair.fromPublicKey(test.order.recipient).verify(
+            transaction.hash(),
+            signature.signature
+          )
+        )
+      ).toBe(true);
+      trustlineTransactions.push(transaction);
+      trustlinePresent = true;
+      return Response.json({
+        hash: Buffer.from(transaction.hash()).toString("hex"),
+        successful: true,
+      });
+    }
+    const transaction = trustlineTransactions.find(
+      (value) =>
+        url.pathname ===
+        `/transactions/${Buffer.from(value.hash()).toString("hex")}`
+    );
+    if (transaction)
+      return Response.json({
+        hash: Buffer.from(transaction.hash()).toString("hex"),
+        successful: true,
+      });
+    return new Response(null, { status: 404 });
+  };
   const nodes = new Map<string, ReturnType<typeof makeBrowserNode>>();
   let activeNode: ReturnType<typeof makeBrowserNode> | null = null;
   const node = (id: string) => {
@@ -1035,7 +1456,7 @@ async function browserPageHarness(
   }));
   vi.stubGlobal("window", {
     location: { origin: "http://localhost:8787", hostname: "localhost" },
-    fetch: test.browserFetch,
+    fetch: browserFetch,
     addEventListener() {},
   });
   vi.stubGlobal("document", {
@@ -1055,6 +1476,15 @@ async function browserPageHarness(
   return {
     ...test,
     node,
+    trustlineTransactions: () => trustlineTransactions,
+    browserReservationRequests,
+    setTokenCapacity(balance: string, limit: string) {
+      tokenBalance = balance;
+      trustlineLimit = limit;
+    },
+    removeTrustline() {
+      trustlinePresent = false;
+    },
     focusedId() {
       return [...nodes].find(([, value]) => value === activeNode)?.[0];
     },
@@ -1088,6 +1518,208 @@ async function browserPageHarness(
 }
 
 describe("production-built gated browser serving", () => {
+  it.each(["match", "unavailable"] as const)(
+    "keeps existing-order recovery available after a %s address precheck",
+    async (screening) => {
+      const test = await browserPageHarness({ screening });
+      try {
+        await test.click("connect");
+        expect(test.node("quote").disabled).toBe(true);
+        test.node("order-id").value = test.order.id;
+        test.node("order-id").oninput!();
+        await test.click("resume-order");
+        expect(test.node("panel-proof").hidden).toBe(false);
+        expect(test.node("order").textContent).toContain(test.order.id);
+        expect(test.browserReservationRequests).toHaveLength(0);
+      } finally {
+        test.cleanup();
+      }
+    }
+  );
+
+  it("keeps same-key reservation recovery available after the address precheck changes", async () => {
+    const test = await browserPageHarness({
+      screening: "no_match",
+      loseFirstReservationResponse: true,
+    });
+    try {
+      await test.click("connect");
+      test.node("amount").value = "100.00";
+      await test.click("quote");
+      await test.click("reserve");
+      test.screenWallet("match");
+      await test.click("step-wallet");
+      await test.click("check-ofac");
+      expect(test.node("ofac-status").textContent).toContain(
+        "Listed-address match"
+      );
+      await test.click("step-quote");
+      expect(test.node("reserve").disabled).toBe(false);
+      await test.click("reserve");
+      expect(test.browserReservationRequests).toHaveLength(2);
+      expect(test.browserReservationRequests[1]).toEqual(
+        test.browserReservationRequests[0]
+      );
+      expect(test.node("order-id").value).toBe(test.order.id);
+    } finally {
+      test.cleanup();
+    }
+  });
+
+  it.each(["match", "unavailable"] as const)(
+    "keeps a %s address precheck at Wallet until a successful recheck",
+    async (screening) => {
+      const test = await browserPageHarness({ screening });
+      try {
+        await test.click("connect");
+        expect(test.node("panel-wallet").hidden).toBe(false);
+        expect(test.node("panel-quote").hidden).toBe(true);
+        expect(test.node("quote").disabled).toBe(true);
+        expect(test.node("ofac-check").hidden).toBe(false);
+        expect(test.node("ofac-status").textContent).toContain(
+          screening === "match" ? "Listed-address match" : "unavailable"
+        );
+        if (screening === "unavailable") {
+          expect(test.node("ofac-source").textContent).toContain(
+            "List coverage unavailable"
+          );
+          expect(test.node("ofac-source").textContent).not.toContain(
+            "SDN lists 0"
+          );
+        }
+        test.screenWallet("no_match");
+        await test.click("check-ofac");
+        expect(test.node("panel-quote").hidden).toBe(false);
+        expect(test.node("quote").disabled).toBe(false);
+        expect(test.node("ofac-status").textContent).toContain(
+          "No listed-address match"
+        );
+        expect(test.node("ofac-source").textContent).toContain(
+          "SDN lists 0 Stellar addresses; no-match is not identity clearance"
+        );
+        expect(test.trustlineTransactions()).toHaveLength(0);
+        expect(test.browserReservationRequests).toHaveLength(0);
+      } finally {
+        test.cleanup();
+      }
+    }
+  );
+
+  it("offers the exact mock-token trustline before enabling an exchange", async () => {
+    const test = await browserPageHarness({ missingTrustline: true });
+    try {
+      await test.click("connect");
+      expect(test.node("panel-wallet").hidden).toBe(false);
+      expect(test.node("panel-quote").hidden).toBe(true);
+      expect(test.node("wallet-setup").hidden).toBe(false);
+      expect(test.node("setup-wallet").hidden).toBe(false);
+      expect(test.node("quote").disabled).toBe(true);
+      expect(test.node("wallet-asset").textContent).toContain("USDC");
+      expect(test.node("wallet-asset").textContent).toContain(test.assetIssuer);
+      await test.click("setup-wallet");
+      expect(test.node("panel-quote").hidden).toBe(false);
+      expect(test.node("setup-wallet").hidden).toBe(true);
+      expect(test.node("quote").disabled).toBe(false);
+      expect(test.trustlineTransactions()).toHaveLength(1);
+      expect(test.trustlineTransactions()[0]?.operations).toHaveLength(1);
+      expect(test.trustlineTransactions()[0]?.operations[0]?.type).toBe(
+        "changeTrust"
+      );
+    } finally {
+      test.cleanup();
+    }
+  });
+
+  it.each([
+    {
+      direction: "deposit" as const,
+      amount: "100.00",
+      balance: "10.0000000",
+      limit: "11.0000000",
+      error: "insufficient receiving capacity",
+    },
+    {
+      direction: "withdrawal" as const,
+      amount: "2.5",
+      balance: "1.0000000",
+      limit: "1000000.0000000",
+      error: "Not enough mock USDC",
+    },
+  ])(
+    "rechecks $direction capacity before creating a reservation",
+    async ({ direction, amount, balance, limit, error }) => {
+      const test = await browserPageHarness({ direction });
+      try {
+        if (direction === "withdrawal") await test.click("choose-withdrawal");
+        await test.click("connect");
+        test.node("amount").value = amount;
+        test.node("bank-destination").value = "demo:synthetic-account";
+        await test.click("quote");
+        test.setTokenCapacity(balance, limit);
+        await test.click("reserve");
+        expect(test.node("status").textContent).toContain(error);
+        expect(test.browserReservationRequests).toHaveLength(0);
+        expect(test.node("reserve").textContent).toBe("Accept quote");
+        expect(test.node("edit-quote").disabled).toBe(false);
+        test.setTokenCapacity("10.0000000", "1000000.0000000");
+        await test.click("reserve");
+        expect(test.browserReservationRequests).toHaveLength(1);
+        expect(test.node("order-id").value).toBe(test.order.id);
+      } finally {
+        test.cleanup();
+      }
+    }
+  );
+
+  it("allows an owned order to resume without creating a missing trustline", async () => {
+    const test = await browserPageHarness({ missingTrustline: true });
+    try {
+      await test.click("connect");
+      expect(test.node("panel-wallet").hidden).toBe(false);
+      test.node("order-id").value = test.order.id;
+      test.node("order-id").oninput!();
+      await test.click("resume-order");
+      expect(test.node("panel-proof").hidden).toBe(false);
+      expect(test.node("order-id").value).toBe(test.order.id);
+      expect(test.node("order").textContent).toContain(test.order.id);
+      expect(test.trustlineTransactions()).toHaveLength(0);
+      expect(test.browserReservationRequests).toHaveLength(0);
+    } finally {
+      test.cleanup();
+    }
+  });
+
+  it("reconciles an unknown exact reservation even if wallet setup becomes incomplete", async () => {
+    const test = await browserPageHarness({
+      loseFirstReservationResponse: true,
+    });
+    try {
+      await test.click("connect");
+      test.node("amount").value = "100.00";
+      await test.click("quote");
+      await test.click("reserve");
+      expect(test.node("status").textContent).toContain("response was lost");
+      expect(test.node("reserve").textContent).toBe(
+        "Retry original reservation"
+      );
+      test.removeTrustline();
+      await test.click("step-wallet");
+      await test.click("check-wallet");
+      expect(test.node("setup-wallet").hidden).toBe(false);
+      await test.click("step-quote");
+      expect(test.node("reserve").disabled).toBe(false);
+      await test.click("reserve");
+      expect(test.browserReservationRequests).toHaveLength(2);
+      expect(test.browserReservationRequests[1]).toEqual(
+        test.browserReservationRequests[0]
+      );
+      expect(test.node("order-id").value).toBe(test.order.id);
+      expect(test.trustlineTransactions()).toHaveLength(0);
+    } finally {
+      test.cleanup();
+    }
+  });
+
   it("keeps a rejected phone request visible after its QR is removed", async () => {
     const test = await browserPageHarness();
     try {
@@ -1165,6 +1797,28 @@ describe("production-built gated browser serving", () => {
       expect(test.node("completion").hidden).toBe(false);
       expect(test.node("completion-amount").textContent).toBe(
         "2.5000000 mock USDC -> 100.00 simulated TRY"
+      );
+    } finally {
+      test.cleanup();
+    }
+  });
+
+  it("keeps an unadmitted wallet at login with an actionable explanation", async () => {
+    const test = await browserPageHarness({ admitted: false });
+    try {
+      await test.click("connect");
+      expect(test.node("panel-wallet").hidden).toBe(false);
+      expect(test.node("panel-quote").hidden).toBe(true);
+      expect(test.node("connect").hidden).toBe(false);
+      expect(test.node("connect").disabled).toBe(false);
+      expect(test.node("wallet-card").hidden).toBe(true);
+      expect(test.node("reserve").hidden).toBe(true);
+      expect(test.node("status-bar").hidden).toBe(false);
+      expect(test.node("status").textContent).toContain(
+        "Ask the demo operator to admit this wallet"
+      );
+      expect(test.node("status").textContent).not.toContain(
+        "Reconcile before retrying"
       );
     } finally {
       test.cleanup();
