@@ -171,8 +171,7 @@ export function createAnchorGateGateway(
       .setTimebounds(Math.max(0, now() - 5), deadline)
       .build();
   }
-  async function read(method: string, args: xdr.ScVal[] = []) {
-    await network();
+  async function readContract(method: string, args: xdr.ScVal[] = []) {
     const result = await server.simulateTransaction(
       raw(new Account(placeholder, "0"), method, args)
     );
@@ -190,7 +189,12 @@ export function createAnchorGateGateway(
     };
   }
   async function configuration(): Promise<GateConfiguration> {
-    const response = record((await read("get_config")).value);
+    await network();
+    const [configRead, latestLedger] = await Promise.all([
+      readContract("get_config"),
+      server.getLatestLedger(),
+    ]);
+    const response = record(configRead.value);
     const provider = Keypair.fromSecret(
       cfg.anchorGateProviderSecret
     ).publicKey();
@@ -214,9 +218,14 @@ export function createAnchorGateGateway(
       throw new Error(
         "Immutable gate configuration does not match this server"
       );
-    const ledger = await server.getLatestLedger();
+    const ledger =
+      latestLedger.sequence >= configRead.ledger
+        ? latestLedger
+        : await server.getLatestLedger();
     const ledgerTime = Number(ledger.closeTime);
     if (
+      !Number.isSafeInteger(ledger.sequence) ||
+      ledger.sequence < configRead.ledger ||
       !Number.isSafeInteger(ledgerTime) ||
       ledgerTime > now() + 30 ||
       ledgerTime < now() - 120
@@ -251,8 +260,16 @@ export function createAnchorGateGateway(
     };
   }
   async function order(id: string): Promise<GateOrder | null> {
-    const result = await read("get_order", [bytes(id)]);
+    const args = [bytes(id)];
+    await network();
+    const [orderRead, challengeRead] = await Promise.allSettled([
+      readContract("get_order", args),
+      readContract("get_challenge", args),
+    ]);
+    if (orderRead.status === "rejected") throw orderRead.reason;
+    const result = orderRead.value;
     if (result.value === null || result.value === undefined) return null;
+    if (challengeRead.status === "rejected") throw challengeRead.reason;
     const value = record(result.value);
     const terms = record(value.terms);
     const eligibility = optional(value.eligibility);
@@ -313,7 +330,7 @@ export function createAnchorGateGateway(
             : eligibility
               ? "eligible"
               : "created",
-      challenge: hex((await read("get_challenge", [bytes(id)])).value),
+      challenge: hex(challengeRead.value.value),
       eligibility_expires_at: eligibility
         ? integer(eligibility.valid_until)
         : null,
