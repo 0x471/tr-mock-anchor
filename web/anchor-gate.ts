@@ -35,6 +35,11 @@ let lastQuoteId = "";
 let lastTransactions = "";
 let setupEpoch = 0;
 let setupState: { address: string; state: WalletReadiness } | undefined;
+let automaticCheck: Promise<void> | undefined;
+let nextAutomaticCheck = 0;
+let automaticFailures = 0;
+let automaticProblem = "";
+let pageClosed = false;
 
 const wallet: GateWallet = {
   async connect() {
@@ -56,10 +61,21 @@ const wallet: GateWallet = {
     return result.address;
   },
   async current() {
-    const [address, network] = await Promise.all([
-      getAddress(),
-      getNetworkDetails(),
-    ]);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const [address, network] = await Promise.race([
+      Promise.all([getAddress(), getNetworkDetails()]),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () =>
+            reject(
+              new Error(
+                "Freighter is not responding. Unlock it, then try again."
+              )
+            ),
+          3000
+        );
+      }),
+    ]).finally(() => clearTimeout(timeout));
     if (address.error || network.error)
       throw new Error("Freighter account or network is unavailable.");
     return { address: address.address, network: network.networkPassphrase };
@@ -97,6 +113,9 @@ function configuredAsset(): TestnetAsset {
 function resetWalletSetup() {
   setupEpoch++;
   setupState = undefined;
+  automaticFailures = 0;
+  automaticProblem = "";
+  nextAutomaticCheck = 0;
 }
 
 async function inspectWalletSetup(addTrustline = false) {
@@ -270,7 +289,7 @@ function render() {
   element("wallet-setup-status").textContent = !readiness
     ? "Checking your wallet. If interrupted, select Check wallet setup."
     : readiness.pending
-      ? "The trustline outcome is not confirmed. Check wallet setup before trying again."
+      ? "Waiting for Testnet to confirm the demo asset. Checking automatically; no extra signature needed."
       : !readiness.trustline
         ? `${readiness.balance} test XLM available. Add the mock USDC asset to continue.`
         : !readiness.authorized
@@ -423,6 +442,9 @@ function render() {
   element("order").textContent = order
     ? `Order ${order.id}\nDirection: ${order.direction}\nStatus: ${order.stage}${order.expired && !order.completed ? (authorized ? " (proof window expired; authorized payout may finish)" : " (expired; no refund is implied)") : ""}\nWallet: ${order.recipient}\n${withdrawal ? `${order.amount_token} Testnet ${tokenName} -> ${order.amount_try} simulated TRY` : `${order.amount_try} simulated TRY -> ${order.amount_token} Testnet ${tokenName}`}\nToken: ${order.token}\nVault: ${order.contract}${withdrawal ? `\nSynthetic beneficiary: ${order.bank_destination}\nBeneficiary commitment: ${order.bank_destination_hash}\nToken escrow recorded: ${order.escrowed ? "yes" : "no"}` : ""}\nProof deadline: ${new Date(order.deadline * 1000).toLocaleString()}${order.confirmed_ledger === null ? "" : `\nConfirmed ledger: ${order.confirmed_ledger}`}${order.eligibility_expires_at ? `\nEligibility until: ${new Date(order.eligibility_expires_at * 1000).toLocaleTimeString()}` : ""}`
     : "No order reserved.";
+  if (order?.receipt_id)
+    element("order").textContent +=
+      `\nSimulated bank receipt ID (not a transaction hash): ${order.receipt_id}`;
   if ((order?.id ?? "") !== lastOrderId) {
     element<HTMLInputElement>("order-id").value = order?.id ?? "";
     lastOrderId = order?.id ?? "";
@@ -439,7 +461,7 @@ function render() {
   element("proof-help").textContent = recoveryOnly
     ? "Recovery only: this expired policy accepts no new phone proofs. Resume an existing order to inspect its confirmed state."
     : wait
-      ? `Wait ${wait}s before creating the phone request so its source-chain timestamp can follow order creation.`
+      ? `Preparing a fresh phone request: ${wait}s. This short delay keeps the proof newer than your order. No action needed yet.`
       : authorized || order?.completed
         ? "This order no longer accepts a phone proof. Its authorized completion follows the recorded bank and settlement states."
         : stockAdultMock
@@ -452,7 +474,7 @@ function render() {
     : "Receiving a proof is not approval. Freighter signs the exact onchain invocation; only confirmed contract state unlocks the next step.";
   element("bank").textContent = withdrawal
     ? order?.receipt_id
-      ? `SIMULATED PAYOUT RECORDED\nMock-bank receipt: ${order.receipt_id}\n${order.completed ? "Escrow settlement to the provider is confirmed." : "Simulated payout is not yet escrow settlement."}`
+      ? `Simulated TRY payout recorded.\n${order.completed ? "Escrow settlement to the provider is confirmed." : "Release the escrow to complete your withdrawal."}`
       : order?.mock_bank_credit
         ? `MOCK-BANK CREDIT RECORDED LOCALLY\n${order.mock_bank_credit.amount_try} simulated TRY to ${order.mock_bank_credit.destination}\nOnchain receipt is not yet confirmed. Reconcile the existing payout; do not create a replacement order.`
         : authorized
@@ -461,7 +483,7 @@ function render() {
     : order?.bank_instructions && !recoveryOnly
       ? `SIMULATED BANK RECEIPT ONLY\nExact amount: ${order.bank_instructions.amount_try} TRY\nReference: ${order.bank_instructions.reference}\nDo not make a real bank transfer.`
       : order?.receipt_id
-        ? `Mock-bank receipt recorded: ${order.receipt_id}\n${order.completed ? "Testnet settlement confirmed." : "Receipt is not itself settlement."}`
+        ? `Simulated TRY deposit recorded.\n${order.completed ? "Your mock USDC transfer is confirmed on Testnet." : "Receive your mock USDC to complete the exchange."}`
         : "Bank instructions remain locked until native eligibility is confirmed.";
   element("settlement-help").textContent = withdrawal
     ? "Authorize simulated payout while eligibility is current. The mock-bank notary records one synthetic credit; settlement then transfers the exact escrow to the provider. An authorized payout cannot be replaced by a new proof."
@@ -500,27 +522,36 @@ function render() {
     !!prepared && !preparedExpired && live && !pendingOtherAction;
   const expiredOrderMessage = authorized
     ? "The proof window expired. This already-authorized simulated payout can still finish."
-    : "The order deadline passed. Held tokens are not automatically refunded. Check status before taking another action.";
+    : "The order deadline passed. Held tokens are not automatically refunded. We are checking its recorded state automatically.";
   const recoveryMessage =
     "The policy expired. Only existing-order recovery and already-authorized payouts remain available.";
-  element("proof-instruction").textContent =
-    pending && !retryablePrepared
-      ? "Check status to confirm the previous transaction before continuing."
-      : orderExpired
-        ? expiredOrderMessage
-        : recoveryOnly
-          ? recoveryMessage
-          : preparedExpired
-            ? "This signature request expired. Show a new QR code to try again."
-            : prepared
-              ? "Sign the proof in Freighter to verify it onchain."
-              : phoneUrl
-                ? "Scan with ZKPassport, then approve on your phone. Keep this page open."
-                : wait
-                  ? `Your order is confirming. The QR code will be ready in ${wait}s.`
-                  : !live
-                    ? "This order cannot accept a new proof. Check its status below."
-                    : "Use a matching synthetic document in ZKPassport developer mode.";
+  const registrationFailed =
+    order?.stage === "registering" &&
+    order.actions.filter((action) => action.kind === "create").at(-1)
+      ?.status === "failed";
+  const registrationFailure =
+    "Reservation transaction failed. Contact the demo operator to recover this exact order; do not create a replacement.";
+  element("proof-instruction").textContent = registrationFailed
+    ? registrationFailure
+    : order?.stage === "registering"
+      ? "Reserving your quoted exchange on Testnet. This updates automatically; no action needed."
+      : pending && !retryablePrepared
+        ? "Waiting for Testnet confirmation. We check automatically; no action needed."
+        : orderExpired
+          ? expiredOrderMessage
+          : recoveryOnly
+            ? recoveryMessage
+            : preparedExpired
+              ? "This signature request expired. Show a new QR code to try again."
+              : prepared
+                ? "Phone proof ready. Sign in Freighter to verify it onchain."
+                : phoneUrl
+                  ? "Scan with ZKPassport, then approve on your phone. Keep this page open."
+                  : wait
+                    ? `Preparing your phone request. Ready in ${wait}s. No action needed yet.`
+                    : !live
+                      ? "This order cannot accept a new proof. Check its status below."
+                      : "Select Show QR code, then scan with ZKPassport. Use a matching synthetic document.";
   button("connect").disabled = busy || !info || !!address;
   button("connect").hidden = !!address;
   button("disconnect").hidden = !address;
@@ -626,7 +657,7 @@ function render() {
     !address ||
     flow.view.reservationPending ||
     !/^[a-f0-9]{64}$/.test(element<HTMLInputElement>("order-id").value.trim());
-  button("refresh").hidden = !order;
+  button("refresh").hidden = !order || (order.completed && !pending);
   button("resume-order").disabled = button("refresh").disabled;
   const proofAccepted = !!order?.eligibility_expires_at;
   const state = (
@@ -678,14 +709,16 @@ function render() {
   element("settlement-next").textContent = order?.completed
     ? "No further payment is needed. Your transaction records are below."
     : pending && retryablePrepared
-      ? "Return to Verify to sign or retry only the exact prepared proof transaction. Its outcome is not yet confirmed."
+      ? "Return to Verify to sign the exact prepared proof. We also check its status automatically; its outcome is not confirmed."
       : pending
-        ? "The transaction outcome is not confirmed. Use Check status before attempting another action."
+        ? "The transaction outcome is not confirmed. Checking automatically; no action needed."
         : authorized
           ? "This fixed payout is already authorized. Finish its receipt and settlement, even if the proof window has expired."
           : order?.expired
-            ? "The order deadline passed. Held tokens are not automatically refunded. Check status; do not create a replacement payment."
-            : "";
+            ? "The order deadline passed. Held tokens are not automatically refunded. Checking automatically; do not create a replacement payment."
+            : eligible
+              ? "Your proof is verified onchain. Only the simulated bank step and token settlement remain."
+              : "";
   const progress: Step =
     !address || (!order && !exchangeReady && !flow.view.reservationPending)
       ? "wallet"
@@ -725,12 +758,20 @@ function render() {
     if (flow.view.reservationPending)
       statusMessage =
         "Reservation outcome unknown. Retry the original reservation with the same terms. Do not request a replacement quote or clear this session.";
+    else if (order?.completed)
+      statusMessage = pending
+        ? "Exchange complete. Updating the transaction evidence automatically. No further payment is needed."
+        : "Exchange complete. The token transfer is confirmed on Testnet.";
     else if (pending && retryablePrepared)
       statusMessage =
-        "The exact prepared proof transaction is not confirmed. Sign or retry that same transaction, or use Check status if you already submitted it.";
+        "The exact proof transaction is not confirmed. Sign it in Freighter when ready. If already signed, leave this page open while we check automatically.";
     else if (pending)
       statusMessage =
-        "The transaction outcome is not confirmed. Select Check status to reconcile this order.";
+        "The transaction outcome is not confirmed. Checking Testnet automatically; no action needed.";
+    else if (registrationFailed) statusMessage = registrationFailure;
+    else if (order?.stage === "registering")
+      statusMessage =
+        "Reserving your exchange on Testnet. Checking automatically; no action needed.";
     else if (orderExpired) statusMessage = expiredOrderMessage;
     else if (recoveryOnly) statusMessage = recoveryMessage;
     else if (preparedExpired)
@@ -740,6 +781,7 @@ function render() {
       statusMessage =
         "This quote expired. Select Change amount and request a fresh quote before reserving.";
   }
+  if (automaticProblem && !busy) statusMessage = automaticProblem;
   if (element("status").textContent !== statusMessage)
     element("status").textContent = statusMessage;
   if (element("status-announcement").textContent !== statusMessage)
@@ -755,8 +797,26 @@ function render() {
     !phoneUrl &&
     !prepared &&
     !wait &&
+    order?.stage !== "registering" &&
+    !automaticProblem &&
     !/phone|proof|clipboard|QR|session cleared/i.test(statusMessage);
   const transactions = element("transactions");
+  element("testnet-activity").hidden = !order;
+  const actionName = (kind: string) =>
+    ({
+      create: "Order reservation",
+      prove: "ZKPassport proof verification",
+      receipt: "Simulated bank receipt",
+      authorize: "Payout authorization",
+      settle: "Token settlement",
+    })[kind] ?? "Testnet action";
+  const latest = order?.actions.at(-1);
+  const latestLink = element<HTMLAnchorElement>("latest-transaction");
+  latestLink.hidden = !latest;
+  if (latest) {
+    latestLink.href = `https://stellar.expert/explorer/testnet/tx/${latest.transaction_hash}`;
+    latestLink.textContent = `View ${actionName(latest.kind).toLowerCase()}`;
+  } else latestLink.removeAttribute("href");
   element("transactions-empty").hidden = !!order?.actions.length;
   const transactionState = JSON.stringify(order?.actions ?? []);
   if (transactionState !== lastTransactions) {
@@ -768,7 +828,16 @@ function render() {
       link.href = `https://stellar.expert/explorer/testnet/tx/${action.transaction_hash}`;
       link.target = "_blank";
       link.rel = "noreferrer";
-      link.textContent = `${action.kind}: ${action.status}${action.ledger === null ? "" : ` / ledger ${action.ledger}`} / ${action.transaction_hash.slice(0, 12)}...`;
+      const outcome =
+        action.status === "success"
+          ? "Confirmed"
+          : action.status === "failed"
+            ? "Failed"
+            : action.status === "prepared"
+              ? "Prepared - not confirmed"
+              : "Not confirmed yet";
+      link.textContent = `${actionName(action.kind)}: ${outcome}${action.ledger === null ? "" : ` / ledger ${action.ledger}`}`;
+      link.title = action.transaction_hash;
       item.append(link);
       transactions.append(item);
     }
@@ -805,16 +874,25 @@ function render() {
   }
 }
 
-async function run(action: () => Promise<unknown>) {
-  if (busy) return;
+async function run(action: () => Promise<unknown>, progress?: string) {
+  if (busy || pageClosed) return;
   busy = true;
+  const epoch = setupEpoch;
   const previousStep = selectedStep;
   const focusedControl = document.activeElement;
   element("status").classList.remove("error");
+  if (progress) flow.view.message = progress;
   render();
   try {
+    await automaticCheck;
+    if (pageClosed || epoch !== setupEpoch) return;
     await action();
+    if (!pageClosed && epoch === setupEpoch) {
+      automaticProblem = "";
+      automaticFailures = 0;
+    }
   } catch (error) {
+    if (pageClosed || epoch !== setupEpoch) return;
     element("status").classList.add("error");
     flow.view.message =
       error instanceof Error && error.name !== "ZodError"
@@ -822,10 +900,85 @@ async function run(action: () => Promise<unknown>) {
         : "The anchor returned an unavailable or unsupported policy/response. No payout is assumed.";
   } finally {
     busy = false;
+    nextAutomaticCheck = Date.now() + 3000;
     render();
-    if (previousStep !== selectedStep || focusedControl?.closest("[hidden]"))
+    if (
+      !pageClosed &&
+      (previousStep !== selectedStep || focusedControl?.closest("[hidden]"))
+    )
       element(`${selectedStep}-heading`).focus({ preventScroll: true });
   }
+}
+
+async function checkAutomatically() {
+  const { wallet: address, order, reservationPending } = flow.view;
+  const pendingSetup =
+    setupState?.address === address && setupState.state.pending;
+  if (
+    pageClosed ||
+    busy ||
+    automaticCheck ||
+    !address ||
+    (!order && !pendingSetup) ||
+    (order?.completed &&
+      !order.actions.some(
+        (action) => action.status === "pending" || action.status === "prepared"
+      )) ||
+    reservationPending ||
+    document.visibilityState === "hidden" ||
+    Date.now() < nextAutomaticCheck
+  )
+    return;
+  const epoch = setupEpoch;
+  const focusedControl = document.activeElement;
+  const current = () =>
+    !pageClosed &&
+    epoch === setupEpoch &&
+    flow.view.wallet === address &&
+    flow.view.order?.id === order?.id;
+  automaticCheck = (async () => {
+    try {
+      if (pendingSetup) {
+        const state = await walletSetup.inspect(address, configuredAsset());
+        if (!current()) return;
+        setupState = { address, state };
+        if (!state.pending) {
+          element("status").classList.remove("error");
+          flow.view.message =
+            state.trustline && state.authorized
+              ? "Mock-USDC setup confirmed. Choose your exchange amount."
+              : "Wallet setup is incomplete. Add the demo asset in Freighter.";
+        }
+      } else if (order) {
+        const previousState = JSON.stringify(order);
+        await flow.refresh(order.id, { quiet: true });
+        if (current() && previousState !== JSON.stringify(flow.view.order))
+          element("status").classList.remove("error");
+      }
+      if (!current()) return;
+      automaticFailures = 0;
+      automaticProblem = "";
+    } catch {
+      if (!current()) return;
+      automaticFailures++;
+      automaticProblem =
+        "Status check interrupted. Retrying automatically; the last confirmed state is unchanged. Do not repeat a payment.";
+    } finally {
+      automaticCheck = undefined;
+      if (current()) {
+        nextAutomaticCheck =
+          Date.now() + Math.min(30_000, 5000 * 2 ** automaticFailures);
+        render();
+        if (
+          !busy &&
+          document.activeElement === focusedControl &&
+          focusedControl?.closest("[hidden]")
+        )
+          element(`${selectedStep}-heading`).focus({ preventScroll: true });
+      }
+    }
+  })();
+  await automaticCheck;
 }
 
 button("connect").onclick = () => {
@@ -877,7 +1030,13 @@ button("reserve").onclick = () => {
 };
 button("setup-wallet").onclick = () => {
   void run(async () => {
-    requireTrustline(await inspectWalletSetup(true));
+    const state = await inspectWalletSetup(true);
+    if (state.pending) {
+      flow.view.message =
+        "Waiting for Testnet to confirm wallet setup. Checking automatically.";
+      return;
+    }
+    requireTrustline(state);
     flow.view.message =
       "Mock-USDC setup confirmed on Testnet. Request your quote.";
   });
@@ -915,7 +1074,10 @@ for (const step of steps) {
 }
 element<HTMLInputElement>("order-id").oninput = () => render();
 button("prove").onclick = () => {
-  void run(() => flow.requestProof());
+  void run(
+    () => flow.requestProof(),
+    "Creating your private ZKPassport request. Please wait."
+  );
 };
 button("cancel-proof").onclick = () => {
   flow.view.message = "Phone request cancelled. Show a new QR code when ready.";
@@ -927,16 +1089,36 @@ button("cancel-proof").onclick = () => {
   ).focus({ preventScroll: true });
 };
 button("sign-proof").onclick = () => {
-  void run(() => flow.signProof());
+  const expected = flow.view.prepared?.hash;
+  void run(async () => {
+    if (
+      expected &&
+      flow.view.order?.actions.some(
+        (action) =>
+          action.transaction_hash === expected && action.status === "success"
+      )
+    )
+      return;
+    await flow.signProof();
+  }, "Approve the proof transaction in Freighter. Then we will check Testnet confirmation automatically.");
 };
 button("bank-action").onclick = () => {
-  void run(() => flow.simulateBank());
+  void run(
+    () => flow.simulateBank(),
+    "Recording the simulated bank transfer on Testnet. No real bank transfer occurs."
+  );
 };
 button("authorize-payout").onclick = () => {
-  void run(() => flow.authorizePayout());
+  void run(
+    () => flow.authorizePayout(),
+    "Authorizing this exact simulated TRY payout on Testnet. Please wait."
+  );
 };
 button("settle").onclick = () => {
-  void run(() => flow.settle());
+  void run(
+    () => flow.settle(),
+    "Completing your token transfer on Testnet. We will show completion only after confirmation."
+  );
 };
 const refreshOrder = () => {
   void run(() =>
@@ -965,11 +1147,18 @@ watcher.watch((state) => {
     flow.disconnect();
   }
 });
-const timer = setInterval(render, 1000);
+const timer = setInterval(() => {
+  render();
+  void checkAutomatically();
+}, 1000);
 window.addEventListener("pagehide", () => {
+  pageClosed = true;
   clearInterval(timer);
   watcher.stop();
   resetWalletSetup();
   flow.disconnect();
+});
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) window.location.reload();
 });
 void run(() => flow.initialize());
