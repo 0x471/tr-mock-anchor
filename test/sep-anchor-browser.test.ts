@@ -68,7 +68,15 @@ afterEach(() => {
   vi.resetModules();
 });
 
-async function page(overrides: Record<string, unknown> = {}) {
+async function page(
+  overrides: Record<string, unknown> = {},
+  faults: {
+    initialStateFailures?: number;
+    initialInfoFailures?: number;
+    refundFailure?: boolean;
+    launcher?: boolean;
+  } = {}
+) {
   vi.resetModules();
   vi.useFakeTimers();
   const html = await readFile(
@@ -132,13 +140,27 @@ async function page(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
   const location = new URL(
-    `http://localhost:8787/sep24/interactive/${orderId}`
+    faults.launcher
+      ? "http://localhost:8787/anchor"
+      : `http://localhost:8787/sep24/interactive/${orderId}`
   );
+  let stateFailures = faults.initialStateFailures ?? 0;
+  let refundFailure = faults.refundFailure ?? false;
+  let infoFailures = faults.initialInfoFailures ?? 0;
   const fetcher: typeof fetch = async (input, init) => {
     const url = new URL(String(input), location.origin);
-    if (url.pathname === `/sep24/interactive/${orderId}/state`)
+    if (url.pathname === `/sep24/interactive/${orderId}/state`) {
+      if (stateFailures > 0) {
+        stateFailures -= 1;
+        throw new TypeError("Failed to fetch");
+      }
       return Response.json({ transaction, csrf_token: "ef".repeat(32) });
-    if (url.pathname === "/sep24/info")
+    }
+    if (url.pathname === "/sep24/info") {
+      if (infoFailures > 0) {
+        infoFailures -= 1;
+        throw new TypeError("Failed to fetch");
+      }
       return Response.json({
         network: "testnet",
         network_passphrase: Networks.TESTNET,
@@ -153,10 +175,15 @@ async function page(overrides: Record<string, unknown> = {}) {
           policy_valid_until: Math.floor(Date.now() / 1000) + 600,
         },
       });
+    }
     if (
       url.pathname === `/sep24/interactive/${orderId}/refund` &&
       init?.method === "POST"
     ) {
+      if (refundFailure) {
+        refundFailure = false;
+        throw new TypeError("Failed to fetch");
+      }
       if (new Headers(init.headers).get("X-CSRF-Token") !== "ef".repeat(32))
         return Response.json(
           { error: "Session binding missing" },
@@ -202,18 +229,93 @@ async function page(overrides: Record<string, unknown> = {}) {
   return {
     get,
     visible,
+    async failNextStatus() {
+      stateFailures = 1;
+      await vi.advanceTimersByTimeAsync(2600);
+    },
     async click(id: string) {
       expect(visible(id)).toBe(true);
       expect(get(id).disabled).toBe(false);
       get(id).trigger("click");
       await vi.waitFor(() => expect(get(id).disabled).toBe(false));
     },
-    async update(changes: Record<string, unknown>) {
+    async update(changes: Record<string, unknown>, elapsed = 2600) {
       transaction = { ...transaction, ...changes };
-      await vi.advanceTimersByTimeAsync(2600);
+      await vi.advanceTimersByTimeAsync(elapsed);
     },
   };
 }
+
+it("clears a transient status error when settlement is subsequently confirmed", async () => {
+  const browser = await page({
+    status: "pending_stellar",
+    payout_authorized: true,
+    can_refund: false,
+  });
+  await browser.failNextStatus();
+  expect(browser.visible("problem")).toBe(true);
+  await browser.update({ status: "completed", escrowed: false }, 6000);
+  expect(browser.get("heading").textContent).toBe("Exchange complete");
+  expect(browser.visible("problem")).toBe(false);
+});
+
+it("keeps confirmed settlement visible without polling a completed order", async () => {
+  const browser = await page({
+    status: "completed",
+    escrowed: false,
+    can_refund: false,
+  });
+  await browser.failNextStatus();
+  expect(browser.get("heading").textContent).toBe("Exchange complete");
+  expect(browser.visible("problem")).toBe(false);
+});
+
+it("recovers an interrupted first status read without restarting the order", async () => {
+  const browser = await page({}, { initialStateFailures: 1 });
+  expect(browser.visible("problem")).toBe(true);
+  await browser.update({}, 6000);
+  expect(browser.visible("exchange")).toBe(true);
+  expect(browser.get("order-id").textContent).toBe(orderId);
+  expect(browser.visible("problem")).toBe(false);
+});
+
+it("does not replay a failed refund or erase its uncertainty on an unrelated status read", async () => {
+  const browser = await page({}, { refundFailure: true });
+  await browser.click("refund");
+  expect(browser.visible("problem")).toBe(true);
+  const originalWarning = browser.get("problem").textContent;
+  await browser.failNextStatus();
+  expect(browser.get("problem").textContent).toBe(originalWarning);
+  await browser.update({}, 6000);
+  expect(browser.visible("problem")).toBe(true);
+  expect(browser.get("heading").textContent).not.toBe("Refund confirmed");
+});
+
+it("reconnects the launcher after a transient configuration fetch failure", async () => {
+  const browser = await page({}, { launcher: true, initialInfoFailures: 1 });
+  expect(browser.visible("launcher")).toBe(false);
+  await browser.update({}, 6000);
+  expect(browser.visible("launcher")).toBe(true);
+  expect(browser.visible("problem")).toBe(false);
+});
+
+it("recovers missing configuration without discarding the current order", async () => {
+  const browser = await page({}, { initialInfoFailures: 1 });
+  expect(browser.visible("problem")).toBe(true);
+  await browser.update({}, 6000);
+  expect(browser.get("order-id").textContent).toBe(orderId);
+  expect(browser.visible("problem")).toBe(false);
+});
+
+it("continues reconciliation when a completed order has payment recovery outstanding", async () => {
+  const browser = await page({
+    status: "completed",
+    payment_recovery_required: true,
+  });
+  await browser.failNextStatus();
+  expect(browser.visible("extra-payment-warning")).toBe(true);
+  expect(browser.visible("problem")).toBe(true);
+});
 
 it("keeps an expired-grant escrow refund visible and submits it from the production page", async () => {
   const browser = await page();
