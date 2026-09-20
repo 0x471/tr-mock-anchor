@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { Networks } from "@stellar/stellar-sdk";
 import { cors } from "hono/cors";
 import { serveStatic } from "@hono/node-server/serve-static";
 import type { AppEnv, Deps } from "./context.js";
@@ -19,6 +20,8 @@ import { zkpassportRoutes } from "./routes/zkpassport.js";
 import { anchorGateRoutes } from "./routes/anchor-gate.js";
 import { anchorGateBrowserRoutes } from "./anchor-gate-browser.js";
 import { createSepContext, type SepContext } from "./sepauth.js";
+import { createSepAnchor } from "./sep-anchor.js";
+import { createSepAnchorRoutes } from "./routes/sep-anchor.js";
 
 export function createApp(
   deps: Deps,
@@ -31,7 +34,7 @@ export function createApp(
     "*",
     cors({
       origin: "*",
-      allowHeaders: ["Content-Type", "Authorization"],
+      allowHeaders: ["Content-Type", "Authorization", "Idempotency-Key"],
       exposeHeaders: ["X-Request-Id"],
     })
   );
@@ -80,6 +83,20 @@ export function createApp(
   app.route("/", adminRoutes(deps));
   app.route("/", publicRoutes(deps, sep));
   app.route("/", sep10Routes(deps, sep));
+  if (
+    deps.sepAnchorGateway &&
+    deps.cfg.anchorMode === "zkpassport" &&
+    deps.cfg.networkPassphrase === Networks.TESTNET
+  ) {
+    const engine = (deps.sepAnchor ??= createSepAnchor(
+      deps,
+      deps.sepAnchorGateway
+    ));
+    app.route(
+      "/",
+      createSepAnchorRoutes(deps, sep, engine) as unknown as Hono<AppEnv>
+    );
+  }
   app.route("/", sep6Routes(deps, sep) as unknown as Hono<AppEnv>);
   app.route("/", sep12Routes(deps, sep) as unknown as Hono<AppEnv>);
   app.route("/", sep38Routes(deps, sep) as unknown as Hono<AppEnv>);

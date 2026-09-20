@@ -6,6 +6,8 @@ import type { PartnerRow } from "./core/types.js";
 import type { PassportVerifier } from "./zkpassport.js";
 import type { GateGateway } from "./anchor-gate-types.js";
 import type { OfacPrecheck } from "./ofac-precheck.js";
+import type { SepAnchorGateway, SepAnchorIngress } from "./sep-anchor-types.js";
+import type { SepAnchor } from "./sep-anchor.js";
 
 export interface Logger {
   info: (msg: string, extra?: unknown) => void;
@@ -22,6 +24,9 @@ export interface Deps {
   passportVerifier?: PassportVerifier;
   anchorGate?: GateGateway;
   ofac?: OfacPrecheck;
+  sepAnchorGateway?: SepAnchorGateway;
+  sepAnchorIngress?: SepAnchorIngress;
+  sepAnchor?: SepAnchor;
 }
 
 export type AppEnv = { Variables: { partner: PartnerRow } };
