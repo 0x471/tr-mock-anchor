@@ -153,6 +153,8 @@ async function page(
   let stateFailures = faults.initialStateFailures ?? 0;
   let refundFailure = faults.refundFailure ?? false;
   let infoFailures = faults.initialInfoFailures ?? 0;
+  let nextState: Promise<void> | undefined;
+  let nextRefund: Promise<void> | undefined;
   const fetcher: typeof fetch = async (input, init) => {
     const url = new URL(String(input), location.origin);
     if (url.pathname === `/sep24/interactive/${orderId}/state`) {
@@ -160,7 +162,14 @@ async function page(
         stateFailures -= 1;
         throw new TypeError("Failed to fetch");
       }
-      return Response.json({ transaction, csrf_token: "ef".repeat(32) });
+      const response = Response.json({
+        transaction,
+        csrf_token: "ef".repeat(32),
+      });
+      const wait = nextState;
+      nextState = undefined;
+      await wait;
+      return response;
     }
     if (url.pathname === "/sep24/info") {
       if (infoFailures > 0) {
@@ -186,6 +195,9 @@ async function page(
       url.pathname === `/sep24/interactive/${orderId}/refund` &&
       init?.method === "POST"
     ) {
+      const wait = nextRefund;
+      nextRefund = undefined;
+      await wait;
       if (refundFailure) {
         refundFailure = false;
         throw new TypeError("Failed to fetch");
@@ -235,6 +247,27 @@ async function page(
   return {
     get,
     visible,
+    async holdNextStatus(changes: Record<string, unknown> = {}, fail = false) {
+      transaction = { ...transaction, ...changes };
+      let release!: () => void;
+      nextState = new Promise<void>((resolve, reject) => {
+        release = fail
+          ? () => reject(new TypeError("Failed to fetch"))
+          : resolve;
+      });
+      await vi.advanceTimersByTimeAsync(2600);
+      return async () => {
+        release();
+        await vi.advanceTimersByTimeAsync(0);
+      };
+    },
+    holdRefundFailure() {
+      let reject!: (error: Error) => void;
+      nextRefund = new Promise<void>((_, fail) => {
+        reject = fail;
+      });
+      return () => reject(new TypeError("Failed to fetch"));
+    },
     async failNextStatus() {
       stateFailures = 1;
       await vi.advanceTimersByTimeAsync(2600);
@@ -251,6 +284,75 @@ async function page(
     },
   };
 }
+
+it("does not replace a confirmed refund with an older pending status response", async () => {
+  const browser = await page();
+  const release = await browser.holdNextStatus();
+  await browser.click("refund");
+  expect(browser.get("heading").textContent).toBe("Refund confirmed");
+  await release();
+  expect(browser.get("heading").textContent).toBe("Refund confirmed");
+});
+
+it("does not resurrect a connection warning when an old poll fails after confirmation", async () => {
+  const browser = await page();
+  const release = await browser.holdNextStatus({}, true);
+  await browser.click("refund");
+  expect(browser.get("heading").textContent).toBe("Refund confirmed");
+  await release();
+  expect(browser.visible("problem")).toBe(false);
+});
+
+it("does not restore transport uncertainty after a clean terminal status arrives", async () => {
+  const browser = await page();
+  const release = await browser.holdNextStatus({
+    status: "completed",
+    escrowed: false,
+    can_refund: false,
+  });
+  const reject = browser.holdRefundFailure();
+  const clicked = browser.click("refund");
+  await release();
+  expect(browser.get("heading").textContent).toBe("Exchange complete");
+  reject();
+  await clicked;
+  expect(browser.visible("problem")).toBe(false);
+});
+
+it.each([
+  { payment_recovery_required: true },
+  { recovery_required: true },
+  {
+    actions: [
+      {
+        kind: "refund",
+        status: "pending",
+        transaction_hash: "78".repeat(32),
+        ledger: null,
+      },
+    ],
+  },
+])(
+  "keeps a lost response warning when terminal reconciliation is incomplete: %j",
+  async (outstanding) => {
+    const browser = await page();
+    const release = await browser.holdNextStatus({
+      status: "completed",
+      escrowed: false,
+      can_refund: false,
+      ...outstanding,
+    });
+    const reject = browser.holdRefundFailure();
+    const clicked = browser.click("refund");
+    await release();
+    reject();
+    await clicked;
+    expect(browser.visible("problem")).toBe(true);
+    expect(browser.get("problem").textContent).toContain("response was lost");
+    await browser.update({});
+    expect(browser.visible("problem")).toBe(true);
+  }
+);
 
 it("clears a transient status error when settlement is subsequently confirmed", async () => {
   const browser = await page({

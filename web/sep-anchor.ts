@@ -132,6 +132,8 @@ let proofReceived = false;
 let prefetched = false;
 let amountSide: "sell_amount" | "buy_amount" = "sell_amount";
 let failures = 0;
+let refreshSequence = 0;
+let appliedRefreshSequence = 0;
 let queuedProof: (() => Promise<void>) | undefined;
 let problemSource: "action" | "status" | "configuration" | undefined;
 
@@ -204,11 +206,13 @@ async function action(work: () => Promise<void>) {
   try {
     await work();
   } catch (error) {
-    problem(
-      error instanceof Error
-        ? error.message
-        : "Request failed. Keep this order and reconcile before retrying."
-    );
+    if (error instanceof AnchorNetworkError && pollingComplete()) problem();
+    else
+      problem(
+        error instanceof Error
+          ? error.message
+          : "Request failed. Keep this order and reconcile before retrying."
+      );
   } finally {
     busy = false;
     render();
@@ -555,11 +559,14 @@ async function login() {
 
 async function refresh() {
   if (!id) return;
+  const sequence = ++refreshSequence;
   const response = z
     .object({ transaction: transactionSchema, csrf_token: hash })
     .parse(await json(`${base}/state`));
   if (response.transaction.id !== id)
     throw new Error("The anchor returned a different order.");
+  if (sequence < appliedRefreshSequence) return;
+  appliedRefreshSequence = sequence;
   transaction = response.transaction;
   csrf = response.csrf_token;
   if (
@@ -603,13 +610,7 @@ async function refresh() {
             ? "Waiting for native Testnet confirmation. Keep this order open."
             : "Status updates automatically. No need to check manually."
     );
-  if (
-    problemSource === "status" ||
-    (["completed", "refunded"].includes(transaction.status) &&
-      !transaction.recovery_required &&
-      !transaction.payment_recovery_required)
-  )
-    problem();
+  if (problemSource === "status" || pollingComplete()) problem();
   render();
 }
 async function prove() {
@@ -1028,7 +1029,10 @@ async function poll() {
       if (!info && !pollingComplete()) await recoverConfiguration();
     } catch (error) {
       failures++;
-      if (!problemSource || problemSource === "status")
+      if (
+        !(error instanceof AnchorNetworkError && pollingComplete()) &&
+        (!problemSource || problemSource === "status")
+      )
         problem(
           error instanceof AnchorNetworkError
             ? "Connection interrupted. Reconnecting to this same order automatically. Do not send another payment."
