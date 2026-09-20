@@ -701,6 +701,20 @@ describe("gated browser wallet authentication", () => {
 });
 
 describe("gated browser order and phone lifecycle", () => {
+  it("retains the source-block freshness buffer before displaying an order QR", async () => {
+    const test = browserHarness();
+    test.order.created_at += 31;
+    await test.flow.initialize();
+    await test.flow.connect();
+    await test.flow.quote("100.00");
+    await test.flow.createOrder();
+    await expect(test.flow.requestProof()).rejects.toThrow("Wait 30 seconds");
+    expect(test.flow.view.phoneUrl).toBe("");
+    test.advance(30);
+    await test.flow.requestProof();
+    expect(test.flow.view.phoneUrl).toBeTruthy();
+  });
+
   it.each([
     { status: 403 as const, code: "ofac_precheck_match" },
     { status: 503 as const, code: "ofac_precheck_unavailable" },
@@ -1357,6 +1371,7 @@ async function browserPageHarness(
     trustlineLimit?: string;
     direction?: "deposit" | "withdrawal";
     onOrderRead?(): Promise<Response | void>;
+    onProofRequest?(): Promise<void>;
   } = {}
 ) {
   const test = browserHarness(options.direction, {
@@ -1380,6 +1395,8 @@ async function browserPageHarness(
   ) => {
     const url = new URL(String(input));
     httpRequests.push({ path: url.pathname, method: init?.method ?? "GET" });
+    if (url.pathname.endsWith("/proof-request"))
+      await options.onProofRequest?.();
     if (
       /^\/anchor-gate\/orders\/[a-f0-9]{64}$/.test(url.pathname) &&
       (init?.method ?? "GET") === "GET"
@@ -1667,6 +1684,34 @@ async function browserPageHarness(
 }
 
 describe("production-built gated browser serving", () => {
+  it("explains the order check while a requested QR is not ready yet", async () => {
+    let finishCheck: (() => void) | undefined;
+    const check = new Promise<void>((resolve) => {
+      finishCheck = resolve;
+    });
+    const test = await browserPageHarness({ onProofRequest: () => check });
+    try {
+      await test.click("connect");
+      test.node("amount").value = "100.00";
+      await test.click("quote");
+      await test.click("reserve");
+      test.node("prove").onclick!();
+      await vi.waitFor(() =>
+        expect(test.node("status").textContent).toContain(
+          "Checking your confirmed order and policy"
+        )
+      );
+      expect(test.node("phone-box").hidden).toBe(true);
+      finishCheck!();
+      await vi.waitFor(() => expect(test.node("phone-box").hidden).toBe(false));
+    } finally {
+      finishCheck!();
+      await vi.waitFor(() =>
+        expect(test.node("status-label").textContent).not.toBe("WORKING")
+      );
+      test.cleanup();
+    }
+  });
   it("asks the phone for the configured private snapshot check and labels it narrowly", async () => {
     const sanctions = { root: "01".repeat(32), strict: true };
     const test = await browserPageHarness({ sanctions });
@@ -2732,6 +2777,7 @@ describe("production-built gated browser serving", () => {
         "frame-ancestors 'none'"
       );
       const html = await page.text();
+      expect(html).toContain('<span class="wordmark">TR Anchor.</span');
       expect(html.includes('src="/anchor-gate/bundle.js"')).toBe(true);
       expect(html.includes('id="authorize-payout"')).toBe(true);
       const bundle = await app.request(

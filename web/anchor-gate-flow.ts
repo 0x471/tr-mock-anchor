@@ -862,6 +862,9 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       preparedInputs = undefined;
       const session = generation;
       const phoneId = phoneGeneration;
+      change(
+        "Checking your confirmed order and policy before creating the QR."
+      );
       const config = phoneSchema.parse(
         await (
           await request(`/anchor-gate/orders/${order.id}/proof-request`)
@@ -897,6 +900,7 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
         currentSession() && !flow.recoveryOnly && now() < config.expires_at;
       requireActivePolicy();
       let received = false;
+      change("Connecting the private phone relay. Your QR is next.");
       const created = await deps.phone.request(config, {
         event(message) {
           if (active() && !received) change(message);
