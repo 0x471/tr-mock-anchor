@@ -33,6 +33,13 @@ fn selected_profile() -> (&'static str, usize, usize, u32) {
             12,
             23,
         )
+    } else if cfg!(feature = "count8") {
+        (
+            "03dbb84b656cdf3b9f93d809c530b4c3901fe5be6f56c424a04ae827ebe45a08",
+            10240,
+            13,
+            23,
+        )
     } else {
         (
             "013d18b35786455360821b6dbcb40174603cac5893781f0fc1601af4eacb01eb",
@@ -106,7 +113,7 @@ fn check(wasm: Option<&[u8]>, proof: &[u8], inputs: &[u8], positive: bool, case:
 }
 
 // Opt in with explicit binary inputs; this never searches for phone exports.
-// cargo test --locked --features std[,count6|count7] --test capture -- --ignored
+// cargo test --locked --features std[,count6|count7|count8] --test capture -- --ignored
 // PASSPORT_WASM is optional and must be the matching compiled profile.
 // No raw proof, public inputs, document metadata, or snapshots are emitted.
 #[test]

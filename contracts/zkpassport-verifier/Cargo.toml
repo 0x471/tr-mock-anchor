@@ -21,6 +21,7 @@ trace = ["std"]
 wasm-tests = ["std"]
 count6 = []
 count7 = []
+count8 = []
 
 [profile.release]
 opt-level = "z"

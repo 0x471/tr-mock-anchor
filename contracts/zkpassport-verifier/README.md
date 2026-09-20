@@ -13,10 +13,11 @@ Experimental, **unaudited** native-host-accelerated verifier for compile-time pi
 
 `PassportVerifier::verify(proof, public_inputs)` uses the embedded key; callers cannot supply a replacement key. It returns `true` only after successful verification, or a contract error. It stores no eligibility, identity, or replay state.
 
-## Country profiles
+## Extended predicate profiles
 
-Build with exactly one of `--features count6` or `--features count7` to select
-the corresponding official 0.20.0 outer circuit. Selecting both fails compilation.
+Build with exactly one of `--features count6`, `--features count7` or
+`--features count8` to select the corresponding official 0.20.0 outer circuit.
+Selecting more than one fails compilation.
 There is no runtime key or profile selection. `profile()` returns the actual
 embedded key hash, external-input count, proof size and round count.
 
@@ -25,11 +26,20 @@ embedded key hash, external-input count, proof size and round count.
 | Default | OuterCount5   | 10              | 9888        | 22     |
 | count6  | OuterCount6   | 11              | 10240       | 23     |
 | count7  | OuterCount7   | 12              | 10240       | 23     |
+| count8  | OuterCount8   | 13              | 10240       | 23     |
 
 One private country predicate added to age+binding requires count6; nationality
 and document-issuer predicates together require count7. Exact keys, commitments,
 source pins and binary hashes are recorded in
 [the country profile specification](../../docs/COUNTRY_PROOF_PROFILE.md).
+
+Age, binding, nationality inclusion, issuer inclusion and sanctions exclusion
+together require Count8. It adds one committed predicate, not a larger
+unverified disclosure blob. The Count8 key is independently pinned to the
+official generated verifier and published circuit manifest; see
+[fixture provenance](fixtures/PROVENANCE.md). Native profile and compiled-Wasm
+profile tests check the exact key hash and reject the incompatible historical
+age-only proof. These checks are not a positive Count8 proof-verification test.
 
 The country builds pass native arithmetic/decoder tests, compiled-Wasm metadata
 checks and rejection of the age-only fixture. Those checks do **not** establish
@@ -41,7 +51,7 @@ The bundled positive fixture is an **official historical synthetic-document proo
 
 ## What is checked
 
-The decoder requires exact lengths and canonical scalar/base-field encodings. It checks every ordinary proof point (31 in the default profile, 32 in either country profile), all 28 key points, and both reconstructed recursive points before MSM coefficient filtering. Recursive coordinates use low-136/high-120 limbs; default/infinite recursive accumulators are rejected for these deliberately narrow formats.
+The decoder requires exact lengths and canonical scalar/base-field encodings. It checks every ordinary proof point (31 in the default profile, 32 in an extended profile), all 28 key points, and both reconstructed recursive points before MSM coefficient filtering. Recursive coordinates use low-136/high-120 limbs; default/infinite recursive accumulators are rejected for these deliberately narrow formats.
 
 Verification includes the BB5 transcript, all 29 relations, the selected profile's sumcheck rounds, and Gemini/Shplonk opening reduction. **Both pairing equations must pass:**
 

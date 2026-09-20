@@ -1,6 +1,6 @@
 #![cfg(all(
     feature = "wasm-tests",
-    not(any(feature = "count6", feature = "count7"))
+    not(any(feature = "count6", feature = "count7", feature = "count8"))
 ))]
 mod common;
 

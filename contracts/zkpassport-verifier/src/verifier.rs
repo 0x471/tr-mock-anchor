@@ -186,7 +186,10 @@ fn complete_recursive_accumulator(
     Ok(())
 }
 
-#[cfg(all(test, not(any(feature = "count6", feature = "count7"))))]
+#[cfg(all(
+    test,
+    not(any(feature = "count6", feature = "count7", feature = "count8"))
+))]
 mod tests {
     use super::*;
     use soroban_sdk::testutils::Ledger;

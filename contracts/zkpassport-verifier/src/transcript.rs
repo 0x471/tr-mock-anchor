@@ -1,6 +1,6 @@
 //! Keccak Fiat-Shamir transcript for the pinned BB5 ZKPassport outer format.
 //!
-//! Source: official OuterCount5/6/7.sol, d3a75acb8529e82c61be136a402553daec259257.
+//! Source: official OuterCount5/6/7/8.sol, d3a75acb8529e82c61be136a402553daec259257.
 //! Each digest is reduced modulo Fr BEFORE splitting into two 127-bit challenges.
 //! Ordinary points use raw x||y. Only recursive pairing points use scalar limbs.
 
@@ -164,9 +164,9 @@ pub fn generate_transcript(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(not(any(feature = "count6", feature = "count7")))]
+    #[cfg(not(any(feature = "count6", feature = "count7", feature = "count8")))]
     use crate::utils::{load_proof, load_vk_from_bytes};
-    #[cfg(not(any(feature = "count6", feature = "count7")))]
+    #[cfg(not(any(feature = "count6", feature = "count7", feature = "count8")))]
     use soroban_sdk::testutils::Ledger;
 
     fn scalar128(value: u128) -> [u8; 32] {
@@ -187,7 +187,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(any(feature = "count6", feature = "count7")))]
+    #[cfg(not(any(feature = "count6", feature = "count7", feature = "count8")))]
     fn published_fixture_transcript_matches_independent_rust_reference() {
         let env = Env::default();
         env.ledger().set_protocol_version(26);
