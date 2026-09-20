@@ -6,6 +6,11 @@ use soroban_sdk::{
     Address, Bytes, BytesN, Env, IntoVal, String, Val, Vec,
 };
 
+const FR_MODULUS: [u8; 32] = [
+    0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x29, 0xb8, 0x50, 0x45, 0xb6, 0x81, 0x81, 0x58, 0x5d,
+    0x28, 0x33, 0xe8, 0x48, 0x79, 0xb9, 0x70, 0x91, 0x43, 0xe1, 0xf5, 0x93, 0xf0, 0x00, 0x00, 0x01,
+];
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Config {
@@ -23,6 +28,8 @@ pub struct Config {
     pub min_age: u32,
     pub allowed_nationalities: Vec<BytesN<3>>,
     pub allowed_issuers: Vec<BytesN<3>>,
+    pub sanctions_root: BytesN<32>,
+    pub sanctions_strict: bool,
     pub proof_bytes: u32,
     pub external_inputs: u32,
     pub max_proof_age: u64,
@@ -520,6 +527,14 @@ fn country_commitment(env: &Env, kind: u8, countries: &Vec<BytesN<3>>) -> BytesN
     h31(env, &Bytes::from_slice(env, &record))
 }
 
+fn sanctions_commitment(env: &Env, c: &Config) -> BytesN<32> {
+    let mut record = [0; 36];
+    record[..3].copy_from_slice(&[9, 0, 33]);
+    record[3..35].copy_from_slice(&c.sanctions_root.to_array());
+    record[35] = u8::from(c.sanctions_strict);
+    h31(env, &Bytes::from_slice(env, &record))
+}
+
 fn field(env: &Env, inputs: &Bytes, index: u32) -> BytesN<32> {
     let mut value = [0; 32];
     inputs
@@ -565,6 +580,9 @@ fn check_policy(
     }
     if !c.allowed_issuers.is_empty() {
         expected.push_back(country_commitment(env, 6, &c.allowed_issuers));
+    }
+    if c.sanctions_root != BytesN::from_array(env, &[0; 32]) {
+        expected.push_back(sanctions_commitment(env, c));
     }
     let count = expected.len();
     for i in 0..count {
@@ -678,10 +696,11 @@ fn validate_config(env: &Env, c: &Config) -> Result<(), GateError> {
     if c.network_id != testnet || c.network_id != env.ledger().network_id() {
         return Err(GateError::WrongNetwork);
     }
+    let zero = BytesN::from_array(env, &[0; 32]);
     let count = 10
         + u32::from(!c.allowed_nationalities.is_empty())
-        + u32::from(!c.allowed_issuers.is_empty());
-    let zero = BytesN::from_array(env, &[0; 32]);
+        + u32::from(!c.allowed_issuers.is_empty())
+        + u32::from(c.sanctions_root != zero);
     if !account(&c.provider)
         || !account(&c.bank_notary)
         || c.provider == c.bank_notary
@@ -697,6 +716,8 @@ fn validate_config(env: &Env, c: &Config) -> Result<(), GateError> {
         || c.min_age > 120
         || !valid_countries(&c.allowed_nationalities)
         || !valid_countries(&c.allowed_issuers)
+        || (c.sanctions_root == zero && c.sanctions_strict)
+        || c.sanctions_root.to_array() >= FR_MODULUS
         || c.external_inputs != count
         || c.proof_bytes != if count == 10 { 9888 } else { 10240 }
         || c.max_proof_age == 0
