@@ -26,6 +26,23 @@ export async function buildAnchorGateBrowser(directory?: string) {
     resolve(root, "web/anchor-gate.css"),
     resolve(destination, "anchor-gate.css")
   );
+  await build({
+    absWorkingDir: root,
+    entryPoints: ["web/sep-anchor.ts"],
+    outfile: resolve(destination, "sep-anchor.js"),
+    bundle: true,
+    platform: "browser",
+    format: "iife",
+    target: "es2022",
+    minify: true,
+    logLevel: "silent",
+  });
+  for (const extension of ["html", "css"]) {
+    await copyFile(
+      resolve(root, `web/sep-anchor.${extension}`),
+      resolve(destination, `sep-anchor.${extension}`)
+    );
+  }
   await cp(
     resolve(root, "web/fonts"),
     resolve(destination, "anchor-gate-fonts"),
