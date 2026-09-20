@@ -5,8 +5,7 @@
  */
 import { Hono, type Context } from "hono";
 import type { Deps } from "../context.js";
-import { newId } from "../ids.js";
-import { nowIso } from "../db.js";
+import { createSepQuote, readSepQuote } from "../sep-quotes.js";
 import {
   fmtRate,
   fmtTry,
@@ -26,10 +25,7 @@ import {
   type SepContext,
   type SepEnv,
 } from "../sepauth.js";
-import type { QuoteRow } from "../core/types.js";
 
-const DEFAULT_TTL_S = 900;
-const MAX_TTL_S = 3600;
 const DELIVERY = [
   {
     name: "bank_account",
@@ -38,7 +34,7 @@ const DELIVERY = [
 ];
 
 export function sep38Routes(deps: Deps, sep: SepContext) {
-  const { db, cfg, rates, stellar } = deps;
+  const { cfg, rates, stellar } = deps;
   const USDC = usdcAsset(stellar.assetCode, stellar.assetIssuer);
   const app = new Hono<SepEnv>();
 
@@ -230,124 +226,23 @@ export function sep38Routes(deps: Deps, sep: SepContext) {
         400,
         "provide exactly one of 'sell_amount' or 'buy_amount'"
       );
-    const p = await price(sell, buy, sellAmount, buyAmount);
-    if (!p)
-      return sepError(
-        c,
-        400,
-        `unsupported asset pair; supported: ${TRY_ASSET} <-> ${USDC}`
-      );
-
-    let ttl = DEFAULT_TTL_S;
-    if (str("expire_after")) {
-      const wanted = Math.floor(
-        (new Date(str("expire_after")!).getTime() - Date.now()) / 1000
-      );
-      if (Number.isNaN(wanted) || wanted <= 0)
-        return sepError(
-          c,
-          400,
-          "'expire_after' must be a future ISO 8601 timestamp"
-        );
-      ttl = Math.min(MAX_TTL_S, Math.max(60, wanted));
-    }
-    const customer = c.get("sepCustomer");
-    const row: QuoteRow = {
-      id: newId("qt"),
-      partner_id: customer.partner_id,
-      customer_id: customer.id,
-      side: p.side as "buy" | "sell",
-      rate: fmtRate(p.rateMicro),
-      mid_rate: fmtRate(p.midMicro),
-      spread_bps: cfg.spreadBps,
-      rate_source: p.rate_source,
-      source_currency: p.side === "buy" ? "TRY" : "USDC",
-      source_amount: p.sell_amount,
-      destination_currency: p.side === "buy" ? "USDC" : "TRY",
-      destination_amount: p.buy_amount,
-      expires_at: new Date(Date.now() + ttl * 1000).toISOString(),
-      consumed_by: null,
-      created_at: nowIso(),
-    };
-    db.prepare(
-      `INSERT INTO quotes(id, partner_id, customer_id, side, rate, mid_rate, spread_bps, rate_source, source_currency, source_amount, destination_currency, destination_amount, expires_at, consumed_by, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-    ).run(
-      row.id,
-      row.partner_id,
-      row.customer_id,
-      row.side,
-      row.rate,
-      row.mid_rate,
-      row.spread_bps,
-      row.rate_source,
-      row.source_currency,
-      row.source_amount,
-      row.destination_currency,
-      row.destination_amount,
-      row.expires_at,
-      null,
-      row.created_at
-    );
-    db.prepare(
-      "INSERT INTO quote_assets(quote_id, sell_asset, buy_asset) VALUES (?,?,?)"
-    ).run(row.id, p.sell_asset, p.buy_asset);
-    return c.json(quoteOut(row), 201);
-  });
-
-  app.get("/sep38/quote/:id", (c) => {
-    const row = db
-      .prepare("SELECT * FROM quotes WHERE id = ? AND customer_id = ?")
-      .get(c.req.param("id"), c.get("sepCustomer").id) as unknown as
-      QuoteRow | undefined;
-    if (!row) return sepError(c, 404, "quote not found");
-    return c.json(quoteOut(row));
-  });
-
-  /** SEP-38 quote shape from our quote row (recomputes fee/prices from the stored amounts). */
-  function quoteOut(q: QuoteRow) {
-    const sellIsTry = q.side === "buy";
-    const sell = sellIsTry ? TRY_ASSET : USDC;
-    const buy = sellIsTry ? USDC : TRY_ASSET;
-    const midMicro = parseRate(q.mid_rate);
-    let fee: string, priceStr: string;
-    if (sellIsTry) {
-      const kurus = parseTry(q.source_amount);
-      const atMid = usdcToTry(parseUsdc(q.destination_amount), midMicro);
-      fee = fmtTry(kurus > atMid ? kurus - atMid : 0n);
-      priceStr = fmtRate(midMicro);
-    } else {
-      const stroops = parseUsdc(q.source_amount);
-      const atMid = tryToUsdc(parseTry(q.destination_amount), midMicro);
-      fee = fmtUsdc(stroops > atMid ? stroops - atMid : 0n);
-      priceStr = decStr(1 / Number(fmtRate(midMicro)), 10);
-    }
-    const total = decStr(
-      Number(q.source_amount) / Number(q.destination_amount),
-      sellIsTry ? 7 : 10
-    );
-    return {
-      id: q.id,
-      expires_at: q.expires_at,
-      total_price: total,
-      price: priceStr,
+    const context = str("context") ?? "sep6";
+    if (context !== "sep6" && context !== "sep24")
+      return sepError(c, 400, "context must be sep6 or sep24");
+    const quote = await createSepQuote(deps, c.get("sepCustomer").id, {
       sell_asset: sell,
-      sell_amount: q.source_amount,
       buy_asset: buy,
-      buy_amount: q.destination_amount,
-      fee: {
-        total: fee,
-        asset: sell,
-        details: [
-          {
-            name: "spread",
-            description: `${q.spread_bps} bps from the USD/TRY mid rate`,
-            amount: fee,
-          },
-        ],
-      },
-    };
-  }
+      sell_amount: sellAmount,
+      buy_amount: buyAmount,
+      context,
+      expire_after: str("expire_after"),
+    });
+    return c.json(quote, 201);
+  });
+
+  app.get("/sep38/quote/:id", (c) =>
+    c.json(readSepQuote(deps, c.get("sepCustomer").id, c.req.param("id")))
+  );
 
   return app;
 }
