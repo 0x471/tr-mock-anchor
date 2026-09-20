@@ -1,7 +1,7 @@
 # TR Anchor + ZKPassport: architecture and co-hacker handoff
 
-Reviewed 20 September 2026 against application revision `f1347f4` on
-`feat/zkpassport-anchor`. This describes the current public Count8 SEP anchor,
+Reviewed 20 September 2026 against application revision `f1347f4`, since merged
+into `main` at `fc66d28`. Continue development on `main`. This describes the current public Count8 SEP anchor,
 not the earlier localhost `/anchor-gate` prototype. Evidence and acceptance
 status are a dated snapshot, not a promise of future availability.
 
@@ -13,7 +13,7 @@ settlement. SEP-24 hosts the phone-proof interaction; standard wallet payments
 remain the withdrawal entry point.
 
 - [Live Testnet demo](https://tr-anchor-zkpassport.up.railway.app/anchor)
-- [Working branch](https://github.com/0x471/tr-mock-anchor/tree/feat/zkpassport-anchor)
+- [Working branch](https://github.com/0x471/tr-mock-anchor/tree/main)
 - [Deployment pins and evidence](SEP_ANCHOR_DEPLOYMENT.md)
 - [Release review and remaining acceptance](SEP_ANCHOR_REVIEW.md)
 
@@ -324,7 +324,7 @@ and their pre-cap fixture limitations are recorded in the release review.
 ## 7. Co-hacker setup and safe collaboration
 
 ```sh
-git clone --branch feat/zkpassport-anchor https://github.com/0x471/tr-mock-anchor.git
+git clone --branch main https://github.com/0x471/tr-mock-anchor.git
 cd tr-mock-anchor
 npm ci
 pnpm hooks:install
