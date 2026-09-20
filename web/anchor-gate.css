@@ -923,6 +923,9 @@ footer a {
   .wallet-card {
     flex-wrap: wrap;
   }
+  .wallet-card > div {
+    flex: 1 0 calc(100% - 42px);
+  }
   .wallet-card .state-label {
     margin-left: 42px;
   }

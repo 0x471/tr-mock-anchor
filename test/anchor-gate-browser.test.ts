@@ -28,6 +28,8 @@ function browserHarness(
     clockOffset?: number;
     policyLifetime?: number;
     externalInputs?: number;
+    loseFirstReservationResponse?: boolean;
+    reservationRejection?: { status: 400 | 409 | 503; code: string };
   } = {}
 ) {
   const now = Math.floor(Date.now() / 1000);
@@ -83,6 +85,8 @@ function browserHarness(
   let events: PhoneEvents | undefined;
   let uploads = 0;
   let prepared: unknown;
+  let lostReservationResponse = false;
+  const reservationRequests: { key: string | null; body: unknown }[] = [];
   app.get("/.well-known/stellar.toml", (c) =>
     c.text(
       `NETWORK_PASSPHRASE="${Networks.TESTNET}"\nSIGNING_KEY="${anchor.publicKey()}"\nWEB_AUTH_ENDPOINT="http://localhost:8787/auth"`
@@ -170,6 +174,11 @@ function browserHarness(
     });
   });
   app.post("/anchor-gate/orders", async (c) => {
+    if (options.reservationRejection)
+      return c.json(
+        { error: { code: options.reservationRejection.code } },
+        options.reservationRejection.status
+      );
     const request = await c.req.json();
     if (
       direction === "withdrawal" &&
@@ -257,7 +266,25 @@ function browserHarness(
   });
   const flow = createAnchorGateFlow({
     origin: "http://localhost:8787",
-    fetch: async (input, init) => app.request(String(input), init),
+    fetch: async (input, init) => {
+      const response = await app.request(String(input), init);
+      if (
+        new URL(String(input)).pathname === "/anchor-gate/orders" &&
+        init?.method === "POST"
+      ) {
+        reservationRequests.push({
+          key: new Headers(init.headers).get("Idempotency-Key"),
+          body: JSON.parse(String(init.body)),
+        });
+        if (options.loseFirstReservationResponse && !lostReservationResponse) {
+          lostReservationResponse = true;
+          throw new Error(
+            "Reservation response was lost after server acceptance."
+          );
+        }
+      }
+      return response;
+    },
     wallet: {
       connect: async () => wallet.publicKey(),
       current: async () => ({
@@ -292,6 +319,12 @@ function browserHarness(
     ) => app.request(String(input), init),
     events: () => events!,
     uploads: () => uploads,
+    reservationRequests,
+    sign(transaction: string) {
+      const tx = TransactionBuilder.fromXdr(transaction, Networks.TESTNET);
+      tx.sign(wallet);
+      return tx.toXdr();
+    },
     prepare(value: unknown) {
       prepared = value;
     },
@@ -412,6 +445,149 @@ describe("gated browser wallet authentication", () => {
 });
 
 describe("gated browser order and phone lifecycle", () => {
+  it("retains exact reservation terms and idempotency after an unknown HTTP outcome", async () => {
+    const test = browserHarness("withdrawal", {
+      loseFirstReservationResponse: true,
+    });
+    await test.flow.initialize();
+    await test.flow.connect();
+    await test.flow.quote("2.5", "withdrawal");
+    await expect(
+      test.flow.createOrder("demo:synthetic-account")
+    ).rejects.toThrow("response was lost");
+    expect(test.flow.view.reservationPending).toBe(true);
+    expect(test.flow.view.order).toBeNull();
+    await expect(test.flow.quote("2.5", "withdrawal")).rejects.toThrow(
+      "Reconcile the existing reservation"
+    );
+    expect(() => test.flow.selectDirection("deposit")).toThrow(
+      "Reconcile the existing reservation"
+    );
+    expect(() => test.flow.clearQuote()).toThrow(
+      "Reconcile the existing reservation"
+    );
+    await expect(test.flow.refresh("77".repeat(32))).rejects.toThrow(
+      "Reconcile the existing reservation"
+    );
+    await expect(test.flow.createOrder("demo:different")).rejects.toThrow(
+      "Do not change the destination"
+    );
+    test.advance(601);
+    await test.flow.createOrder("demo:synthetic-account");
+    expect(test.reservationRequests).toHaveLength(2);
+    expect(test.reservationRequests[0]?.key).toBeTruthy();
+    expect(test.reservationRequests[1]).toEqual(test.reservationRequests[0]);
+    expect(test.flow.view.reservationPending).toBe(false);
+    expect(test.flow.view.order?.id).toBe(test.order.id);
+  });
+
+  it("recovers an unknown exact reservation after policy expiry without allowing new terms", async () => {
+    const test = browserHarness("withdrawal", {
+      policyLifetime: 1,
+      loseFirstReservationResponse: true,
+    });
+    await test.flow.initialize();
+    await test.flow.connect();
+    await test.flow.quote("2.5", "withdrawal");
+    await expect(
+      test.flow.createOrder("demo:synthetic-account")
+    ).rejects.toThrow("response was lost");
+    test.advance(1);
+    expect(test.flow.recoveryOnly).toBe(true);
+    await expect(test.flow.quote("2.5", "withdrawal")).rejects.toThrow(
+      "Policy expired"
+    );
+    await test.flow.createOrder("demo:synthetic-account");
+    expect(test.reservationRequests).toHaveLength(2);
+    expect(test.reservationRequests[1]).toEqual(test.reservationRequests[0]);
+    expect(test.flow.view.reservationPending).toBe(false);
+    expect(test.flow.view.order?.id).toBe(test.order.id);
+    await expect(test.flow.requestProof()).rejects.toThrow("Policy expired");
+  });
+
+  it("refuses an expired quote before starting a new reservation", async () => {
+    const test = browserHarness();
+    await test.flow.initialize();
+    await test.flow.connect();
+    await test.flow.quote("100.00");
+    test.advance(600);
+    await expect(test.flow.createOrder()).rejects.toThrow("Quote expired");
+    expect(test.reservationRequests).toHaveLength(0);
+    expect(test.flow.view.reservationPending).toBe(false);
+    expect(test.flow.view.order).toBeNull();
+  });
+
+  it("permits a fresh quote after the server confirms expiry before reserving an order", async () => {
+    const test = browserHarness("deposit", {
+      reservationRejection: { status: 409, code: "quote_expired" },
+    });
+    await test.flow.initialize();
+    await test.flow.connect();
+    await test.flow.quote("100.00");
+    await expect(test.flow.createOrder()).rejects.toThrow(
+      "Quote expired before reservation"
+    );
+    expect(test.flow.view.reservationPending).toBe(false);
+    expect(test.flow.view.order).toBeNull();
+    expect(test.flow.view.quote).toBeNull();
+    await test.flow.quote("100.00");
+    expect(test.flow.view.quote?.id).toBe("qt_demo");
+  });
+
+  it.each([
+    { status: 400 as const, code: "quote_expired" },
+    { status: 409 as const, code: "unknown_conflict" },
+    { status: 503 as const, code: "unavailable" },
+  ])(
+    "preserves unknown reservation recovery for HTTP $status / $code",
+    async (reservationRejection) => {
+      const test = browserHarness("deposit", { reservationRejection });
+      await test.flow.initialize();
+      await test.flow.connect();
+      await test.flow.quote("100.00");
+      await expect(test.flow.createOrder()).rejects.toThrow(
+        "Reconcile before retrying"
+      );
+      expect(test.flow.view.reservationPending).toBe(true);
+      expect(test.flow.view.quote?.id).toBe("qt_demo");
+      expect(() => test.flow.clearQuote()).toThrow(
+        "Reconcile the existing reservation"
+      );
+    }
+  );
+
+  it("keeps reservation recovery locked until the response matches the authenticated wallet", async () => {
+    const test = browserHarness();
+    await test.flow.initialize();
+    await test.flow.connect();
+    await test.flow.quote("100.00");
+    const recipient = test.order.recipient;
+    test.order.recipient = Keypair.random().publicKey();
+    await expect(test.flow.createOrder()).rejects.toThrow("wallet and vault");
+    expect(test.flow.view.reservationPending).toBe(true);
+    expect(test.flow.view.order).toBeNull();
+    test.order.recipient = recipient;
+    await test.flow.createOrder();
+    expect(test.flow.view.reservationPending).toBe(false);
+    expect(test.flow.view.order?.recipient).toBe(recipient);
+    expect(test.reservationRequests[1]).toEqual(test.reservationRequests[0]);
+  });
+
+  it("requires a newly reviewed quote after explicitly editing unreserved terms", async () => {
+    const test = browserHarness();
+    await test.flow.initialize();
+    await test.flow.connect();
+    await test.flow.quote("100.00");
+    test.flow.clearQuote();
+    expect(test.flow.view.quote).toBeNull();
+    await expect(test.flow.createOrder()).rejects.toThrow("fresh quote");
+    expect(test.reservationRequests).toHaveLength(0);
+    await test.flow.quote("100.00");
+    await test.flow.createOrder();
+    expect(() => test.flow.clearQuote()).toThrow("existing order");
+    expect(test.flow.view.order?.id).toBe(test.order.id);
+  });
+
   it("reconnects after policy expiry to finish an already-authorized withdrawal without allowing new actions", async () => {
     const test = browserHarness("withdrawal", { clockOffset: 3601 });
     Object.assign(test.order, {
@@ -637,6 +813,68 @@ describe("gated browser order and phone lifecycle", () => {
     expect(test.flow.view.order?.stage).toBe("created");
   });
 
+  it("removes the expired phone request and ignores its late proof callbacks", async () => {
+    const test = browserHarness();
+    await test.flow.initialize();
+    await test.flow.connect();
+    await test.flow.quote("100.00");
+    await test.flow.createOrder();
+    await test.flow.requestProof();
+    expect(test.flow.view.phoneUrl).toBeTruthy();
+    test.advance(600);
+    test.events().rejected();
+    expect(test.flow.view.phoneUrl).toBe("");
+    expect(test.flow.view.message).toContain("Phone request expired");
+    await test.events().proof(test.proof);
+    test.events().event("Late phone event must not replace expiry.");
+    expect(test.uploads()).toBe(0);
+    expect(test.flow.view.message).toContain("Phone request expired");
+    expect(test.flow.view.prepared).toBeNull();
+  });
+
+  it("preserves same-order proof work but discards it when resuming another owned order", async () => {
+    const test = browserHarness();
+    await test.flow.initialize();
+    await test.flow.connect();
+    await test.flow.quote("100.00");
+    await test.flow.createOrder();
+    await test.flow.requestProof();
+    const originalPhone = test.events();
+    const originalUrl = test.flow.view.phoneUrl;
+    await test.flow.refresh();
+    expect(test.flow.view.phoneUrl).toBe(originalUrl);
+    test.order.id = "44".repeat(32);
+    test.order.quote_id = "different-owned-order-quote";
+    await test.flow.refresh(test.order.id);
+    expect(test.flow.view.quote).toBeNull();
+    expect(test.flow.view.phoneUrl).toBe("");
+    await originalPhone.proof(test.proof);
+    expect(test.uploads()).toBe(0);
+
+    test.prepare({
+      action_id: "synthetic-preparation-only",
+      transaction: "This fixture is never offered to a wallet for signing.",
+      hash: "55".repeat(32),
+      expires_at: test.order.deadline,
+      network_passphrase: Networks.TESTNET,
+    });
+    await test.flow.requestProof();
+    await test.events().proof(test.proof);
+    expect(test.flow.view.prepared?.action_id).toBe(
+      "synthetic-preparation-only"
+    );
+    await test.flow.refresh();
+    expect(test.flow.view.prepared?.action_id).toBe(
+      "synthetic-preparation-only"
+    );
+    test.order.id = "66".repeat(32);
+    await test.flow.refresh(test.order.id);
+    expect(test.flow.view.prepared).toBeNull();
+    await expect(test.flow.signProof()).rejects.toThrow(
+      "fresh proof transaction"
+    );
+  });
+
   it("rejects a prepared payment instead of offering it as a proof signature", async () => {
     const test = browserHarness();
     await test.flow.initialize();
@@ -671,7 +909,234 @@ describe("gated browser order and phone lifecycle", () => {
   });
 });
 
+async function browserPageHarness(
+  options: { walletAvailable?: boolean; walletUnresponsive?: boolean } = {}
+) {
+  const test = browserHarness();
+  const makeNode = () => {
+    const classes = new Set<string>();
+    return {
+      textContent: "",
+      value: "",
+      disabled: false,
+      hidden: false,
+      onclick: null as (() => void) | null,
+      oninput: null as (() => void) | null,
+      classList: {
+        add(value: string) {
+          classes.add(value);
+        },
+        remove(value: string) {
+          classes.delete(value);
+        },
+        contains(value: string) {
+          return classes.has(value);
+        },
+      },
+      replaceChildren() {},
+      setAttribute() {},
+      removeAttribute() {},
+      focus() {},
+      append() {},
+      getContext() {
+        return { clearRect() {} };
+      },
+    };
+  };
+  const nodes = new Map<string, ReturnType<typeof makeNode>>();
+  const node = (id: string) => {
+    if (!nodes.has(id)) nodes.set(id, makeNode());
+    return nodes.get(id)!;
+  };
+  let receiveProof: ((proof: unknown) => void) | undefined;
+  const walletAccess = vi.fn(async () => ({ address: test.order.recipient }));
+  vi.resetModules();
+  vi.doMock("@stellar/freighter-api", () => ({
+    isConnected: async () =>
+      options.walletUnresponsive
+        ? new Promise<{ isConnected: boolean }>(() => {})
+        : { isConnected: options.walletAvailable ?? true },
+    getAddress: async () => ({ address: test.order.recipient }),
+    getNetworkDetails: async () => ({ networkPassphrase: Networks.TESTNET }),
+    requestAccess: walletAccess,
+    signTransaction: async (transaction: string) => ({
+      signerAddress: test.order.recipient,
+      signedTxXdr: test.sign(transaction),
+    }),
+    WatchWalletChanges: class {
+      watch() {}
+      stop() {}
+    },
+  }));
+  vi.doMock("qrcode", () => ({ default: { toCanvas: async () => {} } }));
+  vi.doMock("@zkpassport/sdk", () => ({
+    VERSION: "0.17.1",
+    ZKPassport: class {
+      clearAllRequests() {}
+      async request() {
+        const builder = {
+          gte() {
+            return builder;
+          },
+          in() {
+            return builder;
+          },
+          bind() {
+            return builder;
+          },
+          done() {
+            return {
+              url: "https://zkpassport.id/r/synthetic-fixture",
+              onBridgeConnect() {},
+              onRequestReceived() {},
+              onGeneratingProof() {},
+              onBridgeConnectionLost() {},
+              onError() {},
+              onReject() {},
+              onProofGenerated(callback: (proof: unknown) => void) {
+                receiveProof = callback;
+              },
+            };
+          },
+        };
+        return builder;
+      }
+    },
+  }));
+  vi.stubGlobal("window", {
+    location: { origin: "http://localhost:8787", hostname: "localhost" },
+    fetch: test.browserFetch,
+    addEventListener() {},
+  });
+  vi.stubGlobal("document", { getElementById: node, createElement: makeNode });
+  vi.stubGlobal("setInterval", () => 0);
+  const browserEntry = "../web/anchor-gate.js";
+  await import(browserEntry);
+  await vi.waitFor(() => expect(node("connect").disabled).toBe(false));
+  return {
+    ...test,
+    node,
+    walletAccess,
+    receiveProof() {
+      receiveProof!(test.proof);
+    },
+    async click(id: string) {
+      expect(node(id).disabled).toBe(false);
+      node(id).onclick!();
+      await vi.waitFor(
+        () => expect(node("status-label").textContent).not.toBe("WORKING"),
+        { timeout: 4000 }
+      );
+    },
+    cleanup() {
+      vi.unstubAllGlobals();
+      vi.doUnmock("@stellar/freighter-api");
+      vi.doUnmock("@zkpassport/sdk");
+      vi.doUnmock("qrcode");
+      vi.resetModules();
+    },
+  };
+}
+
 describe("production-built gated browser serving", () => {
+  it("resumes an owned order beside its input without requiring the distant status button", async () => {
+    const test = await browserPageHarness();
+    try {
+      expect(test.node("resume-order").disabled).toBe(true);
+      await test.click("choose-withdrawal");
+      expect(test.node("status").textContent).toContain("Connect Freighter");
+      await test.click("connect");
+      test.node("order-id").value = test.order.id;
+      test.node("order-id").oninput!();
+      await test.click("resume-order");
+      expect(test.node("order").textContent).toContain(test.order.id);
+      expect(test.node("amount").value).toBe("100.00");
+      expect(test.node("quote-card").hidden).toBe(true);
+    } finally {
+      test.cleanup();
+    }
+  });
+
+  it.each([
+    { name: "unavailable", walletAvailable: false },
+    { name: "unresponsive", walletUnresponsive: true },
+  ])(
+    "ends login with useful guidance when Freighter is $name",
+    async (options) => {
+      const test = await browserPageHarness(options);
+      try {
+        await test.click("connect");
+        expect(test.node("status").textContent).toContain(
+          "Freighter is unavailable in this browser"
+        );
+        expect(test.node("connect").disabled).toBe(false);
+        expect(test.node("wallet-state").textContent).toBe("Not connected");
+        expect(test.walletAccess).not.toHaveBeenCalled();
+      } finally {
+        test.cleanup();
+      }
+    }
+  );
+
+  it("keeps the exact prepared proof signable after checking its unsubmitted chain status", async () => {
+    const test = await browserPageHarness();
+    try {
+      await test.click("connect");
+      test.node("amount").value = "100.00";
+      await test.click("quote");
+      await test.click("reserve");
+      const transaction = new TransactionBuilder(
+        new Account(test.order.recipient, "1"),
+        { fee: "100", networkPassphrase: Networks.TESTNET }
+      )
+        .addOperation(
+          new Contract(test.order.contract).call(
+            "prove_order",
+            nativeToScVal(Buffer.from(test.order.id, "hex")),
+            nativeToScVal(Buffer.from(test.proof.proof.slice(11 * 64), "hex")),
+            nativeToScVal(
+              Buffer.from(test.proof.proof.slice(0, 11 * 64), "hex")
+            )
+          )
+        )
+        .setTimeout(60)
+        .build();
+      const hash = Buffer.from(transaction.hash()).toString("hex");
+      test.prepare({
+        action_id: "exact-prepared-proof",
+        transaction: transaction.toXdr(),
+        hash,
+        expires_at: Number(transaction.timeBounds!.maxTime),
+        network_passphrase: Networks.TESTNET,
+      });
+      await test.click("prove");
+      test.receiveProof();
+      await vi.waitFor(() =>
+        expect(test.node("sign-proof").disabled).toBe(false)
+      );
+      Object.assign(test.order, {
+        actions: [
+          {
+            id: "exact-prepared-proof",
+            kind: "prove",
+            transaction_hash: hash,
+            status: "pending",
+            ledger: null,
+            expires_at: Number(transaction.timeBounds!.maxTime),
+          },
+        ],
+      });
+      await test.click("refresh");
+      expect(test.node("sign-proof").disabled).toBe(false);
+      expect(test.node("prove").disabled).toBe(true);
+      expect(test.node("bank-action").disabled).toBe(true);
+      await test.click("sign-proof");
+      expect(test.order.stage).toBe("eligible");
+    } finally {
+      test.cleanup();
+    }
+  });
+
   it.each([
     {
       name: "exact 18+/ZKR/ZKR",
@@ -724,20 +1189,56 @@ describe("production-built gated browser serving", () => {
           value: string;
           disabled: boolean;
           hidden: boolean;
-          classList: { add(): void; remove(): void };
+          classList: {
+            add(value: string): void;
+            remove(value: string): void;
+            contains(value: string): boolean;
+            toggle(value: string, force?: boolean): boolean;
+          };
           replaceChildren(): void;
+          setAttribute(name: string, value: string): void;
+          removeAttribute(name: string): void;
+          focus(): void;
+          oninput: (() => void) | null;
         }
       >();
       const node = (id: string) => {
-        if (!nodes.has(id))
+        if (!nodes.has(id)) {
+          const classes = new Set<string>();
+          const attributes = new Map<string, string>();
           nodes.set(id, {
             textContent: "",
             value: "",
             disabled: false,
             hidden: false,
-            classList: { add() {}, remove() {} },
+            classList: {
+              add(value) {
+                classes.add(value);
+              },
+              remove(value) {
+                classes.delete(value);
+              },
+              contains(value) {
+                return classes.has(value);
+              },
+              toggle(value, force) {
+                const enabled = force ?? !classes.has(value);
+                if (enabled) classes.add(value);
+                else classes.delete(value);
+                return enabled;
+              },
+            },
             replaceChildren() {},
+            setAttribute(name, value) {
+              attributes.set(name, value);
+            },
+            removeAttribute(name) {
+              attributes.delete(name);
+            },
+            focus() {},
+            oninput: null,
           });
+        }
         return nodes.get(id)!;
       };
       vi.resetModules();
