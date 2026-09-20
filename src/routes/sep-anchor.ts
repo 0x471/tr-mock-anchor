@@ -670,9 +670,19 @@ export function createSepAnchorRoutes(
     });
   for (const protocol of ["sep6", "sep24"] as const)
     app.get(`/${protocol}/transaction`, async (c) => {
+      if (
+        ["id", "stellar_transaction_id", "external_transaction_id"].some(
+          (name) => (c.req.queries(name) ?? []).length > 1
+        )
+      )
+        throw new ApiError(
+          400,
+          "invalid_request",
+          "Provide exactly one transaction identifier."
+        );
       const input = z
         .object({
-          id: idSchema.optional(),
+          id: z.string().min(1).max(128).optional(),
           stellar_transaction_id: idSchema.optional(),
           external_transaction_id: z.string().min(1).max(100).optional(),
         })
