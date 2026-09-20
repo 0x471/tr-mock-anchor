@@ -161,8 +161,9 @@ const phone: GatePhone = {
     const client = new ZKPassport(config.domain);
     const builder = await client.request({
       name: "Stellar Proof-Gated Anchor",
-      purpose:
-        "Prove this order's age and country eligibility with a synthetic document. Simulated TRY and Testnet tokens only.",
+      purpose: config.policy.sanctions
+        ? "Prove age, country eligibility and exclusion from the pinned sanctions snapshot with a synthetic document. Simulated TRY and Testnet tokens only."
+        : "Prove this order's age and country eligibility with a synthetic document. Simulated TRY and Testnet tokens only.",
       scope: config.scope,
       mode: "compressed-evm",
       devMode: true,
@@ -185,6 +186,10 @@ const phone: GatePhone = {
       builder.in("nationality", codes(config.policy.allowed_nationalities));
     if (config.policy.allowed_issuers.length)
       builder.in("issuing_country", codes(config.policy.allowed_issuers));
+    if (config.policy.sanctions)
+      builder.sanctions("all", "all", {
+        strict: config.policy.sanctions.strict,
+      });
     const request = builder.bind("custom_data", config.custom_data).done();
     request.onBridgeConnect(() =>
       events.event("Phone relay connected. Awaiting your consent.")
@@ -420,10 +425,16 @@ function render() {
       policy.allowed_issuers.join(", ") || "No predicate";
     element("proof-requirements").textContent =
       `Age ${policy.min_age}+ / Nationality: ${policy.allowed_nationalities.join(", ") || "any"} / Document issuer: ${policy.allowed_issuers.join(", ") || "any"}`;
+    if (policy.sanctions)
+      element("proof-requirements").textContent +=
+        " / Private sanctions snapshot";
     element("quote-requirements").textContent =
       element("proof-requirements").textContent;
     element("policy").textContent =
       `Age: at least ${policy.min_age}\nNationality: ${policy.allowed_nationalities.join(", ") || "No nationality predicate"}\nDocument issuer: ${policy.allowed_issuers.join(", ") || "No issuing-country predicate"}\nSynthetic documents only. Policy expires ${new Date(info.config.policy_valid_until * 1000).toLocaleString()}.${recoveryOnly ? "\nRECOVERY ONLY: policy expired. Connect to refresh or finish an already-authorized withdrawal. New quotes, orders, proofs and payout authorizations are disabled." : ""}`;
+    if (policy.sanctions)
+      element("policy").textContent +=
+        `\nSanctions snapshot: ZKPassport combined US/UK/EU/Swiss list. Strict name matching: ${policy.sanctions.strict ? "required" : "not required"}. Pinned root: ${policy.sanctions.root}. This snapshot check is not current OFAC clearance and does not replace the separate wallet-address precheck.`;
   } else {
     for (const id of ["policy-age", "policy-nationality", "policy-issuer"])
       element(id).textContent = "Unavailable";

@@ -21,6 +21,7 @@ import { anchorGateBrowserRoutes } from "../src/anchor-gate-browser.js";
 import {
   createAnchorGateFlow,
   type PhoneEvents,
+  type PhoneRequest,
 } from "../web/anchor-gate-flow.js";
 
 function browserHarness(
@@ -29,6 +30,7 @@ function browserHarness(
     clockOffset?: number;
     policyLifetime?: number;
     externalInputs?: number;
+    sanctions?: { root: string; strict: boolean };
     admitted?: boolean;
     accessWallet?: string;
     screening?: "no_match" | "match" | "unavailable";
@@ -46,6 +48,7 @@ function browserHarness(
     Networks.TESTNET
   );
   const policy = {
+    ...(options.sanctions ? { sanctions: options.sanctions } : {}),
     min_age: 18,
     allowed_nationalities: ["GBR", "USA"],
     allowed_issuers: new Array<string>(),
@@ -88,6 +91,7 @@ function browserHarness(
   };
   const app = new Hono();
   let events: PhoneEvents | undefined;
+  let requestedPhone: PhoneRequest | undefined;
   let uploads = 0;
   let prepared: unknown;
   let lostReservationResponse = false;
@@ -264,7 +268,7 @@ function browserHarness(
       created_at: order.created_at,
       expires_at: order.deadline,
       proof_bytes: 10240,
-      external_inputs: 11,
+      external_inputs: options.externalInputs ?? 11,
       dev_mode: true,
       proof_type: "compressed-evm",
       nullifier_type: 2,
@@ -335,7 +339,8 @@ function browserHarness(
       },
     },
     phone: {
-      request: async (_config, callbacks) => {
+      request: async (config, callbacks) => {
+        requestedPhone = config;
         events = callbacks;
         return {
           url: "https://zkpassport.id/r/synthetic-fixture",
@@ -347,6 +352,7 @@ function browserHarness(
     now: () => clockNow * 1000,
   });
   return {
+    requestedPhone: () => requestedPhone,
     flow,
     order,
     policy,
@@ -391,6 +397,43 @@ function browserHarness(
 }
 
 describe("gated browser wallet authentication", () => {
+  it("requests the vault's pinned sanctions snapshot with the Count8 policy", async () => {
+    const sanctions = {
+      root: "2dfcc0ca426d9d8e751bb00fc9ab502bfb081ba8d2ce3f5f94a8f1712b3afca8",
+      strict: true,
+    };
+    const test = browserHarness("deposit", { externalInputs: 13, sanctions });
+    test.policy.allowed_nationalities = ["ZKR"];
+    test.policy.allowed_issuers = ["ZKR"];
+    test.policy.verifier_vk_hash =
+      "03dbb84b656cdf3b9f93d809c530b4c3901fe5be6f56c424a04ae827ebe45a08";
+    await test.flow.initialize();
+    await test.flow.connect();
+    await test.flow.quote("100.00");
+    await test.flow.createOrder();
+    await test.flow.requestProof();
+    expect(test.requestedPhone()?.policy.sanctions).toEqual(sanctions);
+    expect(test.requestedPhone()?.external_inputs).toBe(13);
+  });
+  it.each(["root", "strict"] as const)(
+    "rejects a changed sanctions %s before opening a phone request",
+    async (field) => {
+      const test = browserHarness("deposit", {
+        externalInputs: 12,
+        sanctions: { root: "01".repeat(32), strict: true },
+      });
+      await test.flow.initialize();
+      await test.flow.connect();
+      await test.flow.quote("100.00");
+      await test.flow.createOrder();
+      if (field === "root") test.policy.sanctions!.root = "02".repeat(32);
+      else test.policy.sanctions!.strict = false;
+      await expect(test.flow.requestProof()).rejects.toThrow(
+        "Phone request differs"
+      );
+      expect(test.requestedPhone()).toBeUndefined();
+    }
+  );
   it("retires an exact prepared proof after reconciliation confirms it", async () => {
     const test = browserHarness();
     await test.flow.initialize();
@@ -1302,6 +1345,7 @@ function makeBrowserNode() {
 
 async function browserPageHarness(
   options: {
+    sanctions?: { root: string; strict: boolean };
     walletAvailable?: boolean;
     walletUnresponsive?: boolean;
     admitted?: boolean;
@@ -1316,6 +1360,8 @@ async function browserPageHarness(
   } = {}
 ) {
   const test = browserHarness(options.direction, {
+    sanctions: options.sanctions,
+    externalInputs: options.sanctions ? 12 : 11,
     admitted: options.admitted,
     screening: options.screening,
   });
@@ -1459,6 +1505,7 @@ async function browserPageHarness(
     return nodes.get(id)!;
   };
   let receiveProof: ((proof: unknown) => void) | undefined;
+  const sanctionsRequests: unknown[][] = [];
   let rejectProof: (() => void) | undefined;
   let tick: (() => void) | undefined;
   let walletReadsResponsive = true;
@@ -1498,6 +1545,10 @@ async function browserPageHarness(
             return builder;
           },
           bind() {
+            return builder;
+          },
+          sanctions(...args: unknown[]) {
+            sanctionsRequests.push(args);
             return builder;
           },
           done() {
@@ -1557,6 +1608,7 @@ async function browserPageHarness(
   await vi.waitFor(() => expect(node("connect").disabled).toBe(false));
   return {
     ...test,
+    sanctionsRequests,
     node,
     trustlineTransactions: () => trustlineTransactions,
     confirmTrustline() {
@@ -1615,6 +1667,25 @@ async function browserPageHarness(
 }
 
 describe("production-built gated browser serving", () => {
+  it("asks the phone for the configured private snapshot check and labels it narrowly", async () => {
+    const sanctions = { root: "01".repeat(32), strict: true };
+    const test = await browserPageHarness({ sanctions });
+    try {
+      expect(test.sanctionsRequests).toEqual([]);
+      expect(test.node("policy").textContent).toContain("Sanctions snapshot");
+      expect(test.node("policy").textContent).toContain(sanctions.root);
+      await test.click("connect");
+      test.node("amount").value = "100.00";
+      await test.click("quote");
+      await test.click("reserve");
+      await test.click("prove");
+      expect(test.sanctionsRequests).toEqual([
+        ["all", "all", { strict: true }],
+      ]);
+    } finally {
+      test.cleanup();
+    }
+  });
   it("clears an interrupted-check warning after manual reconciliation confirms settlement", async () => {
     let offline = true;
     const test = await browserPageHarness({
