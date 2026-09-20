@@ -115,7 +115,7 @@
               aria-labelledby="wallet-heading"
             >
               <h2 id="wallet-heading" tabindex="-1">Connect your wallet</h2>
-              <p class="panel-intro">
+              <p class="panel-intro" id="wallet-intro">
                 Use Freighter on Stellar Testnet. Signing in does not move
                 funds.
               </p>
@@ -128,12 +128,71 @@
                   Connect wallet
                 </button>
               </div>
+              <div id="wallet-setup" class="wallet-setup" hidden>
+                <div id="ofac-check" class="requirements" hidden>
+                  <p id="ofac-status"></p>
+                  <button
+                    id="check-ofac"
+                    type="button"
+                    class="quiet compact"
+                    disabled
+                  >
+                    Recheck address list
+                  </button>
+                  <details class="help">
+                    <summary>What this precheck covers</summary>
+                    <p>
+                      Exact wallet-address matching against OFAC's SDN digital
+                      currency identifiers. No name or passport data is sent. A
+                      no-match is not identity clearance. The anchor checks new
+                      reservations offchain; ZKPassport age and country
+                      verification remains onchain.
+                    </p>
+                    <p id="ofac-source" class="hint"></p>
+                  </details>
+                </div>
+                <p id="wallet-setup-status" class="panel-intro"></p>
+                <p id="wallet-asset" class="mono"></p>
+                <p class="hint">
+                  This adds the demo asset, not Circle USDC. Freighter approves
+                  a Testnet trustline, not a payment. Limit: 1,000,000 tokens.
+                  Fee: at most 0.001 test XLM, plus the account reserve.
+                </p>
+                <div class="actions">
+                  <button
+                    id="setup-wallet"
+                    type="button"
+                    class="primary"
+                    disabled
+                  >
+                    Add mock USDC in Freighter
+                  </button>
+                  <button
+                    id="check-wallet"
+                    type="button"
+                    class="quiet"
+                    disabled
+                  >
+                    Check wallet setup
+                  </button>
+                </div>
+                <a
+                  id="wallet-setup-tx"
+                  class="text-link"
+                  target="_blank"
+                  rel="noreferrer"
+                  hidden
+                >
+                  View setup transaction
+                </a>
+              </div>
               <details class="help">
                 <summary>Wallet setup</summary>
                 <p>
                   Install Freighter, select Stellar Testnet and use an admitted
-                  demo wallet. You need test XLM for fees and a trustline to
-                  this demo's mock USDC.
+                  demo wallet. Free Testnet XLM is requested automatically from
+                  Friendbot when funds are low. Add this demo's mock USDC when
+                  prompted; only that step needs a transaction signature.
                 </p>
                 <p>Login uses a SEP-10 signature, not a payment.</p>
                 <a

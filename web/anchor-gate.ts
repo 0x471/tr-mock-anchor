@@ -14,6 +14,11 @@ import {
   type GatePhone,
   type GateWallet,
 } from "./anchor-gate-flow.js";
+import {
+  createTestnetWalletSetup,
+  type TestnetAsset,
+  type WalletReadiness,
+} from "./anchor-wallet-setup.js";
 
 const element = <T extends HTMLElement>(id: string) =>
   document.getElementById(id) as T;
@@ -28,6 +33,8 @@ let lastProgress: Step = "wallet";
 let lastOrderId = "";
 let lastQuoteId = "";
 let lastTransactions = "";
+let setupEpoch = 0;
+let setupState: { address: string; state: WalletReadiness } | undefined;
 
 const wallet: GateWallet = {
   async connect() {
@@ -45,6 +52,7 @@ const wallet: GateWallet = {
     const result = await requestAccess();
     if (result.error || !result.address)
       throw new Error("Freighter connection was declined or unavailable.");
+    await walletSetup.ensureFunding(result.address);
     return result.address;
   },
   async current() {
@@ -57,6 +65,7 @@ const wallet: GateWallet = {
     return { address: address.address, network: network.networkPassphrase };
   },
   async sign(transaction, address) {
+    await walletSetup.ensureFunding(address);
     const result = await signTransaction(transaction, {
       address,
       networkPassphrase: "Test SDF Network ; September 2015",
@@ -66,6 +75,61 @@ const wallet: GateWallet = {
     return result.signedTxXdr;
   },
 };
+
+const walletSetup = createTestnetWalletSetup({
+  fetch: window.fetch.bind(window),
+  wallet,
+  changed(message) {
+    flow.view.message = message;
+    render();
+  },
+});
+
+function configuredAsset(): TestnetAsset {
+  const info = flow.view.info;
+  if (!info) throw new Error("The Testnet asset is not configured.");
+  const [protocol, code, issuer, extra] = info.buy_asset.split(":");
+  if (protocol !== "stellar" || !code || !issuer || extra !== undefined)
+    throw new Error("The Testnet asset is unsupported.");
+  return { code, issuer, contract: info.config.token };
+}
+
+function resetWalletSetup() {
+  setupEpoch++;
+  setupState = undefined;
+}
+
+async function inspectWalletSetup(addTrustline = false) {
+  const address = flow.view.wallet;
+  if (!address) throw new Error("Connect your Testnet wallet first.");
+  const epoch = setupEpoch;
+  const asset = configuredAsset();
+  await walletSetup.ensureFunding(address);
+  if (epoch !== setupEpoch || address !== flow.view.wallet)
+    throw new Error("Wallet session changed. Connect again.");
+  const state = addTrustline
+    ? await walletSetup.addTrustline(address, asset)
+    : await walletSetup.inspect(address, asset);
+  if (epoch !== setupEpoch || address !== flow.view.wallet)
+    throw new Error("Wallet session changed. Connect again.");
+  setupState = { address, state };
+  render();
+  return state;
+}
+
+function requireTrustline(state: WalletReadiness) {
+  if (!state.funded || !state.trustline || !state.authorized || state.pending)
+    throw new Error(
+      "Finish the mock-USDC setup in Wallet before reserving an order. Existing orders can still be resumed."
+    );
+}
+
+function tokenUnits(value: string): bigint {
+  if (!/^\d+(?:\.\d{1,7})?$/.test(value))
+    throw new Error("The wallet returned an invalid token amount.");
+  const [whole, fraction = ""] = value.split(".");
+  return BigInt(whole!) * 10000000n + BigInt(fraction.padEnd(7, "0"));
+}
 
 const phone: GatePhone = {
   async request(config, events) {
@@ -163,6 +227,7 @@ function render() {
     phoneUrl,
     message,
     direction,
+    screening,
   } = flow.view;
   const now = Math.floor(Date.now() / 1000);
   const recoveryOnly = flow.recoveryOnly;
@@ -175,9 +240,66 @@ function render() {
     order.escrowed &&
     order.payout_authorized_at !== null;
   let statusMessage = message;
+  const readiness =
+    setupState?.address === address ? setupState.state : undefined;
+  const walletReady =
+    !!readiness?.funded &&
+    readiness.trustline &&
+    readiness.authorized &&
+    !readiness.pending;
+  const screeningReady = !screening || screening.status === "no_match";
+  const exchangeReady = walletReady && screeningReady;
   element("wallet").textContent = address || "No wallet connected.";
   element("wallet-card").hidden = !address;
   element("session-options").hidden = !address;
+  element("wallet-heading").textContent = !address
+    ? "Connect your wallet"
+    : !screeningReady
+      ? "Review the address precheck"
+      : walletReady
+        ? "Wallet connected"
+        : "Set up your Testnet wallet";
+  element("wallet-intro").textContent = !address
+    ? "Use Freighter on Stellar Testnet. Signing in does not move funds."
+    : !screeningReady
+      ? "New exchanges are paused. You can still resume an existing order."
+      : walletReady
+        ? "Testnet funds and the demo asset are ready."
+        : "Test XLM is automatic. Approve the demo asset once in Freighter.";
+  element("wallet-setup").hidden = !address;
+  element("wallet-setup-status").textContent = !readiness
+    ? "Checking your wallet. If interrupted, select Check wallet setup."
+    : readiness.pending
+      ? "The trustline outcome is not confirmed. Check wallet setup before trying again."
+      : !readiness.trustline
+        ? `${readiness.balance} test XLM available. Add the mock USDC asset to continue.`
+        : !readiness.authorized
+          ? "This asset is not authorized by its issuer. Contact the demo operator."
+          : `Ready: ${readiness.balance} test XLM and ${readiness.tokenBalance} mock USDC.`;
+  element("wallet-asset").textContent = info
+    ? `Asset: ${tokenName}\nIssuer: ${info.buy_asset.split(":")[2]}`
+    : "";
+  button("setup-wallet").hidden =
+    !address || !!readiness?.trustline || !!readiness?.pending;
+  button("setup-wallet").disabled = busy || !address || !readiness;
+  button("check-wallet").disabled = busy || !address;
+  element("ofac-check").hidden = !address || !screening;
+  element("ofac-status").textContent = !screening
+    ? ""
+    : screening.status === "no_match"
+      ? "No listed-address match. This does not establish identity or sanctions compliance."
+      : screening.status === "match"
+        ? "Listed-address match. New exchanges are blocked; contact the demo operator. Existing orders can still be resumed."
+        : "Address precheck unavailable. New exchanges are paused; recheck before continuing. Existing orders can still be resumed.";
+  element("ofac-source").textContent = screening
+    ? `Source: ${screening.source}\nPublished: ${screening.published_at ?? "unavailable"}\nFetched: ${screening.fetched_at ?? "unavailable"}\nChecked: ${screening.checked_at}\n${screening.fetched_at && screening.digest ? `SDN lists ${screening.stellar_address_count} Stellar addresses; no-match is not identity clearance.` : "List coverage unavailable; no address-clearance conclusion is possible."} This is a backend address precheck, not an onchain identity check.`
+    : "";
+  button("check-ofac").disabled = busy || !address || !screening;
+  const setupLink = element<HTMLAnchorElement>("wallet-setup-tx");
+  setupLink.hidden = !readiness?.transactionHash;
+  if (readiness?.transactionHash)
+    setupLink.href = `https://stellar.expert/explorer/testnet/tx/${readiness.transactionHash}`;
+  else setupLink.removeAttribute("href");
   for (const choice of ["deposit", "withdrawal"] as const) {
     const control = button(`choose-${choice}`);
     control.setAttribute("aria-pressed", String(choice === direction));
@@ -407,6 +529,7 @@ function render() {
   button("quote").disabled =
     busy ||
     !address ||
+    !exchangeReady ||
     !!order ||
     recoveryOnly ||
     flow.view.reservationPending ||
@@ -418,6 +541,7 @@ function render() {
   button("reserve").disabled =
     busy ||
     !address ||
+    (!exchangeReady && !flow.view.reservationPending) ||
     !quote ||
     !!order ||
     (recoveryOnly && !flow.view.reservationPending) ||
@@ -562,13 +686,14 @@ function render() {
           : order?.expired
             ? "The order deadline passed. Held tokens are not automatically refunded. Check status; do not create a replacement payment."
             : "";
-  const progress: Step = !address
-    ? "wallet"
-    : !order
-      ? "quote"
-      : order.completed || eligible || authorized
-        ? "settle"
-        : "proof";
+  const progress: Step =
+    !address || (!order && !exchangeReady && !flow.view.reservationPending)
+      ? "wallet"
+      : !order
+        ? "quote"
+        : order.completed || eligible || authorized
+          ? "settle"
+          : "proof";
   if (progress !== lastProgress) {
     selectedStep = progress;
     lastProgress = progress;
@@ -578,7 +703,8 @@ function render() {
     control.disabled =
       busy ||
       (step === "quote"
-        ? !address
+        ? !address ||
+          (!exchangeReady && !flow.view.reservationPending && !order)
         : step === "proof" || step === "settle"
           ? !order
           : false);
@@ -703,23 +829,69 @@ async function run(action: () => Promise<unknown>) {
 }
 
 button("connect").onclick = () => {
-  void run(() => flow.connect());
+  resetWalletSetup();
+  void run(async () => {
+    await flow.connect();
+    await inspectWalletSetup();
+  });
 };
 button("disconnect").onclick = () => {
+  resetWalletSetup();
   flow.disconnect();
   element("wallet-heading").focus({ preventScroll: true });
 };
 button("quote").onclick = () => {
-  void run(() => flow.quote(element<HTMLInputElement>("amount").value.trim()));
+  void run(async () => {
+    requireTrustline(await inspectWalletSetup());
+    await flow.quote(element<HTMLInputElement>("amount").value.trim());
+  });
 };
 button("reserve").onclick = () => {
-  void run(() =>
-    flow.createOrder(
+  void run(async () => {
+    if (!flow.view.reservationPending) {
+      const state = await inspectWalletSetup();
+      requireTrustline(state);
+      const quote = flow.view.quote;
+      if (!quote) throw new Error("Request a quote first.");
+      if (
+        flow.view.direction === "deposit" &&
+        tokenUnits(state.receivable) < tokenUnits(quote.buy_amount)
+      )
+        throw new Error(
+          "The mock-USDC trustline has insufficient receiving capacity. Update it in Freighter before reserving."
+        );
+      if (
+        flow.view.direction === "withdrawal" &&
+        tokenUnits(state.spendableToken) < tokenUnits(quote.sell_amount)
+      )
+        throw new Error(
+          "Not enough mock USDC for this withdrawal. Deposit first or choose a smaller amount."
+        );
+    }
+    await flow.createOrder(
       flow.view.direction === "withdrawal"
         ? element<HTMLInputElement>("bank-destination").value.trim()
         : undefined
-    )
-  );
+    );
+  });
+};
+button("setup-wallet").onclick = () => {
+  void run(async () => {
+    requireTrustline(await inspectWalletSetup(true));
+    flow.view.message =
+      "Mock-USDC setup confirmed on Testnet. Request your quote.";
+  });
+};
+button("check-wallet").onclick = () => {
+  void run(async () => {
+    const state = await inspectWalletSetup();
+    flow.view.message = state.pending
+      ? "Wallet setup is still unconfirmed. Check again before retrying."
+      : "Wallet setup refreshed.";
+  });
+};
+button("check-ofac").onclick = () => {
+  void run(() => flow.checkAccess());
 };
 for (const direction of ["deposit", "withdrawal"] as const) {
   button(`choose-${direction}`).onclick = () => {
@@ -788,13 +960,16 @@ watcher.watch((state) => {
     (state.error ||
       state.address !== flow.view.wallet ||
       state.networkPassphrase !== "Test SDF Network ; September 2015")
-  )
+  ) {
+    resetWalletSetup();
     flow.disconnect();
+  }
 });
 const timer = setInterval(render, 1000);
 window.addEventListener("pagehide", () => {
   clearInterval(timer);
   watcher.stop();
+  resetWalletSetup();
   flow.disconnect();
 });
 void run(() => flow.initialize());
