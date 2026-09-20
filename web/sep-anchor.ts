@@ -239,6 +239,8 @@ function render() {
     element<HTMLAnchorElement>("submitted-payment").href =
       `https://stellar.expert/explorer/testnet/tx/${submitted.data}`;
   const ended = ["completed", "refunded", "expired"].includes(t.status);
+  const held = !!t.escrowed || !!t.can_refund;
+  const authorizedPayout = t.kind === "withdrawal" && !!t.payout_authorized;
   text(
     "direction",
     t.kind === "deposit" ? "DEPOSIT / TRY TO USDC" : "WITHDRAW / USDC TO TRY"
@@ -249,7 +251,7 @@ function render() {
     "eligibility",
     t.native.eligible
       ? `Confirmed on Testnet, valid until ${new Date(t.native.valid_until! * 1000).toLocaleTimeString()}`
-      : "Not confirmed onchain"
+      : "No current native eligibility"
   );
   text(
     "policy-summary",
@@ -276,8 +278,14 @@ function render() {
   show("amount-section", !t.quote_id && !quote);
   show("quote-section", !t.quote_id && !!quote);
   show("destination-section", t.kind === "withdrawal");
-  show("proof-section", !!t.quote_id && !t.native.eligible && !ended);
-  show("finish-section", !!t.quote_id && (t.native.eligible || ended));
+  show(
+    "proof-section",
+    !!t.quote_id && !t.native.eligible && !ended && !authorizedPayout
+  );
+  show(
+    "finish-section",
+    !!t.quote_id && (t.native.eligible || held || authorizedPayout || ended)
+  );
   show("payment-instructions", t.kind === "withdrawal" && t.ready_for_payment);
   show(
     "send-payment",
@@ -293,13 +301,23 @@ function render() {
       !t.recovery_required &&
       (t.kind === "deposit"
         ? t.ready_for_payment
-        : !!t.escrowed && !t.payout_authorized)
+        : t.native.eligible && !!t.escrowed && !t.payout_authorized)
   );
   show(
     "payout-warning",
-    t.kind === "withdrawal" && !!t.escrowed && !t.payout_authorized && !ended
+    t.kind === "withdrawal" &&
+      t.native.eligible &&
+      !!t.escrowed &&
+      !t.payout_authorized &&
+      !ended
   );
   show("refund", !ended && !!t.can_refund);
+  text(
+    "refund",
+    t.kind === "deposit"
+      ? "Cancel unused reservation"
+      : "Refund escrow before payout"
+  );
   text(
     "mock-bank",
     t.kind === "deposit"
@@ -321,11 +339,15 @@ function render() {
           : "Order expired"
       : !t.quote_id
         ? "Review your exchange"
-        : !t.native.eligible
-          ? "Verify privately"
-          : t.kind === "withdrawal" && t.ready_for_payment
-            ? "Pay through your wallet"
-            : "Finish your exchange"
+        : authorizedPayout
+          ? "Completing authorized payout"
+          : held && !t.native.eligible
+            ? "Review held funds"
+            : !t.native.eligible
+              ? "Verify privately"
+              : t.kind === "withdrawal" && t.ready_for_payment
+                ? "Pay through your wallet"
+                : "Finish your exchange"
   );
   text(
     "step",
@@ -333,11 +355,24 @@ function render() {
       ? "CONFIRMED"
       : !t.quote_id
         ? "1 / AMOUNT"
-        : !t.native.eligible
+        : !t.native.eligible && !held && !authorizedPayout
           ? "2 / VERIFY"
           : "3 / TRANSFER"
   );
-  text("next-action", t.message);
+  text(
+    "next-action",
+    authorizedPayout && !ended
+      ? "Payout is already authorized. Receipt and settlement are reconciling automatically; no new proof or payment is needed."
+      : held && !t.native.eligible && !ended && t.can_refund
+        ? t.kind === "withdrawal"
+          ? "Your tokens remain in escrow. Refund before payout authorization without a new proof, or refresh eligibility to continue if the order is still valid."
+          : "The provider's tokens remain reserved. Cancel the unused reservation without a new proof, or refresh eligibility to continue if the order is still valid."
+        : t.message
+  );
+  text(
+    "prove",
+    held ? "Refresh eligibility to continue" : "Verify with ZKPassport"
+  );
   element<HTMLButtonElement>("prove").disabled =
     busy || activePhone || t.status === "pending_stellar";
   if (quote && !t.quote_id) {
@@ -472,7 +507,11 @@ async function refresh() {
     throw new Error("The anchor returned a different order.");
   transaction = response.transaction;
   csrf = response.csrf_token;
-  if (transaction.native.eligible && activePhone) cancelPhone();
+  if (
+    (transaction.native.eligible || transaction.payout_authorized) &&
+    activePhone
+  )
+    cancelPhone();
   if (!prefetched) {
     prefetched = true;
     if (transaction.kind === "withdrawal" && !transaction.requested_amount)
