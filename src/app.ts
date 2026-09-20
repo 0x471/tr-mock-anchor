@@ -22,12 +22,20 @@ import { anchorGateBrowserRoutes } from "./anchor-gate-browser.js";
 import { createSepContext, type SepContext } from "./sepauth.js";
 import { createSepAnchor } from "./sep-anchor.js";
 import { createSepAnchorRoutes } from "./routes/sep-anchor.js";
+import { createOfacPrecheck } from "./ofac-precheck.js";
 
 export function createApp(
   deps: Deps,
   sep: SepContext = createSepContext(deps)
 ) {
   const app = new Hono<AppEnv>();
+  if (
+    deps.cfg.anchorMode === "zkpassport" &&
+    deps.cfg.networkPassphrase === Networks.TESTNET &&
+    deps.cfg.anchorGateOfacEnabled &&
+    (deps.anchorGate || deps.sepAnchorGateway)
+  )
+    deps.ofac ??= createOfacPrecheck();
 
   // Sandbox: wallets/dApps call these directly from the browser. Testnet only.
   app.use(

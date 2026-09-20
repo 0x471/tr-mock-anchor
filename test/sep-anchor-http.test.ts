@@ -13,14 +13,23 @@ import { createSepAnchor } from "../src/sep-anchor.js";
 import { createSepAnchorRoutes } from "../src/routes/sep-anchor.js";
 import { sep38Routes } from "../src/routes/sep38.js";
 import type { SepAnchorGateway } from "../src/sep-anchor-types.js";
+import { createApp } from "../src/app.js";
+import { createOfacPrecheck, type OfacPrecheck } from "../src/ofac-precheck.js";
 
 const databases: DB[] = [];
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   for (const db of databases.splice(0)) db.close();
 });
 
-function fixture() {
+function fixture(
+  options: {
+    fullApp?: boolean;
+    ofacEnabled?: boolean;
+    ofac?: OfacPrecheck;
+  } = {}
+) {
   let nativeUnavailable = false;
   const cfg = {
     ...config,
@@ -30,6 +39,8 @@ function fixture() {
     rateSource: "static" as const,
     staticUsdTry: "40.00",
     anchorGateAllowedWallets: [],
+    anchorGateContract: "",
+    anchorGateOfacEnabled: options.ofacEnabled ?? false,
   };
   const db = openDb(":memory:");
   databases.push(db);
@@ -39,6 +50,7 @@ function fixture() {
     stellar: createFakeGateway(cfg),
     rates: createRateService(cfg),
     log: createLogger(true),
+    ofac: options.ofac,
   };
   const gateway: SepAnchorGateway = {
     async configuration() {
@@ -94,8 +106,10 @@ function fixture() {
   };
   const sep = createSepContext(deps);
   const engine = createSepAnchor(deps, gateway);
-  const app = new Hono().route("/", createSepAnchorRoutes(deps, sep, engine));
-  app.route("/", sep38Routes(deps, sep));
+  const app = options.fullApp
+    ? createApp({ ...deps, sepAnchorGateway: gateway }, sep)
+    : new Hono().route("/", createSepAnchorRoutes(deps, sep, engine));
+  if (!options.fullApp) app.route("/", sep38Routes(deps, sep));
   const wallet = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 1)).publicKey();
   function auth(sub = wallet, overrides: Record<string, unknown> = {}) {
     const now = Math.floor(Date.now() / 1000);
@@ -116,6 +130,73 @@ function fixture() {
     },
   };
 }
+
+const syntheticAddressFeed = `<?xml version="1.0"?>
+<sdnList xmlns="https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/XML">
+<publshInformation><Publish_Date>09/18/2026</Publish_Date><Record_Count>1</Record_Count></publshInformation>
+<sdnEntry><uid>1</uid><lastName>Synthetic fixture</lastName><idList><id><uid>2</uid>
+<idType>Digital Currency Address - TEST</idType><idNumber>synthetic-non-stellar-address</idNumber>
+</id></idList></sdnEntry></sdnList>`;
+
+it("admits an unlisted wallet through the full SEP-only deployment after official-source screening", async () => {
+  vi.stubGlobal("fetch", async (input: Parameters<typeof fetch>[0]) => {
+    if (
+      String(input) !==
+      "https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.XML"
+    )
+      throw new Error("Unexpected external endpoint");
+    return new Response(syntheticAddressFeed);
+  });
+  const { request, auth } = fixture({ fullApp: true, ofacEnabled: true });
+  expect(await (await request("/anchor-gate/info")).json()).toMatchObject({
+    enabled: false,
+  });
+  const response = await request("/sep24/transactions/deposit/interactive", {
+    method: "POST",
+    headers: { ...auth(), "Content-Type": "application/json" },
+    body: '{"asset_code":"USDC"}',
+  });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    type: "interactive_customer_info_needed",
+  });
+});
+
+it("retains an injected address-screening service instead of replacing its listed-wallet decision", async () => {
+  vi.stubGlobal("fetch", async () => new Response(syntheticAddressFeed));
+  const wallet = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 1)).publicKey();
+  const ofac = createOfacPrecheck({
+    fetch: async () =>
+      new Response(
+        syntheticAddressFeed.replace("synthetic-non-stellar-address", wallet)
+      ),
+  });
+  const { request, auth } = fixture({ fullApp: true, ofacEnabled: true, ofac });
+  const response = await request("/sep24/transactions/deposit/interactive", {
+    method: "POST",
+    headers: { ...auth(), "Content-Type": "application/json" },
+    body: '{"asset_code":"USDC"}',
+  });
+  expect(response.status).toBe(403);
+  expect(await response.json()).toMatchObject({ code: "ofac_precheck_match" });
+});
+
+it("keeps new SEP-only initiation closed when the official address feed is unavailable", async () => {
+  vi.stubGlobal(
+    "fetch",
+    async () => new Response("Unavailable", { status: 503 })
+  );
+  const { request, auth } = fixture({ fullApp: true, ofacEnabled: true });
+  const response = await request("/sep24/transactions/deposit/interactive", {
+    method: "POST",
+    headers: { ...auth(), "Content-Type": "application/json" },
+    body: '{"asset_code":"USDC"}',
+  });
+  expect(response.status).toBe(503);
+  expect(await response.json()).toMatchObject({
+    code: "ofac_precheck_unavailable",
+  });
+});
 
 it("requires a valid SEP-10 bearer before opening an interactive order", async () => {
   const { request } = fixture();
