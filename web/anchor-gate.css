@@ -282,6 +282,14 @@ h2 {
   font-size: 13px;
   margin-top: 9px;
 }
+.proof-journey {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 10px;
+}
+.proof-journey span {
+  padding: 0 4px;
+}
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -654,8 +662,31 @@ canvas {
 }
 .transaction-list {
   list-style: none;
-  margin: 12px 0;
+  margin: 12px 0 0;
   padding: 0;
+}
+.testnet-activity {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.activity-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.activity-header h2 {
+  font: 500 13px/1.6 var(--sans);
+  letter-spacing: 0;
+}
+.activity-header a {
+  color: var(--bright);
+  overflow-wrap: anywhere;
+}
+.testnet-activity > .hint {
+  margin-top: 8px;
 }
 .transaction-list li {
   margin: 7px 0;
