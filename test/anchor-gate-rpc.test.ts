@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   Account,
   Address,
@@ -164,7 +164,17 @@ function fixture() {
     }),
   };
   const gate = createAnchorGateGateway(cfg, external)!;
-  return { cfg, gate, state, terms, provider, notary, recipient, time };
+  return {
+    cfg,
+    gate,
+    state,
+    terms,
+    provider,
+    notary,
+    recipient,
+    time,
+    external,
+  };
 }
 
 describe("gate contract RPC boundary", () => {
@@ -332,5 +342,100 @@ describe("gate contract RPC boundary", () => {
       status: "success",
       ledger: 124,
     });
+  });
+  it("reads fresh configuration within two RPC latency intervals", async () => {
+    const { gate, external } = fixture();
+    const network = external.getNetwork;
+    const simulate = external.simulateTransaction;
+    const ledger = external.getLatestLedger;
+    vi.useFakeTimers();
+    try {
+      const delayed = async <T>(read: () => Promise<T>) => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 250));
+        return read();
+      };
+      external.getNetwork = () => delayed(network);
+      external.simulateTransaction = (transaction) =>
+        delayed(() => simulate(transaction));
+      external.getLatestLedger = () => delayed(ledger);
+      const started = Date.now();
+      const pending = gate.configuration();
+      await vi.runAllTimersAsync();
+      expect(await pending).toMatchObject({ domain: "localhost" });
+      expect(Date.now() - started).toBeLessThanOrEqual(500);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("does not use a ledger clock older than the confirmed configuration", async () => {
+    const { gate, external, time } = fixture();
+    external.getLatestLedger = async () => ({
+      sequence: 122,
+      closeTime: String(time),
+    });
+    await expect(gate.configuration()).rejects.toThrow("ledger clock");
+  });
+  it("reads an order and its bound challenge within two RPC latency intervals", async () => {
+    const { gate, external } = fixture();
+    const network = external.getNetwork;
+    const simulate = external.simulateTransaction;
+    vi.useFakeTimers();
+    try {
+      const delayed = async <T>(read: () => Promise<T>) => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 250));
+        return read();
+      };
+      external.getNetwork = () => delayed(network);
+      external.simulateTransaction = (transaction) =>
+        delayed(() => simulate(transaction));
+      const started = Date.now();
+      const pending = gate.order(id);
+      await vi.runAllTimersAsync();
+      expect(await pending).toMatchObject({
+        id,
+        challenge: "05".repeat(32),
+      });
+      expect(Date.now() - started).toBeLessThanOrEqual(500);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("keeps absent orders absent even when no challenge can be read", async () => {
+    const { gate, external } = fixture();
+    const simulate = external.simulateTransaction;
+    external.simulateTransaction = async (transaction) => {
+      const op = transaction.operations[0];
+      if (
+        op?.type !== "invokeHostFunction" ||
+        op.func.type !== "hostFunctionTypeInvokeContract"
+      )
+        throw new Error("Unexpected operation");
+      if (op.func.value.functionName.toString() === "get_challenge")
+        throw new Error("Unknown order has no challenge");
+      const result = await simulate(transaction);
+      if (!rpc.Api.isSimulationSuccess(result) || !result.result)
+        throw new Error("Expected a synthetic successful read");
+      return {
+        ...result,
+        result: { ...result.result, retval: xdr.ScVal.scvVoid() },
+      };
+    };
+    expect(await gate.order(id)).toBeNull();
+  });
+  it("rejects a present order when its challenge cannot be confirmed", async () => {
+    const { gate, external } = fixture();
+    const simulate = external.simulateTransaction;
+    external.simulateTransaction = async (transaction) => {
+      const op = transaction.operations[0];
+      if (
+        op?.type !== "invokeHostFunction" ||
+        op.func.type !== "hostFunctionTypeInvokeContract"
+      )
+        throw new Error("Unexpected operation");
+      if (op.func.value.functionName.toString() === "get_challenge")
+        throw new Error("Challenge read unavailable");
+      return simulate(transaction);
+    };
+    await expect(gate.order(id)).rejects.toThrow("Challenge read unavailable");
   });
 });

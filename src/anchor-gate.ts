@@ -94,7 +94,12 @@ export function createGatedAnchor(deps: Deps, gate: GateGateway) {
     return row;
   }
   async function chainOrder(row: OrderRow): Promise<GateOrder | null> {
-    const current = await gate.configuration().catch(gateFailure);
+    const [current, state] = await Promise.all([
+      gate.configuration().catch(gateFailure),
+      gate.order(row.id).catch(() => {
+        throw unavailable();
+      }),
+    ]);
     if (
       configurationIdentity(current) !==
       configurationIdentity(JSON.parse(row.config_json) as GateConfiguration)
@@ -104,9 +109,6 @@ export function createGatedAnchor(deps: Deps, gate: GateGateway) {
         "gate_deployment_changed",
         "This order belongs to a different immutable vault configuration. Reconnect its original deployment; do not recreate it."
       );
-    const state = await gate.order(row.id).catch(() => {
-      throw unavailable();
-    });
     if (state) {
       const terms = JSON.parse(row.terms_json) as GateTerms;
       if (

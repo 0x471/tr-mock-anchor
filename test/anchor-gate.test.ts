@@ -1044,4 +1044,31 @@ describe("gated anchor HTTP interface", () => {
       (await app.request(`/anchor-gate/orders/${created.id}`)).status
     ).toBe(403);
   });
+  it("prepares a phone request within one independent contract-read budget", async () => {
+    const { app, user, order, gate } = await checkout();
+    const configuration = gate.configuration;
+    const readOrder = gate.order;
+    vi.useFakeTimers();
+    const delayed = async <T>(read: () => Promise<T>) => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 250));
+      return read();
+    };
+    gate.configuration = () => delayed(configuration);
+    gate.order = (id) => delayed(() => readOrder(id));
+    const started = Date.now();
+    const pending = app.request(
+      `/anchor-gate/orders/${order.id}/proof-request`,
+      {
+        headers: user.headers,
+      }
+    );
+    await vi.runAllTimersAsync();
+    const response = await pending;
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      custom_data: "a".repeat(64),
+      dev_mode: true,
+    });
+    expect(Date.now() - started).toBeLessThanOrEqual(250);
+  });
 });
