@@ -4,6 +4,8 @@ Experimental fork of [Kaan's TR Mock Anchor](https://github.com/kaankacar/tr-moc
 
 This is a Testnet-only development project, not an audited verifier or a production anchor. Upstream hosted URLs do not run this fork. The public SEP deployment now has its own fresh Count8 phone-proof and deposit evidence, distinct from the older Count7 custom-vault runs.
 
+For collaborators, start with the [architecture and co-hacker handoff](docs/ARCHITECTURE_AND_HANDOFF.md): current Mermaid diagrams, code map, proof and payment flows, trust boundaries, verified evidence, and the Scale-track demo checklist.
+
 ## Standard-wallet anchor demo
 
 Open the [public Testnet demo](https://tr-anchor-zkpassport.up.railway.app/anchor).
