@@ -32,6 +32,7 @@ const PROVIDER = "GDAHV4MVSXLCR4ELY4JK3F6WNEQCONAZTLTKBGDJZARXBRGWMTTIMK22";
 const ISSUER = "GDQYN2SNSRQCGBJYB7SQFQIKKKN4YWZCHYZQ5W7UKAB6P36MSIKCVKQN";
 const CODE = "USDC";
 const AMOUNT = "100.0000000";
+const TRUST_LIMIT = "1000.0000000";
 const STROOPS = 1_000_000_000n;
 const FEE = "10000";
 const HORIZON = "https://horizon-testnet.stellar.org";
@@ -54,7 +55,8 @@ const usage = `Testnet-only, one-time SEP provider liquidity setup.
 Usage: node scripts/setup-sep-liquidity.mjs --keydir PATH --journal FILE [--execute]
 
 The default mode only checks public keys, Testnet endpoints and account state.
---execute creates an exact 100 mock-USDC trustline and mints exactly 100 once.
+--execute creates an exact 1000 mock-USDC trustline and mints exactly 100 once.
+Original version-1 journals retain their signed 100 limit without replacement.
 The journal and signed envelopes are private (0600); keep the same journal.
 Existing trustline without the original journal blocks a new mint.
 Unknown outcomes reuse the same signed transaction hash, never a new payment.
@@ -85,6 +87,15 @@ function options() {
   if (!lstatSync(result.keydir).isDirectory())
     fail("The configured key directory is not a directory.");
   return result;
+}
+
+function plannedOperation(kind, version = 2) {
+  return kind === "trust"
+    ? Operation.changeTrust({
+        asset,
+        limit: version === 1 ? AMOUNT : TRUST_LIMIT,
+      })
+    : Operation.payment({ destination: PROVIDER, asset, amount: AMOUNT });
 }
 
 function identity(keydir, name, secret = false) {
@@ -158,7 +169,7 @@ async function accounts() {
   return { provider, issuer, line };
 }
 
-function validateStep(kind, step) {
+function validateStep(kind, step, version) {
   if (
     !step ||
     typeof step !== "object" ||
@@ -215,7 +226,8 @@ function validateStep(kind, step) {
     fail("Unexpected asset in the journal.");
   if (
     kind === "trust"
-      ? op.type !== "changeTrust" || op.limit !== AMOUNT
+      ? op.type !== "changeTrust" ||
+        op.limit !== (version === 1 ? AMOUNT : TRUST_LIMIT)
       : op.type !== "payment" ||
         op.destination !== PROVIDER ||
         op.amount !== AMOUNT
@@ -243,7 +255,9 @@ function readJournal(path) {
       fail("The journal is not valid JSON.");
     }
     if (
-      value.version !== 1 ||
+      ![1, 2].includes(value.version) ||
+      (value.version === 2 && value.trust_limit !== TRUST_LIMIT) ||
+      (value.version === 1 && value.trust_limit !== undefined) ||
       value.network !== Networks.TESTNET ||
       value.provider !== PROVIDER ||
       value.issuer !== ISSUER ||
@@ -256,9 +270,10 @@ function readJournal(path) {
       Object.keys(value.steps).some((key) => key !== "trust" && key !== "mint")
     )
       fail("The journal describes a different liquidity setup.");
-    if (value.steps.trust) validateStep("trust", value.steps.trust);
+    if (value.steps.trust)
+      validateStep("trust", value.steps.trust, value.version);
     if (value.steps.mint) {
-      validateStep("mint", value.steps.mint);
+      validateStep("mint", value.steps.mint, value.version);
       if (value.steps.trust?.status !== "success")
         fail(
           "The journal mint does not have a confirmed trustline predecessor."
@@ -309,15 +324,18 @@ async function reconcile(step) {
   }
   try {
     const known = await horizon.transactions().transaction(step.hash).call();
+    const ledger =
+      typeof known.ledger === "number" ? known.ledger : known.ledger_attr;
     if (
       known.hash !== step.hash ||
       typeof known.successful !== "boolean" ||
-      !Number.isSafeInteger(known.ledger)
+      !Number.isSafeInteger(ledger) ||
+      ledger <= 0
     )
       fail("Horizon returned inconsistent transaction evidence.");
     return {
       status: known.successful ? "success" : "failed",
-      ledger: known.ledger,
+      ledger,
     };
   } catch (error) {
     if (error instanceof SafeError) throw error;
@@ -331,18 +349,14 @@ async function reconcile(step) {
   };
 }
 
-function prepare(kind, source, signer) {
+function prepare(kind, source, signer, version) {
   const minTime = Math.max(0, now() - 5);
   const maxTime = now() + 180;
   const transaction = new TransactionBuilder(source, {
     fee: FEE,
     networkPassphrase: Networks.TESTNET,
   })
-    .addOperation(
-      kind === "trust"
-        ? Operation.changeTrust({ asset, limit: AMOUNT })
-        : Operation.payment({ destination: PROVIDER, asset, amount: AMOUNT })
-    )
+    .addOperation(plannedOperation(kind, version))
     .addMemo(Memo.hash(MARKER))
     .setTimebounds(minTime, maxTime)
     .build();
@@ -355,7 +369,7 @@ function prepare(kind, source, signer) {
     status: "prepared",
     ledger: null,
   };
-  validateStep(kind, step);
+  validateStep(kind, step, version);
   return step;
 }
 
@@ -376,7 +390,9 @@ async function runStep(kind, journal, path) {
   step.status = "pending";
   persist(path, journal);
   try {
-    const response = await stellarRpc.sendTransaction(validateStep(kind, step));
+    const response = await stellarRpc.sendTransaction(
+      validateStep(kind, step, journal.version)
+    );
     if (response.hash && response.hash !== step.hash)
       fail("RPC submission returned a different hash.");
   } catch (error) {
@@ -470,12 +486,13 @@ async function main() {
           "Existing trustline without the original journal: refusing to create a possibly duplicate mint."
         );
       journal = {
-        version: 1,
+        version: 2,
         network: Networks.TESTNET,
         provider: PROVIDER,
         issuer: ISSUER,
         code: CODE,
         amount: AMOUNT,
+        trust_limit: TRUST_LIMIT,
         marker: MARKER,
         initial_trustline_absent: true,
         created_at: new Date().toISOString(),
@@ -491,7 +508,8 @@ async function main() {
       journal.steps.trust = prepare(
         "trust",
         snapshot.provider,
-        identity(args.keydir, "sep-anchor-provider-v1", true)
+        identity(args.keydir, "sep-anchor-provider-v1", true),
+        journal.version
       );
       persist(args.journal, journal);
     }
@@ -520,7 +538,8 @@ async function main() {
       journal.steps.mint = prepare(
         "mint",
         snapshot.issuer,
-        identity(args.keydir, "anchor-gate-issuer-v1", true)
+        identity(args.keydir, "anchor-gate-issuer-v1", true),
+        journal.version
       );
       persist(args.journal, journal);
     }
