@@ -8,3 +8,5 @@ data/
 .DS_Store
 /public/anchor-gate.html
 /public/anchor-gate.js
+/public/anchor-gate.css
+/public/anchor-gate-fonts/

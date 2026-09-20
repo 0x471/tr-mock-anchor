@@ -8,7 +8,18 @@ export function anchorGateBrowserRoutes(
 ) {
   const app = new Hono();
   const expected = new URL(publicUrl);
-  for (const path of ["/anchor-gate", "/anchor-gate/bundle.js"])
+  const fonts = [
+    "playfair-display.ttf",
+    "playfair-display-italic.ttf",
+    "ibm-plex-sans.ttf",
+    "ibm-plex-mono.ttf",
+  ];
+  for (const path of [
+    "/anchor-gate",
+    "/anchor-gate/bundle.js",
+    "/anchor-gate/style.css",
+    ...fonts.map((name) => `/anchor-gate/fonts/${name}`),
+  ])
     app.use(path, async (c, next) => {
       c.header("Cache-Control", "no-store");
       c.header("Referrer-Policy", "no-referrer");
@@ -29,5 +40,20 @@ export function anchorGateBrowserRoutes(
       "Content-Type": "application/javascript; charset=utf-8",
     })
   );
+  app.get("/anchor-gate/style.css", async (c) =>
+    c.body(await readFile(join(directory, "anchor-gate.css"), "utf8"), 200, {
+      "Content-Type": "text/css; charset=utf-8",
+    })
+  );
+  for (const name of fonts)
+    app.get(`/anchor-gate/fonts/${name}`, async (c) =>
+      c.body(
+        new Uint8Array(
+          await readFile(join(directory, "anchor-gate-fonts", name))
+        ),
+        200,
+        { "Content-Type": "font/ttf" }
+      )
+    );
   return app;
 }
