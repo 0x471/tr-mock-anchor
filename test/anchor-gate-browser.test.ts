@@ -909,43 +909,55 @@ describe("gated browser order and phone lifecycle", () => {
   });
 });
 
+function makeBrowserNode() {
+  const classes = new Set<string>();
+  const attributes = new Map<string, string>();
+  return {
+    textContent: "",
+    value: "",
+    disabled: false,
+    hidden: false,
+    onclick: null as (() => void) | null,
+    oninput: null as (() => void) | null,
+    classList: {
+      add(value: string) {
+        classes.add(value);
+      },
+      remove(value: string) {
+        classes.delete(value);
+      },
+      contains(value: string) {
+        return classes.has(value);
+      },
+      toggle(value: string, force?: boolean) {
+        const enabled = force ?? !classes.has(value);
+        if (enabled) classes.add(value);
+        else classes.delete(value);
+        return enabled;
+      },
+    },
+    replaceChildren() {},
+    setAttribute(name: string, value: string) {
+      attributes.set(name, value);
+    },
+    removeAttribute(name: string) {
+      attributes.delete(name);
+    },
+    focus() {},
+    append() {},
+    getContext() {
+      return { clearRect() {} };
+    },
+  };
+}
+
 async function browserPageHarness(
   options: { walletAvailable?: boolean; walletUnresponsive?: boolean } = {}
 ) {
   const test = browserHarness();
-  const makeNode = () => {
-    const classes = new Set<string>();
-    return {
-      textContent: "",
-      value: "",
-      disabled: false,
-      hidden: false,
-      onclick: null as (() => void) | null,
-      oninput: null as (() => void) | null,
-      classList: {
-        add(value: string) {
-          classes.add(value);
-        },
-        remove(value: string) {
-          classes.delete(value);
-        },
-        contains(value: string) {
-          return classes.has(value);
-        },
-      },
-      replaceChildren() {},
-      setAttribute() {},
-      removeAttribute() {},
-      focus() {},
-      append() {},
-      getContext() {
-        return { clearRect() {} };
-      },
-    };
-  };
-  const nodes = new Map<string, ReturnType<typeof makeNode>>();
+  const nodes = new Map<string, ReturnType<typeof makeBrowserNode>>();
   const node = (id: string) => {
-    if (!nodes.has(id)) nodes.set(id, makeNode());
+    if (!nodes.has(id)) nodes.set(id, makeBrowserNode());
     return nodes.get(id)!;
   };
   let receiveProof: ((proof: unknown) => void) | undefined;
@@ -1008,7 +1020,10 @@ async function browserPageHarness(
     fetch: test.browserFetch,
     addEventListener() {},
   });
-  vi.stubGlobal("document", { getElementById: node, createElement: makeNode });
+  vi.stubGlobal("document", {
+    getElementById: node,
+    createElement: makeBrowserNode,
+  });
   vi.stubGlobal("setInterval", () => 0);
   const browserEntry = "../web/anchor-gate.js";
   await import(browserEntry);
@@ -1214,63 +1229,9 @@ describe("production-built gated browser serving", () => {
       test.policy.allowed_issuers = issuers;
       test.policy.verifier_vk_hash =
         "00fe2b15b91a3c7c3ede7f84a0751e29373bfbf2da0ab7392e2cfa564eab8ab7";
-      const nodes = new Map<
-        string,
-        {
-          textContent: string;
-          value: string;
-          disabled: boolean;
-          hidden: boolean;
-          classList: {
-            add(value: string): void;
-            remove(value: string): void;
-            contains(value: string): boolean;
-            toggle(value: string, force?: boolean): boolean;
-          };
-          replaceChildren(): void;
-          setAttribute(name: string, value: string): void;
-          removeAttribute(name: string): void;
-          focus(): void;
-          oninput: (() => void) | null;
-        }
-      >();
+      const nodes = new Map<string, ReturnType<typeof makeBrowserNode>>();
       const node = (id: string) => {
-        if (!nodes.has(id)) {
-          const classes = new Set<string>();
-          const attributes = new Map<string, string>();
-          nodes.set(id, {
-            textContent: "",
-            value: "",
-            disabled: false,
-            hidden: false,
-            classList: {
-              add(value) {
-                classes.add(value);
-              },
-              remove(value) {
-                classes.delete(value);
-              },
-              contains(value) {
-                return classes.has(value);
-              },
-              toggle(value, force) {
-                const enabled = force ?? !classes.has(value);
-                if (enabled) classes.add(value);
-                else classes.delete(value);
-                return enabled;
-              },
-            },
-            replaceChildren() {},
-            setAttribute(name, value) {
-              attributes.set(name, value);
-            },
-            removeAttribute(name) {
-              attributes.delete(name);
-            },
-            focus() {},
-            oninput: null,
-          });
-        }
+        if (!nodes.has(id)) nodes.set(id, makeBrowserNode());
         return nodes.get(id)!;
       };
       vi.resetModules();
