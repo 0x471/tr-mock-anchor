@@ -1,13 +1,17 @@
 //! Fixed ZKPassport 0.20.0 BB5 UltraKeccak outer-verifier types.
 //!
-//! Layout follows the official OuterCount5/6/7.sol at d3a75acb8529e82c61be136a402553daec259257.
+//! Layout follows the official OuterCount5/6/7/8.sol at d3a75acb8529e82c61be136a402553daec259257.
 //! This is deliberately not a generic or cross-version UltraHonk decoder.
 
 use crate::field::Fr;
 use soroban_sdk::crypto::bn254::Bn254G1Affine;
 use soroban_sdk::Env;
 
-pub const PROOF_BYTES: usize = if cfg!(any(feature = "count6", feature = "count7")) {
+pub const PROOF_BYTES: usize = if cfg!(any(
+    feature = "count6",
+    feature = "count7",
+    feature = "count8"
+)) {
     10240
 } else {
     9888
@@ -17,13 +21,19 @@ pub const EXTERNAL_PUBLIC_INPUTS: usize = if cfg!(feature = "count6") {
     11
 } else if cfg!(feature = "count7") {
     12
+} else if cfg!(feature = "count8") {
+    13
 } else {
     10
 };
 pub const TOTAL_PUBLIC_INPUTS: usize = EXTERNAL_PUBLIC_INPUTS + 8;
 pub const PUBLIC_INPUTS_OFFSET: u64 = 5;
 
-pub const CONST_PROOF_SIZE_LOG_N: usize = if cfg!(any(feature = "count6", feature = "count7")) {
+pub const CONST_PROOF_SIZE_LOG_N: usize = if cfg!(any(
+    feature = "count6",
+    feature = "count7",
+    feature = "count8"
+)) {
     23
 } else {
     22

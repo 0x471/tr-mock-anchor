@@ -1,11 +1,11 @@
-#[cfg(any(feature = "count6", feature = "count7"))]
+#[cfg(any(feature = "count6", feature = "count7", feature = "count8"))]
 use soroban_sdk::Bytes;
 use soroban_sdk::{testutils::Ledger, Address, BytesN, Env};
-#[cfg(any(feature = "count6", feature = "count7"))]
-use zkpassport_verifier::VerificationError;
 #[cfg(not(feature = "wasm-tests"))]
 use zkpassport_verifier::PassportVerifier;
 use zkpassport_verifier::PassportVerifierClient;
+#[cfg(any(feature = "count6", feature = "count7", feature = "count8"))]
+use zkpassport_verifier::VerificationError;
 
 fn register(env: &Env) -> Address {
     #[cfg(feature = "wasm-tests")]
@@ -40,6 +40,13 @@ fn deployed_interface_reports_the_immutable_key_profile() {
             10240,
             23,
         )
+    } else if cfg!(feature = "count8") {
+        (
+            "03dbb84b656cdf3b9f93d809c530b4c3901fe5be6f56c424a04ae827ebe45a08",
+            13,
+            10240,
+            23,
+        )
     } else {
         (
             "013d18b35786455360821b6dbcb40174603cac5893781f0fc1601af4eacb01eb",
@@ -58,9 +65,9 @@ fn deployed_interface_reports_the_immutable_key_profile() {
     assert_eq!(profile.log_n, log_n);
 }
 
-#[cfg(any(feature = "count6", feature = "count7"))]
+#[cfg(any(feature = "count6", feature = "count7", feature = "count8"))]
 #[test]
-fn a_country_profile_rejects_the_valid_age_only_fixture() {
+fn an_extended_profile_rejects_the_valid_age_only_fixture() {
     let env = Env::default();
     env.ledger().set_protocol_version(26);
     env.cost_estimate().budget().reset_unlimited();

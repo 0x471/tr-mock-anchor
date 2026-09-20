@@ -1,4 +1,4 @@
-#![cfg(not(any(feature = "count6", feature = "count7")))]
+#![cfg(not(any(feature = "count6", feature = "count7", feature = "count8")))]
 mod common;
 
 #[test]

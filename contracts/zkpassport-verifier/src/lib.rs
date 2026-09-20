@@ -2,7 +2,11 @@
 
 extern crate alloc;
 
-#[cfg(all(feature = "count6", feature = "count7"))]
+#[cfg(any(
+    all(feature = "count6", feature = "count7"),
+    all(feature = "count6", feature = "count8"),
+    all(feature = "count7", feature = "count8")
+))]
 compile_error!("Select exactly one immutable outer proof profile per contract build.");
 
 pub mod debug;
@@ -26,7 +30,9 @@ use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Bytes, By
 const PINNED_KEY: &[u8] = include_bytes!("../fixtures/vkey-0.20.0-outer-count-6.bin");
 #[cfg(feature = "count7")]
 const PINNED_KEY: &[u8] = include_bytes!("../fixtures/vkey-0.20.0-outer-count-7.bin");
-#[cfg(not(any(feature = "count6", feature = "count7")))]
+#[cfg(feature = "count8")]
+const PINNED_KEY: &[u8] = include_bytes!("../fixtures/vkey-0.20.0-outer-count-8.bin");
+#[cfg(not(any(feature = "count6", feature = "count7", feature = "count8")))]
 const PINNED_KEY: &[u8] = include_bytes!("../fixtures/vkey.bin");
 
 #[contracttype]
