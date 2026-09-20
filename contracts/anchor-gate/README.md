@@ -21,6 +21,33 @@ one specific obligation: its exact payout receipt and token settlement can be
 reconciled after proof, policy or order expiry. It does not authorize another
 payout. The mock-bank adapter must durably deduplicate that bank action by order.
 
+## Optional private sanctions predicate
+
+New deployments accept `sanctions_root: BytesN<32>` and
+`sanctions_strict: bool`. An all-zero root with `false` disables this predicate;
+a nonzero canonical BN254 scalar root enables it. Zero with `true` and roots
+at or above the field modulus are rejected. These additional fields change
+the constructor ABI and policy hash. Existing deployed vaults and their orders
+are not upgraded or reinterpreted.
+
+The gate requires the exact SHA-256/31-byte commitment to the 36-byte record
+`[9,0,33] || root32 || strict_byte` alongside all existing policy and binding
+commitments. Root and strictness are part of the immutable policy hash and
+therefore the order challenge. The enabled predicate adds one external input;
+age, binding and both country inclusions together need the Count8 verifier's
+13 external inputs. The vault still checks the exact verifier Wasm, key and
+profile. Omitting the sanctions predicate or using another root or a weaker
+mode cannot create eligibility or debit withdrawal tokens.
+
+This proves non-inclusion against a configured snapshot, not freshness of the
+source list, direct verification of another chain's registry state, or a full
+sanctions clearance. The policy expires within 24 hours, but that does not make
+an old dataset current. See [dataset provenance and limitations](../../docs/ZKPASSPORT_SANCTIONS_RESEARCH.md).
+The existing wallet-address precheck covers a different identifier and remains
+a separate backend control. A fresh positive Count8 phone proof has not been
+validated by the gate's policy tests; the fake external verifier is not evidence
+of cryptographic sanctions exclusion.
+
 ## Local verification
 
 Tested with Rust 1.98.0-nightly (f28ac764c 2026-06-23), SDK 26.0.1 and this lockfile.
@@ -35,7 +62,7 @@ cargo fmt --all --check
 
 Use task-local CARGO_HOME/CARGO_TARGET_DIR when reusing the existing isolated
 toolchain cache. The Wasm path is explicit; a missing file fails the test run.
-Both native-gate and gate-Wasm runs passed the 27 policy/state tests on
+Both native-gate and gate-Wasm runs passed the 31 policy/state tests on
 20 September 2026. These tests call a real Stellar Asset Contract but deliberately
 use an external fake verifier: they test the gate's handling of its verifier,
 not mathematical proof acceptance. Country commitments are independent official

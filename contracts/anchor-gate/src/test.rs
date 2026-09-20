@@ -114,6 +114,9 @@ impl Fixture {
         Self::countries(false, false)
     }
     fn countries(nationality: bool, issuer: bool) -> Self {
+        Self::policy(nationality, issuer, None)
+    }
+    fn policy(nationality: bool, issuer: bool, sanctions: Option<bool>) -> Self {
         let env = Env::new_with_config(EnvTestConfig {
             capture_snapshot_at_drop: false,
         });
@@ -135,7 +138,8 @@ impl Fixture {
         let asset = env.register_stellar_asset_contract_v2(Address::generate(&env));
         trustline_fixture(&env, &provider_id, &asset.asset(), 1_000_000);
         trustline_fixture(&env, &recipient_id, &asset.asset(), 0);
-        let count = 10 + u32::from(nationality) + u32::from(issuer);
+        let count =
+            10 + u32::from(nationality) + u32::from(issuer) + u32::from(sanctions.is_some());
         let verifier = env.register(FakeVerifier, (count,));
         let Some(Executable::Wasm(wasm_hash)) = verifier.executable() else {
             panic!("fake executable");
@@ -172,6 +176,11 @@ impl Fixture {
                 Vec::new(&env)
             },
             proof_bytes: if count == 10 { 9888 } else { 10240 },
+            sanctions_root: BytesN::from_array(
+                &env,
+                &[if sanctions.is_some() { 3 } else { 0 }; 32],
+            ),
+            sanctions_strict: sanctions.unwrap_or(false),
             external_inputs: count,
             max_proof_age: 300,
             policy_valid_until: 2000,
@@ -266,6 +275,16 @@ impl Fixture {
                 "00ba10739c274dd1c234bc86780ac3c0b0e4da1b19842b577b6ef856b987650b",
             ));
         }
+        if self.config.sanctions_root != self.id(0) {
+            result.append(&hex_bytes(
+                &self.env,
+                if self.config.sanctions_strict {
+                    "00347ed9e64d44d11afa900d8c2e73c1429f68154c2f86df7ecb81317763f7bc"
+                } else {
+                    "006b928647f3261ac4109ef5703bb20772873c1f7bd089134d03d2032499d197"
+                },
+            ));
+        }
         for f in [kind, nullifier, [0; 32]] {
             result.extend_from_array(&f);
         }
@@ -300,9 +319,17 @@ impl Fixture {
 }
 
 fn hex_bytes(env: &Env, value: &str) -> Bytes {
+    assert_eq!(value.len() % 2, 0);
+    assert!(value.bytes().all(|b| b.is_ascii_hexdigit()));
     let mut bytes = Bytes::new(env);
     for pair in value.as_bytes().chunks_exact(2) {
-        let digit = |b: u8| if b <= b'9' { b - b'0' } else { b - b'a' + 10 };
+        let digit = |b: u8| {
+            if b <= b'9' {
+                b - b'0'
+            } else {
+                b.to_ascii_lowercase() - b'a' + 10
+            }
+        };
         bytes.push_back(digit(pair[0]) * 16 + digit(pair[1]));
     }
     bytes
@@ -515,6 +542,141 @@ fn country_inclusion_profiles_match_independent_official_sdk_vectors() {
 }
 
 #[test]
+fn sanctions_profiles_accept_the_exact_official_sdk_parameter_commitment() {
+    for (nationality, issuer) in [(false, false), (true, false), (false, true), (true, true)] {
+        for strict in [false, true] {
+            let f = Fixture::policy(nationality, issuer, Some(strict));
+            let id = f.id(10);
+            let c = f.client();
+            c.create_order(&id, &f.terms());
+            let order = c.prove_order(&id, &f.proof(true), &f.inputs(&id));
+            assert!(matches!(order.eligibility, EligibilityState::Some(_)));
+        }
+    }
+}
+
+#[test]
+fn constructor_rejects_ambiguous_or_noncanonical_sanctions_roots() {
+    let f = Fixture::new();
+    let mut disabled_strict = f.config.clone();
+    disabled_strict.sanctions_strict = true;
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        register_gate(&f.env, disabled_strict);
+    }))
+    .is_err());
+
+    let f = Fixture::policy(false, false, Some(true));
+    for root in [
+        "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001",
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    ] {
+        let mut invalid = f.config.clone();
+        invalid.sanctions_root = hex_bytes(&f.env, root).try_into().unwrap();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            register_gate(&f.env, invalid);
+        }))
+        .is_err());
+    }
+}
+
+#[test]
+fn sanctions_policy_rejects_missing_other_root_and_weaker_checks_before_escrow() {
+    let f = Fixture::policy(true, true, Some(true));
+    let id = f.id(10);
+    let c = f.client();
+    trustline_fixture(&f.env, &f.recipient_id, &f.asset, 1000);
+    c.create_order(&id, &f.withdrawal_terms());
+    let inputs = f.inputs(&id);
+    let start = 9 * 32;
+    for commitment in [
+        "006b928647f3261ac4109ef5703bb20772873c1f7bd089134d03d2032499d197",
+        "000669df6e408039d2c0fccf7ba6266daa95a98fb0680aafd2d7494cac0a724d",
+    ] {
+        let mut changed = inputs.slice(..start);
+        changed.append(&hex_bytes(&f.env, commitment));
+        changed.append(&inputs.slice(start + 32..));
+        assert_eq!(
+            c.try_prove_order(&id, &f.proof(true), &changed),
+            Err(Ok(GateError::InvalidBinding))
+        );
+    }
+    let mut duplicate = inputs.slice(..start);
+    duplicate.append(&inputs.slice(5 * 32..6 * 32));
+    duplicate.append(&inputs.slice(start + 32..));
+    assert_eq!(
+        c.try_prove_order(&id, &f.proof(true), &duplicate),
+        Err(Ok(GateError::InvalidBinding))
+    );
+    let mut omitted = inputs.slice(..start);
+    omitted.append(&inputs.slice(start + 32..));
+    assert_eq!(
+        c.try_prove_order(&id, &f.proof(true), &omitted),
+        Err(Ok(GateError::InvalidProof))
+    );
+    let mut extra = inputs.clone();
+    extra.extend_from_array(&[0; 32]);
+    assert_eq!(
+        c.try_prove_order(&id, &f.proof(true), &extra),
+        Err(Ok(GateError::InvalidProof))
+    );
+    let token = token::TokenClient::new(&f.env, &f.config.token);
+    assert_eq!(token.balance(&f.recipient), 1000);
+    assert_eq!(c.get_total_reserved(), 0);
+    assert_eq!(
+        c.get_order(&id).unwrap().eligibility,
+        EligibilityState::None
+    );
+    assert_eq!(
+        c.try_authorize_payout(&id),
+        Err(Ok(GateError::InvalidState))
+    );
+    let accepted = c.prove_order(&id, &f.proof(true), &inputs);
+    assert!(accepted.escrowed);
+    assert_eq!(token.balance(&f.recipient), 500);
+}
+
+#[test]
+fn sanctions_snapshot_root_and_mode_are_bound_to_policy_and_order() {
+    let mut f = Fixture::policy(true, true, Some(true));
+    let old_policy = f.client().get_policy_hash();
+    f.config.sanctions_root = hex_bytes(
+        &f.env,
+        "2dfcc0ca426d9d8e751bb00fc9ab502bfb081ba8d2ce3f5f94a8f1712b3afca8",
+    )
+    .try_into()
+    .unwrap();
+    f.gate = register_gate(&f.env, f.config.clone());
+    let c = f.client();
+    assert_ne!(old_policy, c.get_policy_hash());
+    let id = f.id(10);
+    c.create_order(&id, &f.terms());
+    let inputs = f.inputs(&id);
+    let mut current = inputs.slice(..9 * 32);
+    current.append(&hex_bytes(
+        &f.env,
+        "006f97b7c86e5e666d8a256002ff4f9ca418115bb9a4d13a7161d73896025b3b",
+    ));
+    current.append(&inputs.slice(10 * 32..));
+    assert_eq!(
+        c.try_prove_order(&id, &f.proof(true), &inputs),
+        Err(Ok(GateError::InvalidBinding))
+    );
+    c.prove_order(&id, &f.proof(true), &current);
+    c.create_order(&f.id(11), &f.terms());
+    assert_eq!(
+        c.try_prove_order(&f.id(11), &f.proof(true), &current),
+        Err(Ok(GateError::InvalidBinding))
+    );
+    let strict_policy = c.get_policy_hash();
+    f.config.sanctions_strict = false;
+    let standard_gate = register_gate(&f.env, f.config.clone());
+    assert_ne!(
+        strict_policy,
+        AnchorGateClient::new(&f.env, &standard_gate).get_policy_hash()
+    );
+}
+
+#[test]
 fn receipts_require_prior_eligibility_exact_amount_and_unique_bank_event() {
     let f = Fixture::new();
     let c = f.client();
@@ -593,14 +755,14 @@ fn public_intent_fixture_for_independent_xdr_vector() {
         Bytes::from(f.client().get_policy_hash()),
         hex_bytes(
             &f.env,
-            "91fe26e123805a8718dffced06a45df0df71607d2875a3e0f6bbda53b85d9a74"
+            "5b3dc60efd43cce7804146f003c4012695079d4cd1feb97c067d985c05e32c2e"
         )
     );
     assert_eq!(
         Bytes::from(f.client().get_challenge(&id)),
         hex_bytes(
             &f.env,
-            "a18bc4983f3f46812a8de431ce9bc46c8b4ef83edb79b3371ea533cfe3ac5899"
+            "d94cf0ae9f41684680d40a9b548b00cc300279023b1f317a1a73e90836a6ada1"
         )
     );
     let config: xdr::ScVal = f.config.clone().try_into().unwrap();
@@ -719,7 +881,7 @@ fn withdrawal_quote_creation_does_not_take_provider_or_customer_tokens() {
         Bytes::from(c.get_challenge(&id)),
         hex_bytes(
             &f.env,
-            "20e9374b7276ac469656c708e61f0bcbc70e6e2edca4c59bfa26e1295b202554"
+            "9cf810f84bd76726249d9f4ac026f763334876c89ab8059ea1b6eba3267c3ac0"
         )
     );
 }
