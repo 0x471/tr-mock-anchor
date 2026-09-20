@@ -1,8 +1,9 @@
 # Testnet gate deployment record
 
-Status: verifier profiles, mock asset and localhost validation vault deployed;
-fresh country proof and both settlement directions are pending. No completed
-anchor deposit or withdrawal is claimed by this record.
+Status: one fresh synthetic ZKR country proof and authenticated HTTP deposit
+completed native onchain acceptance, a mock-bank receipt and exact settlement.
+Live withdrawal acceptance, the full Freighter browser run and public hosting
+remain pending. The original TUR reservation remains held.
 All amounts are synthetic Testnet assets. None of these contracts are audited.
 
 ## Country verifier deployments
@@ -18,8 +19,9 @@ All amounts are synthetic Testnet assets. None of these contracts are audited.
 All four transaction receipts were independently fetched from Testnet RPC and
 reported SUCCESS. Each contract's profile getter reports the expected immutable
 key from [the country specification](COUNTRY_PROOF_PROFILE.md): respectively 11
-and 12 external inputs, 10240 proof bytes, and 23 rounds. These are read-only
-metadata checks, not positive country-proof verification transactions. Direct
+and 12 external inputs, 10240 proof bytes, and 23 rounds. These deployment-time
+metadata checks alone did not establish positive proof acceptance. The later
+fresh Count7 acceptance is recorded below. Direct
 contract-instance reads at ledgers 4767007 and 4767008 independently matched
 the executable Wasm hashes in the table.
 
@@ -56,7 +58,7 @@ upload and deployment receipts above were confirmed independently; neither
 error was treated as permission to duplicate an uncertain transaction.
 These deployment and negative checks do not establish positive proof acceptance.
 
-## Authenticated deposit reservation
+## Initial TUR authenticated deposit reservation
 
 The dedicated automated recipient completed SEP-10 authentication and reserved
 one deposit through the anchor HTTP API:
@@ -98,8 +100,8 @@ The fresh authenticated ZKR deposit order is
 `0123766e159bd7681dcaf6ae1d46178d8c2852d6ab3515bd4764e32dae5ce0bc`,
 100.00 simulated TRY for 2.0947892 mock USDC. Its
 [create transaction](https://stellar.expert/explorer/testnet/tx/beeffd4705208862b7c4ffd37b4ed31a1e737d0e9e56e74430e37fa33467ec16)
-succeeded at ledger 4767538. These tokens are reserved, not paid out. Fresh
-phone proof acceptance and both settlement directions remain unconfirmed.
+succeeded at ledger 4767538 and reserved the exact token amount. The subsequent
+fresh proof and completed deposit are recorded below.
 
 At ledger 4767608, read-only SAC balance checks found 95.8104216 mock USDC at
 the provider, zero at the recipient and 2.0947892 in each of the original TUR
@@ -110,6 +112,52 @@ its sole create action were unchanged; no eligibility or bank credit was granted
 
 The old TUR reservation and its local database were preserved. Neither the
 new deployment nor the country-policy change refunds its held Testnet tokens.
+
+### Fresh Count7 proof and completed ZKR deposit
+
+The genuine browser-origin phone request produced a fresh ZKPassport 0.20.0
+OuterCount7 proof: 10240 proof bytes and 384 external-public-input bytes.
+The native and exact deployed `1075edf6...9045f` Wasm runs of the
+[capture regression harness](../contracts/zkpassport-verifier/tests/capture.rs)
+each passed 18 checks: the unmodified capture and 17 explicit rejections.
+The negatives change each of the 12 public inputs, truncate each input buffer,
+append a proof byte, append an extra public input, or negate the final KZG point
+on-curve. These are fixture-specific verifier checks, not a security audit.
+
+The following distinct transactions were confirmed SUCCESS. The proof receipt
+independently checked the recipient signature, one `prove_order` invocation,
+the exact order ID, gate executable, and byte equality with the privately tested
+capture. Raw proof bytes, public inputs, session links and signed envelopes are
+not included here.
+
+| Gate action                         | Confirmed Testnet transaction                                                                                             | Ledger  |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------- |
+| Native proof and order eligibility  | [Proof](https://stellar.expert/explorer/testnet/tx/4a0e7e262c842241d16e81d45f5f969e8179f425ac8e5b9604c6488e26710d4e)      | 4767724 |
+| Separate simulated TRY receipt      | [Receipt](https://stellar.expert/explorer/testnet/tx/08c7206344b3577017df488edfebfe8b83006628471493f874b4213eb692ee6f)    | 4767762 |
+| Exact token settlement to recipient | [Settlement](https://stellar.expert/explorer/testnet/tx/b298032e175360003245750a06fce003789bfd4decb85d5dce87316a90d9a41e) | 4767765 |
+
+The confirmed order read at ledger 4767766 reported `stage: settled`,
+`completed: true`, a receipt ID and `escrowed: false`. The proof transaction
+alone had granted eligibility without a bank receipt or settlement. Only the
+later receipt and settlement completed the exchange.
+
+Read-only SAC balances before the proof (ledger 4767608) and after settlement
+(ledger 4767766) reconcile the exact 100.00 simulated TRY for 2.0947892 mock USDC.
+Values below are integer token base units, with 7 decimal places:
+
+| Account             |    Before |     After |    Change |
+| ------------------- | --------: | --------: | --------: |
+| Dedicated recipient |         0 |  20947892 | +20947892 |
+| ZKR vault           |  20947892 |         0 | -20947892 |
+| Provider            | 958104216 | 958104216 |         0 |
+| Original TUR vault  |  20947892 |  20947892 |         0 |
+
+This was an authenticated HTTP acceptance run with the dedicated automated
+Testnet recipient. The synthetic proof was captured in a genuine browser-origin
+phone session; the separate operator signed through the dedicated wallet.
+It was not a completed Freighter browser click-through. Live withdrawal and
+public-host acceptance remain pending. No real document, TRY transfer, Circle
+USDC or mainnet operation is implied.
 
 ## Isolated demo accounts and asset
 
