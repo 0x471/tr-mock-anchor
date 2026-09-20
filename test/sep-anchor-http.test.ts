@@ -28,6 +28,11 @@ function fixture(
     fullApp?: boolean;
     ofacEnabled?: boolean;
     ofac?: OfacPrecheck;
+    nativeMaxAmount?: string;
+    nativeMaxTryMinor?: string;
+    nativePolicyUntil?: number;
+    omitNativeGateway?: boolean;
+    spreadBps?: number;
   } = {}
 ) {
   let nativeUnavailable = false;
@@ -38,8 +43,10 @@ function fixture(
     stellarMode: "fake" as const,
     rateSource: "static" as const,
     staticUsdTry: "40.00",
+    spreadBps: options.spreadBps ?? 50,
     anchorGateAllowedWallets: [],
     anchorGateContract: "",
+    sepAnchorContract: StrKey.encodeContract(Buffer.alloc(32, 7)),
     anchorGateOfacEnabled: options.ofacEnabled ?? false,
   };
   const db = openDb(":memory:");
@@ -79,9 +86,10 @@ function fixture(
         proof_bytes: 10240,
         external_inputs: 13,
         max_order_lifetime: 1800,
-        policy_valid_until: Math.floor(Date.now() / 1000) + 3600,
-        max_amount: "1000000000",
-        max_try_minor: "1000000",
+        policy_valid_until:
+          options.nativePolicyUntil ?? Math.floor(Date.now() / 1000) + 3600,
+        max_amount: options.nativeMaxAmount ?? "1000000000",
+        max_try_minor: options.nativeMaxTryMinor ?? "1000000",
         ledger_time: Math.floor(Date.now() / 1000),
       };
     },
@@ -104,10 +112,17 @@ function fixture(
       return { status: "pending", ledger: null };
     },
   };
+  if (!options.omitNativeGateway) deps.sepAnchorGateway = gateway;
   const sep = createSepContext(deps);
   const engine = createSepAnchor(deps, gateway);
   const app = options.fullApp
-    ? createApp({ ...deps, sepAnchorGateway: gateway }, sep)
+    ? createApp(
+        {
+          ...deps,
+          sepAnchorGateway: options.omitNativeGateway ? undefined : gateway,
+        },
+        sep
+      )
     : new Hono().route("/", createSepAnchorRoutes(deps, sep, engine));
   if (!options.fullApp) app.route("/", sep38Routes(deps, sep));
   const wallet = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 1)).publicKey();
@@ -211,6 +226,306 @@ it("requires a valid SEP-10 bearer before opening an interactive order", async (
     error: "A valid SEP-10 bearer session is required.",
   });
 });
+
+it.each([
+  {
+    direction: "deposit",
+    field: "sell_amount",
+    exact: "400.00",
+    excess: "400.01",
+  },
+  {
+    direction: "deposit",
+    field: "buy_amount",
+    exact: "10.0000000",
+    excess: "10.0000001",
+  },
+  {
+    direction: "withdraw",
+    field: "sell_amount",
+    exact: "10.0000000",
+    excess: "10.0000001",
+  },
+  {
+    direction: "withdraw",
+    field: "buy_amount",
+    exact: "400.00",
+    excess: "400.01",
+  },
+])(
+  "only offers public $direction firm quotes within the native token cap using $field",
+  async ({ direction, field, exact, excess }) => {
+    const { request, auth, cfg } = fixture({
+      fullApp: true,
+      nativeMaxAmount: "100000000",
+      spreadBps: 0,
+    });
+    const token = `stellar:${cfg.usdcCode}:${cfg.usdcIssuer}`;
+    const quote = (value: string) =>
+      request("/sep38/quote", {
+        method: "POST",
+        headers: { ...auth(), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sell_asset: direction === "deposit" ? "iso4217:TRY" : token,
+          buy_asset: direction === "deposit" ? token : "iso4217:TRY",
+          [field]: value,
+          context: "sep24",
+        }),
+      });
+    const rejected = await quote(excess);
+    expect(rejected.status).toBe(400);
+    expect(await rejected.json()).toMatchObject({
+      error: { code: "quote_limits" },
+    });
+    const allowed = await quote(exact);
+    expect(allowed.status).toBe(201);
+    const firm = z
+      .object({
+        id: z.string(),
+        sell_amount: z.string(),
+        buy_amount: z.string(),
+      })
+      .parse(await allowed.json());
+    expect(firm).toMatchObject(
+      direction === "deposit"
+        ? { sell_amount: "400.00", buy_amount: "10.0000000" }
+        : { sell_amount: "10.0000000", buy_amount: "400.00" }
+    );
+    expect(
+      await (
+        await request(`/sep38/quote/${firm.id}`, { headers: auth() })
+      ).json()
+    ).toMatchObject(firm);
+    expect(
+      await (
+        await request("/sep24/transactions?asset_code=USDC", {
+          headers: auth(),
+        })
+      ).json()
+    ).toEqual({ transactions: [] });
+  }
+);
+
+it.each([
+  {
+    direction: "deposit",
+    field: "sell_amount",
+    exact: "400.00",
+    excess: "400.01",
+  },
+  {
+    direction: "deposit",
+    field: "buy_amount",
+    exact: "10.0000000",
+    excess: "10.0000001",
+  },
+  {
+    direction: "withdraw",
+    field: "sell_amount",
+    exact: "10.0000000",
+    excess: "10.0002500",
+  },
+  {
+    direction: "withdraw",
+    field: "buy_amount",
+    exact: "400.00",
+    excess: "400.01",
+  },
+])(
+  "only offers public $direction firm quotes within the separate native TRY cap using $field",
+  async ({ direction, field, exact, excess }) => {
+    const { request, auth, cfg } = fixture({
+      fullApp: true,
+      nativeMaxTryMinor: "40000",
+      spreadBps: 0,
+    });
+    const token = `stellar:${cfg.usdcCode}:${cfg.usdcIssuer}`;
+    const quote = (value: string) =>
+      request("/sep38/quote", {
+        method: "POST",
+        headers: { ...auth(), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sell_asset: direction === "deposit" ? "iso4217:TRY" : token,
+          buy_asset: direction === "deposit" ? token : "iso4217:TRY",
+          [field]: value,
+          context: "sep6",
+        }),
+      });
+    expect((await quote(excess)).status).toBe(400);
+    const allowed = await quote(exact);
+    expect(allowed.status).toBe(201);
+    expect(await allowed.json()).toMatchObject(
+      direction === "deposit"
+        ? { sell_amount: "400.00", buy_amount: "10.0000000" }
+        : { sell_amount: "10.0000000", buy_amount: "400.00" }
+    );
+    expect(
+      await (
+        await request("/sep24/transactions?asset_code=USDC", {
+          headers: auth(),
+        })
+      ).json()
+    ).toEqual({ transactions: [] });
+  }
+);
+
+it("ends firm quote validity with the native policy and stops quoting after expiry", async () => {
+  const nativePolicyUntil = Math.floor(Date.now() / 1000) + 30;
+  const { request, auth, cfg } = fixture({ fullApp: true, nativePolicyUntil });
+  const quote = () =>
+    request("/sep38/quote", {
+      method: "POST",
+      headers: { ...auth(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sell_asset: "iso4217:TRY",
+        buy_asset: `stellar:${cfg.usdcCode}:${cfg.usdcIssuer}`,
+        sell_amount: "100.00",
+        context: "sep24",
+        expire_after: new Date(Date.now() + 3600000).toISOString(),
+      }),
+    });
+  const current = await quote();
+  expect(current.status).toBe(201);
+  expect(await current.json()).toMatchObject({
+    expires_at: new Date(nativePolicyUntil * 1000).toISOString(),
+  });
+  vi.useFakeTimers();
+  vi.setSystemTime(nativePolicyUntil * 1000);
+  const expired = await quote();
+  expect(expired.status).toBe(409);
+  expect(await expired.json()).toMatchObject({
+    error: { code: "policy_expired" },
+  });
+  expect(
+    await (
+      await request("/sep24/transactions?asset_code=USDC", { headers: auth() })
+    ).json()
+  ).toEqual({ transactions: [] });
+});
+
+it.each(["missing", "unavailable"])(
+  "does not issue public firm quotes when the configured native gateway is %s",
+  async (nativeState) => {
+    const { request, auth, cfg, nativeDown } = fixture({
+      fullApp: true,
+      omitNativeGateway: nativeState === "missing",
+    });
+    if (nativeState === "unavailable") nativeDown();
+    const response = await request("/sep38/quote", {
+      method: "POST",
+      headers: { ...auth(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sell_asset: "iso4217:TRY",
+        buy_asset: `stellar:${cfg.usdcCode}:${cfg.usdcIssuer}`,
+        sell_amount: "100.00",
+        context: "sep24",
+      }),
+    });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      error: { code: "native_configuration_unavailable" },
+    });
+  }
+);
+
+it.each([
+  {
+    direction: "deposit",
+    field: "sell_amount",
+    exact: "400.00",
+    excess: "400.01",
+  },
+  {
+    direction: "deposit",
+    field: "buy_amount",
+    exact: "10.0000000",
+    excess: "10.0000001",
+  },
+  {
+    direction: "withdraw",
+    field: "sell_amount",
+    exact: "10.0000000",
+    excess: "10.0002500",
+  },
+  {
+    direction: "withdraw",
+    field: "buy_amount",
+    exact: "400.00",
+    excess: "400.01",
+  },
+])(
+  "checks current native limits before offering a hosted $direction quote using $field",
+  async ({ direction, field, exact, excess }) => {
+    const native = {
+      omitNativeGateway: true,
+      nativeMaxAmount: "1000000000",
+      nativeMaxTryMinor: "40000",
+      nativePolicyUntil: Math.floor(Date.now() / 1000) + 45,
+      spreadBps: 0,
+    };
+    const { request, auth, cfg, nativeDown } = fixture(native);
+    const started = await request(
+      `/sep24/transactions/${direction}/interactive`,
+      {
+        method: "POST",
+        headers: { ...auth(), "Content-Type": "application/json" },
+        body: '{"asset_code":"USDC"}',
+      }
+    );
+    const intent = z
+      .object({ id: z.string(), url: z.string() })
+      .parse(await started.json());
+    const opened = await request(intent.url);
+    const cookie = opened.headers.get("Set-Cookie")!.split(";")[0]!;
+    const path = `/sep24/interactive/${intent.id}`;
+    const state = z
+      .object({ csrf_token: z.string() })
+      .parse(
+        await (
+          await request(`${path}/state`, { headers: { Cookie: cookie } })
+        ).json()
+      );
+    const quote = (value: string) =>
+      request(`${path}/quote`, {
+        method: "POST",
+        headers: {
+          Cookie: cookie,
+          Origin: cfg.publicUrl,
+          "X-CSRF-Token": state.csrf_token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ [field]: value }),
+      });
+    native.nativeMaxAmount = "100000000";
+    const rejected = await quote(excess);
+    expect(rejected.status).toBe(400);
+    expect(await rejected.json()).toMatchObject({ code: "quote_limits" });
+    const allowed = await quote(exact);
+    expect(allowed.status).toBe(200);
+    expect(await allowed.json()).toMatchObject({
+      quote: {
+        expires_at: new Date(native.nativePolicyUntil * 1000).toISOString(),
+      },
+    });
+    expect(
+      await (
+        await request(`${path}/state`, { headers: { Cookie: cookie } })
+      ).json()
+    ).toMatchObject({
+      transaction: { id: intent.id, quote_id: null, status: "incomplete" },
+    });
+    native.nativePolicyUntil = Math.floor(Date.now() / 1000);
+    const expired = await quote(exact);
+    expect(expired.status).toBe(409);
+    expect(await expired.json()).toMatchObject({ code: "policy_expired" });
+    nativeDown();
+    const unavailable = await quote(exact);
+    expect(unavailable.status).toBe(503);
+    expect(await unavailable.json()).toMatchObject({
+      code: "native_configuration_unavailable",
+    });
+  }
+);
 
 it("opens one authenticated hosted session without leaking a bearer into history", async () => {
   const { request, auth, wallet } = fixture();

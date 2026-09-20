@@ -906,12 +906,28 @@ export function createSepAnchor(deps: Deps, gateway: SepAnchorGateway) {
             "quote_already_accepted",
             "This transaction already has an accepted quote."
           );
-        return createSepQuote(deps, row.customer_id, {
-          ...input,
-          sell_asset: row.direction === "deposit" ? TRY_ASSET : asset,
-          buy_asset: row.direction === "deposit" ? asset : TRY_ASSET,
-          context: row.protocol,
-        });
+        let current: SepAnchorConfiguration;
+        try {
+          current = await configuration(row);
+        } catch (error) {
+          if (error instanceof ApiError) throw error;
+          throw new ApiError(
+            503,
+            "native_configuration_unavailable",
+            "Current native quote limits could not be confirmed."
+          );
+        }
+        return createSepQuote(
+          deps,
+          row.customer_id,
+          {
+            ...input,
+            sell_asset: row.direction === "deposit" ? TRY_ASSET : asset,
+            buy_asset: row.direction === "deposit" ? asset : TRY_ASSET,
+            context: row.protocol,
+          },
+          current
+        );
       });
     },
     async readQuote(subject: string, id: string, quoteId: string) {

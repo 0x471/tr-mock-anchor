@@ -1,4 +1,5 @@
 import type { Deps } from "./context.js";
+import type { SepAnchorConfiguration } from "./sep-anchor-types.js";
 import type { CustomerRow, QuoteRow } from "./core/types.js";
 import { TRY_ASSET, usdcAsset } from "./core/sep.js";
 import { nowIso, tx } from "./db.js";
@@ -69,7 +70,8 @@ export function readSepQuote(deps: Deps, customerId: string, id: string) {
 export async function createSepQuote(
   deps: Deps,
   customerId: string,
-  request: SepQuoteRequest
+  request: SepQuoteRequest,
+  nativeConfiguration?: SepAnchorConfiguration
 ) {
   const { db, cfg, stellar, rates } = deps;
   if (stellar.assetCode !== "USDC")
@@ -139,6 +141,43 @@ export async function createSepQuote(
       "invalid_amount",
       "Both quoted amounts must be positive."
     );
+  let native = nativeConfiguration;
+  if (
+    !native &&
+    cfg.anchorMode === "zkpassport" &&
+    (cfg.sepAnchorContract || deps.sepAnchorGateway)
+  ) {
+    try {
+      if (!deps.sepAnchorGateway) throw new Error("Native gateway missing");
+      native = await deps.sepAnchorGateway.configuration();
+    } catch {
+      throw new ApiError(
+        503,
+        "native_configuration_unavailable",
+        "Current native quote limits could not be confirmed."
+      );
+    }
+  }
+  if (
+    native &&
+    ((sellTry ? bought : sold) > BigInt(native.max_amount) ||
+      (sellTry ? sold : bought) > BigInt(native.max_try_minor))
+  )
+    throw new ApiError(
+      400,
+      "quote_limits",
+      "The quote exceeds the native demo limits."
+    );
+  if (
+    native &&
+    native.policy_valid_until <=
+      Math.max(Math.floor(Date.now() / 1000), native.ledger_time)
+  )
+    throw new ApiError(
+      409,
+      "policy_expired",
+      "The native policy must be renewed before issuing a firm quote."
+    );
   const q: QuoteRow = {
     id: newId("qt"),
     partner_id: customer.partner_id,
@@ -152,7 +191,12 @@ export async function createSepQuote(
     source_amount: (sellTry ? fmtTry : fmtUsdc)(sold),
     destination_currency: sellTry ? "USDC" : "TRY",
     destination_amount: (sellTry ? fmtUsdc : fmtTry)(bought),
-    expires_at: new Date(Date.now() + ttl * 1000).toISOString(),
+    expires_at: new Date(
+      Math.min(
+        Date.now() + ttl * 1000,
+        native ? native.policy_valid_until * 1000 : Infinity
+      )
+    ).toISOString(),
     consumed_by: null,
     created_at: nowIso(),
   };
