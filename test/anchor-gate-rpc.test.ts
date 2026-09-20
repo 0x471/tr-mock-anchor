@@ -33,7 +33,7 @@ function map(value: Record<string, xdr.ScVal>) {
 }
 const u64 = (value: number) => nativeToScVal(BigInt(value), { type: "u64" });
 const id = "a".repeat(64);
-function fixture() {
+function fixture(sanctions?: { root?: string; strict?: unknown }) {
   const provider = Keypair.random();
   const notary = Keypair.random();
   const recipient = Keypair.random();
@@ -70,6 +70,16 @@ function fixture() {
     nonce: xdr.ScVal.scvBytes(Buffer.from(terms.nonce, "hex")),
   });
   const configValue = map({
+    ...(sanctions?.root !== undefined
+      ? {
+          sanctions_root: xdr.ScVal.scvBytes(
+            Buffer.from(sanctions.root, "hex")
+          ),
+        }
+      : {}),
+    ...(sanctions?.strict !== undefined
+      ? { sanctions_strict: nativeToScVal(sanctions.strict) }
+      : {}),
     provider: new Address(provider.publicKey()).toScVal(),
     bank_notary: new Address(notary.publicKey()).toScVal(),
     token: new Address(
@@ -178,6 +188,37 @@ function fixture() {
 }
 
 describe("gate contract RPC boundary", () => {
+  it("publishes a pinned document sanctions policy separately from wallet screening", async () => {
+    const root =
+      "2dfcc0ca426d9d8e751bb00fc9ab502bfb081ba8d2ce3f5f94a8f1712b3afca8";
+    const { gate } = fixture({ root, strict: true });
+    expect((await gate.configuration()).policy.sanctions).toEqual({
+      root,
+      strict: true,
+    });
+    expect((await fixture().gate.configuration()).policy).not.toHaveProperty(
+      "sanctions"
+    );
+  });
+  it.each([
+    { root: "00".repeat(32), strict: true },
+    { root: "ff".repeat(32), strict: false },
+    { root: "01".repeat(32) },
+    { strict: false },
+    { root: "01".repeat(32), strict: "false" },
+  ])("rejects malformed sanctions config %j", async (policy) => {
+    await expect(fixture(policy).gate.configuration()).rejects.toThrow();
+  });
+  it("does not change legacy policy identity for explicitly disabled sanctions", async () => {
+    expect(
+      (
+        await fixture({
+          root: "00".repeat(32),
+          strict: false,
+        }).gate.configuration()
+      ).policy
+    ).not.toHaveProperty("sanctions");
+  });
   it("retains the actual envelope lower time bound for safe missing-transaction reconciliation", async () => {
     const { gate, state, terms, time } = fixture();
     const prepared = await gate.prepareCreate(id, terms);

@@ -24,6 +24,20 @@ const policySchema = z
     mock_only: z.literal(true),
     max_proof_age: z.number().int().positive(),
     verifier_vk_hash: hashString,
+    sanctions: z
+      .object({
+        root: hashString.refine((root) => {
+          const value = BigInt(`0x${root}`);
+          return (
+            value > 0n &&
+            value <
+              21888242871839275222246405745257275088548364400416034343698204186575808495617n
+          );
+        }),
+        strict: z.boolean(),
+      })
+      .strict()
+      .optional(),
   })
   .passthrough();
 const infoSchema = z.object({
@@ -416,7 +430,8 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
       const count =
         10 +
         Number(info.config.policy.allowed_nationalities.length > 0) +
-        Number(info.config.policy.allowed_issuers.length > 0);
+        Number(info.config.policy.allowed_issuers.length > 0) +
+        Number(!!info.config.policy.sanctions);
       if (
         info.config.external_inputs !== count ||
         info.config.proof_bytes !== (count === 10 ? 9888 : 10240)
@@ -860,6 +875,8 @@ export function createAnchorGateFlow(deps: FlowDependencies) {
           policy.mock_only,
           policy.max_proof_age,
           policy.verifier_vk_hash,
+          policy.sanctions?.root,
+          policy.sanctions?.strict,
         ]);
       if (
         session !== generation ||

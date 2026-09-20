@@ -103,6 +103,24 @@ const countries = (value: unknown): string[] => {
     return code;
   });
 };
+const sanctionsPolicy = (value: Record<string, unknown>) => {
+  if (
+    value.sanctions_root === undefined &&
+    value.sanctions_strict === undefined
+  )
+    return {};
+  const root = hex(value.sanctions_root);
+  if (
+    typeof value.sanctions_strict !== "boolean" ||
+    BigInt(`0x${root}`) >=
+      21888242871839275222246405745257275088548364400416034343698204186575808495617n ||
+    (root === "0".repeat(64) && value.sanctions_strict)
+  )
+    throw new Error("Unexpected contract sanctions policy");
+  return root === "0".repeat(64)
+    ? {}
+    : { sanctions: { root, strict: value.sanctions_strict } };
+};
 const optional = (value: unknown): Record<string, unknown> | null => {
   if (!Array.isArray(value)) throw new Error("Unexpected contract union");
   if (value.length === 1 && value[0] === "None") return null;
@@ -239,6 +257,7 @@ export function createAnchorGateGateway(
       domain: text(response.domain),
       scope: text(response.scope),
       policy: {
+        ...sanctionsPolicy(response),
         min_age: integer(response.min_age),
         allowed_nationalities: countries(response.allowed_nationalities),
         allowed_issuers: countries(response.allowed_issuers),
