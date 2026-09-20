@@ -6,6 +6,9 @@ This is a Testnet-only development project, not an audited verifier or a product
 
 ## Standard-wallet anchor demo
 
+Open the [public Testnet demo](https://tr-anchor-zkpassport.up.railway.app/anchor).
+Use synthetic documents and mock funds only.
+
 The new `/anchor` interface uses SEP-1 discovery, SEP-10 login, SEP-38 firm
 quotes, SEP-24 hosted onboarding and exchange-only SEP-6 transfers. First-time
 users prove eligibility in the hosted ZKPassport interaction. Supported accounts
@@ -37,6 +40,8 @@ Native contract, compiled-Wasm and HTTP tests pass. The new contracts are
 deployed and the live reserve/reject/cancel smoke passed. **A fresh synthetic
 phone proof and full deposit/withdrawal acceptance against this new deployment
 remain pending.** See [deployment evidence and the wake-up checklist](docs/SEP_ANCHOR_DEPLOYMENT.md).
+The [release review](docs/SEP_ANCHOR_REVIEW.md) records resolved findings,
+remaining acceptance work and the dependency-audit boundary.
 
 Standard custody is a deliberate trust boundary: the provider controls tokens
 before they enter the vault, and the watcher/notary attests which classic

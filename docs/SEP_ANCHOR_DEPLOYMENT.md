@@ -13,6 +13,8 @@ Railway project `904332b6-0279-406e-98c7-3e73f19b5a29`, service
 `feat/zkpassport-anchor`, not upstream main. SQLite uses `/data/anchor.db`
 on the attached persistent volume, with one replica and legacy workers off.
 The separate SEP reconciliation loop remains active.
+Railway waits for GitHub CI and checks `/health` before completing deployment.
+That endpoint is a process liveness check, not a positive proof or settlement test.
 
 Hosted HTTP acceptance passed without accepting a quote, reserving funds or
 requesting a phone proof. A successful container build or API check does not
@@ -53,20 +55,42 @@ reviewed deployment after policy expiry; restarting the server does not renew it
 
 ## Confirmed checks
 
+- All 384 application tests, server/browser typechecks and the production build
+  passed at `5d70dfb`. [CI run 35486412041](https://github.com/0x471/tr-mock-anchor/actions/runs/35486412041)
+  also passed native verifier profiles, the old vault and the new SEP contract
+  in native and compiled-Wasm execution. Railway deployed that revision and
+  passed its startup health check.
+- The quote-limit and polling corrections at `46e1f69` passed all 402
+  application tests, both typechecks and the production build locally.
+  [CI run 35486976343](https://github.com/0x471/tr-mock-anchor/actions/runs/35486976343)
+  is the follow-up run for that revision; inspect its result separately from
+  the earlier confirmed deployment.
 - Public HTTPS discovery reports Testnet, the exact issuer, SEP-6 and SEP-24.
   SEP-10 challenges were validated before signing with an agent-owned test key.
+- The unmodified `@stellar/anchor-tests@0.6.22` SEP-1 and SEP-10 suite passed
+  all 21 tests against the public host, including signer/threshold cases on
+  disposable Friendbot-funded accounts. User and operator keys were not used.
 - Public deposit and withdrawal initiation, transaction history, firm quote
   creation/read, owner isolation, one-use bootstrap sessions, secure cookies
   and CSRF rejection passed. No quote was accepted by this HTTP smoke test.
+- The safe unmodified SEP-24/SEP-38 suite passed 52 checks at `5d70dfb`, with
+  six genuine pending/completed fixtures excluded. Its 100-USDC quote fixture
+  predates the quote-cap correction and is outside the final policy. Native
+  caps are enforced before quote issuance, not raised to fit that fixture.
 - SEP-12 correctly reports `NEEDS_INFO` without a native eligibility grant.
-  Legacy economic routes remain blocked. This is not an unmodified-wallet
-  conformance-suite pass or completed phone-proof acceptance.
+  Legacy economic routes remain blocked. These checks do not establish
+  unmodified-wallet completed exchanges or positive phone-proof acceptance.
 - 21 native and 21 compiled-Wasm SEP contract tests, including real signed
   dual-role authorization, recipient/refund binding and lifecycle races.
 - 31 native and 31 compiled-Wasm old-vault regression tests.
 - Protocol 28 address-V2 authorization is covered by gateway regressions.
 - The provider received exactly 100 mock USDC in a
   [one-time liquidity payment](https://stellar.expert/explorer/testnet/tx/116ebe83a363b210766c020a64657fa909bbf1a2738b0d5025806cc88365ce59).
+- A separate [trustline-capacity repair](https://stellar.expert/explorer/testnet/tx/85ef19ddaf63a862560dc0dd6fef6c01a807b33da66109de8df28c155d7ac07a)
+  increased the provider's limit to 1000 mock USDC at ledger 4770125.
+  Balance remained 100, leaving 900 receiving capacity with no buying
+  liabilities. It contained one `change_trust`, no mint or payment, and charged
+  100 stroops. Withdrawal readiness also checks live receiver capacity.
 - A [0.1 mock-USDC reservation](https://stellar.expert/explorer/testnet/tx/c71a7b56457798231c6967a447e2eb85df9b1077c6365d77e20a352452609e46)
   succeeded at ledger 4769966. A malformed proof and settlement without proof
   or bank receipt were rejected in native simulation.
@@ -79,6 +103,10 @@ evidence of a fresh positive Count8 proof. The older Count7 phone acceptance
 transactions belong to a different policy and contract.
 
 ## Wake-up acceptance checklist
+
+The native order limit is 10 mock USDC and 500 simulated TRY. Quotes must fit
+both caps and expire no later than the immutable policy. The 100-TRY deposit
+and 1-token withdrawal below are deliberately smaller than those limits.
 
 1. Open the public `/anchor` page. Select Stellar Testnet in Freighter and use
    the admitted wallet. Friendbot setup is automatic when needed; a trustline
@@ -107,6 +135,11 @@ Deployment uses `scripts/deploy-sep-anchor.mjs`; liquidity uses
 explicit `--execute`. Keep the same private journal permanently. Signed
 envelopes are saved with mode 0600 before sending; retries reconcile the same
 hash. A failed or expired unknown envelope is not silently replaced.
+
+The one-time receiver-capacity repair uses `scripts/repair-sep-headroom.mjs`
+and its own private journal. Never replay the mint to adjust a trustline.
+New liquidity journals create a 1000-token limit but still mint only 100.
+Original version-1 journals preserve their already-signed 100-token limit.
 
 The deployment uploader caps uploads at 20 Testnet XLM per transaction and
 contract creation at 1 Testnet XLM. Ordinary hosted actions use the separately
