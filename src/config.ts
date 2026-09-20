@@ -7,6 +7,9 @@ const num = (v: string | undefined, d: number) =>
 const str = (v: string | undefined, d: string) =>
   v === undefined || v === "" ? d : v;
 const port = num(env.PORT, 8787);
+const ofacEnabled = env.ANCHOR_GATE_OFAC_ENABLED ?? "false";
+if (ofacEnabled !== "true" && ofacEnabled !== "false")
+  throw new Error("ANCHOR_GATE_OFAC_ENABLED must be true or false");
 
 export function readAnchorMode(
   value: string | undefined
@@ -39,6 +42,7 @@ export const config = {
   anchorGateProviderSecret: str(env.ANCHOR_GATE_PROVIDER_SECRET, ""),
   anchorGateBankNotarySecret: str(env.ANCHOR_GATE_BANK_NOTARY_SECRET, ""),
   anchorGateMaxFeeStroops: str(env.ANCHOR_GATE_MAX_FEE_STROOPS, "1000000"),
+  anchorGateOfacEnabled: ofacEnabled === "true",
   anchorGateAllowedWallets: str(env.ANCHOR_GATE_ALLOWED_WALLETS, "")
     .split(/[\s,]+/)
     .filter(Boolean),

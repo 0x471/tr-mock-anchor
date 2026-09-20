@@ -6,6 +6,7 @@ import { createLogger, type Deps } from "../src/context.js";
 import { openDb, type DB } from "../src/db.js";
 import { createRateService } from "../src/rates.js";
 import { createFakeGateway } from "../src/stellar.js";
+import { createOfacPrecheck } from "../src/ofac-precheck.js";
 import {
   Asset,
   Account,
@@ -76,6 +77,15 @@ function fixture(anchorGate?: GateGateway) {
     };
   };
   return { deps, app, authenticate };
+}
+
+function syntheticOfacFeed(address: string) {
+  return `<?xml version="1.0"?>
+<sdnList xmlns="https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/XML">
+<publshInformation><Publish_Date>09/18/2026</Publish_Date><Record_Count>1</Record_Count></publshInformation>
+<sdnEntry><uid>1</uid><lastName>Synthetic fixture</lastName><sdnType>Entity</sdnType>
+<idList><id><uid>2</uid><idType>Digital Currency Address - XLM</idType><idNumber>${address}</idNumber></id></idList>
+</sdnEntry></sdnList>`;
 }
 
 class FakeGate implements GateGateway {
@@ -389,6 +399,161 @@ describe("gated anchor HTTP interface", () => {
     expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({
       error: { code: "demo_wallet_not_admitted" },
+    });
+  });
+  it("checks admission for the authenticated wallet before reserving", async () => {
+    const { app, authenticate, deps } = fixture(new FakeGate());
+    const user = await authenticate();
+    deps.cfg.anchorGateAllowedWallets = [user.wallet.publicKey()];
+    const response = await app.request("/anchor-gate/orders/access", {
+      headers: user.headers,
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({
+      wallet: user.wallet.publicKey(),
+      admitted: true,
+    });
+  });
+  it("blocks new reservations on an official-address match without blocking login or owned-order recovery", async () => {
+    const { app, user, order, deps } = await checkout();
+    deps.cfg.anchorGateOfacEnabled = true;
+    deps.ofac = createOfacPrecheck({
+      fetch: async () =>
+        new Response(syntheticOfacFeed(user.wallet.publicKey())),
+    });
+    const access = await app.request("/anchor-gate/orders/access", {
+      headers: user.headers,
+    });
+    expect(access.status).toBe(200);
+    expect(await access.json()).toMatchObject({
+      wallet: user.wallet.publicKey(),
+      screening: { status: "match", stellar_address_count: 1 },
+    });
+    const original = await app.request(`/anchor-gate/orders/${order.id}`, {
+      headers: user.headers,
+    });
+    expect(original.status).toBe(200);
+    const originalOrder = (await original.json()) as { quote_id: string };
+    const denied = await app.request("/anchor-gate/orders", {
+      method: "POST",
+      headers: { ...user.headers, "Idempotency-Key": "new-denied" },
+      body: JSON.stringify({ quote_id: originalOrder.quote_id }),
+    });
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toMatchObject({
+      error: { code: "ofac_precheck_match" },
+    });
+    const retry = await app.request("/anchor-gate/orders", {
+      method: "POST",
+      headers: { ...user.headers, "Idempotency-Key": "checkout" },
+      body: JSON.stringify({
+        quote_id: originalOrder.quote_id,
+        direction: "deposit",
+      }),
+    });
+    expect(retry.status).toBe(201);
+    expect(await retry.json()).toMatchObject({ id: order.id });
+  });
+  it("fails closed on an unavailable address list before consuming a quote or reservation key", async () => {
+    const { app, authenticate, deps } = fixture(new FakeGate());
+    const user = await authenticate();
+    const quoted = await app.request("/sep38/quote", {
+      method: "POST",
+      headers: user.headers,
+      body: JSON.stringify({
+        sell_asset: "iso4217:TRY",
+        buy_asset: `stellar:USDC:${deps.cfg.usdcIssuer}`,
+        sell_amount: "100.00",
+      }),
+    });
+    expect(quoted.status).toBe(201);
+    const quote = (await quoted.json()) as { id: string };
+    deps.cfg.anchorGateOfacEnabled = true;
+    deps.ofac = createOfacPrecheck({
+      fetch: async () => {
+        throw new Error("offline");
+      },
+    });
+    const access = await app.request("/anchor-gate/orders/access", {
+      headers: user.headers,
+    });
+    expect(access.status).toBe(200);
+    expect(await access.json()).toMatchObject({
+      screening: { status: "unavailable" },
+    });
+    const reserve = () =>
+      app.request("/anchor-gate/orders", {
+        method: "POST",
+        headers: { ...user.headers, "Idempotency-Key": "ofac-recovery" },
+        body: JSON.stringify({ quote_id: quote.id }),
+      });
+    const denied = await reserve();
+    expect(denied.status).toBe(503);
+    expect(await denied.json()).toMatchObject({
+      error: { code: "ofac_precheck_unavailable" },
+    });
+    deps.ofac = createOfacPrecheck({
+      fetch: async () =>
+        new Response(syntheticOfacFeed(Keypair.random().publicKey())),
+    });
+    const created = await reserve();
+    expect(created.status).toBe(201);
+    const order = (await created.json()) as { id: string };
+    expect(order.id).toMatch(/^[a-f0-9]{64}$/);
+    deps.ofac = createOfacPrecheck({
+      fetch: async () => {
+        throw new Error("offline again");
+      },
+    });
+    const repeated = await reserve();
+    expect(repeated.status).toBe(201);
+    expect(await repeated.json()).toMatchObject({ id: order.id });
+  });
+  it("keeps admission checks behind the same session and origin guards", async () => {
+    const { app, authenticate, deps } = fixture(new FakeGate());
+    const user = await authenticate();
+    deps.cfg.anchorGateAllowedWallets = [Keypair.random().publicKey()];
+    const denied = await app.request("/anchor-gate/orders/access", {
+      headers: user.headers,
+    });
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toMatchObject({
+      error: { code: "demo_wallet_not_admitted" },
+    });
+    const anonymous = await app.request("/anchor-gate/orders/access");
+    expect(anonymous.status).toBe(403);
+    expect(await anonymous.json()).toMatchObject({
+      error: { code: "authentication_required" },
+    });
+    deps.cfg.anchorGateAllowedWallets = [user.wallet.publicKey()];
+    const otherOrigin = await app.request("/anchor-gate/orders/access", {
+      headers: { ...user.headers, Origin: "https://other.example" },
+    });
+    expect(otherOrigin.status).toBe(403);
+    expect(await otherOrigin.json()).toMatchObject({
+      error: { code: "invalid_origin" },
+    });
+  });
+  it("allows admitted recovery access after policy expiry but not without a gate", async () => {
+    const gate = new FakeGate();
+    gate.policyExpiry = Math.floor(Date.now() / 1000) - 1;
+    const { app, authenticate } = fixture(gate);
+    const user = await authenticate();
+    expect(
+      (
+        await app.request("/anchor-gate/orders/access", {
+          headers: user.headers,
+        })
+      ).status
+    ).toBe(200);
+    const unavailable = fixture();
+    const response = await unavailable.app.request(
+      "/anchor-gate/orders/access"
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      error: { code: "gate_unavailable" },
     });
   });
   it("rejects real-bank destination text and locks the synthetic beneficiary under the creation key", async () => {

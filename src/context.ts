@@ -5,6 +5,7 @@ import type { StellarGateway } from "./stellar.js";
 import type { PartnerRow } from "./core/types.js";
 import type { PassportVerifier } from "./zkpassport.js";
 import type { GateGateway } from "./anchor-gate-types.js";
+import type { OfacPrecheck } from "./ofac-precheck.js";
 
 export interface Logger {
   info: (msg: string, extra?: unknown) => void;
@@ -20,6 +21,7 @@ export interface Deps {
   log: Logger;
   passportVerifier?: PassportVerifier;
   anchorGate?: GateGateway;
+  ofac?: OfacPrecheck;
 }
 
 export type AppEnv = { Variables: { partner: PartnerRow } };
